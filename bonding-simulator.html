@@ -1,0 +1,1264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Liquid Pool Bonding-Curve Simulator (Uniswap v3 math)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root{ --bg:#0b0c10; --panel:#13151b; --muted:#8b90a0; --text:#e9ecf1; --accent:#8ad1ff; --accent2:#9affb5; --grid:#2a2f3a; --border:#202531; }
+  *{ box-sizing:border-box; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial, "Apple Color Emoji","Segoe UI Emoji"; }
+  body{ margin:0; background:var(--bg); color:var(--text); }
+  .wrap{ max-width:1200px; margin:24px auto; padding:0 16px; }
+  h1{ font-size:20px; margin:0 0 16px; letter-spacing:0.2px; }
+  h2{ font-size:16px; margin:0 0 12px; font-weight:600; }
+  .grid{ display:grid; grid-template-columns: 1.1fr 1fr; gap:16px; }
+  @media (max-width: 950px){ .grid{ grid-template-columns: 1fr; } }
+  .card{ background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:16px; box-shadow: 0 4px 18px rgba(0,0,0,.25); }
+  .row{ display:grid; grid-template-columns: repeat(2,1fr); gap:12px; }
+  .row3{ display:grid; grid-template-columns: repeat(3,1fr); gap:12px; }
+  .row4{ display:grid; grid-template-columns: repeat(4,1fr); gap:12px; }
+  label{ display:block; font-size:12px; color:var(--muted); margin-bottom:6px; }
+  input{ width:100%; padding:10px 12px; background:#0f1116; color:var(--text); border:1px solid var(--border); border-radius:10px; outline:none; }
+  input:focus{ border-color:#3b82f6; box-shadow:0 0 0 3px rgba(59,130,246,.25); }
+  .muted{ color:var(--muted); font-size:12px; }
+  .bad{ color:#ff9aa2; }
+  .good{ color:#9affb5; }
+  .btns{ display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  button{ background:#0d6efd; border:none; color:white; padding:10px 12px; border-radius:10px; cursor:pointer; font-weight:600; }
+  button.ghost{ background:#0f1116; color:var(--text); border:1px solid var(--border); }
+  .charts{ display:grid; grid-template-columns: 1fr; gap:16px; margin-top:16px; }
+  canvas{ width:100%; height:320px; background:#0f1116; border:1px solid var(--border); border-radius:12px; }
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  th, td{ padding:10px 8px; border-bottom:1px solid var(--border); }
+  th{ text-align:left; color:var(--muted); font-weight:600; }
+  tr:hover td{ background:rgba(255,255,255,0.02); }
+  .kpis{ display:grid; grid-template-columns: repeat(3,1fr); gap:12px; margin-top:8px; }
+  .kpi{ background:#0f1116; border:1px solid var(--border); border-radius:12px; padding:12px; }
+  .kpi .title{ font-size:12px; color:var(--muted); }
+  .kpi .val{ font-size:18px; margin-top:2px; }
+  .flex{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .right{ text-align:right; }
+  .footnote{ margin-top:8px; color:var(--muted); font-size:12px; }
+  .tooltip{ position:absolute; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:8px 12px; font-size:12px; pointer-events:none; z-index:1000; box-shadow:0 4px 12px rgba(0,0,0,.3); display:none; }
+  .tooltip .label{ color:var(--muted); font-size:11px; }
+  .tooltip .value{ color:var(--text); font-weight:600; margin-top:2px; }
+  canvas{ cursor:crosshair; }
+  .range-slider{ position:relative; width:100%; height:40px; margin:20px 0; }
+  .range-track{ position:absolute; width:100%; height:20px; background:var(--border); border-radius:10px; top:50%; transform:translateY(-50%); }
+  .range-fill{ position:absolute; height:20px; background:var(--accent); border-radius:10px; top:50%; transform:translateY(-50%); z-index:1; }
+  .range-handle{ position:absolute; width:20px; height:20px; background:var(--accent); border:2px solid var(--panel); border-radius:50%; cursor:grab; top:50%; transform:translate(-50%, -50%); box-shadow:0 2px 6px rgba(0,0,0,.3); z-index:2; }
+  .range-handle:active{ cursor:grabbing; }
+  .range-handle:hover{ background:var(--accent2); }
+  .range-labels{ display:flex; justify-content:space-between; margin-top:8px; font-size:11px; color:var(--muted); }
+  .range-value{ position:absolute; top:-24px; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:11px; white-space:nowrap; pointer-events:none; }
+  .range-label-text{ position:absolute; top:50%; transform:translateY(-50%); color:#000; font-size:11px; font-weight:600; pointer-events:none; text-align:center; text-shadow:0 1px 2px rgba(255,255,255,0.8); z-index:3; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Liquid Pool Bonding-Curve Simulator <span class="muted">• Uniswap v3 constant-L across [tickLower, tickUpper]</span></h1>
+
+  <div class="grid">
+    <div class="card">
+      <div class="row4">
+        <div>
+          <label>Total Supply (tokens)</label>
+          <input id="totalSupply" type="number" step="1" value="1000000" />
+        </div>
+        <div>
+          <label>Creator Allocation (%)</label>
+          <input id="creatorPct" type="number" step="0.1" value="10" />
+        </div>
+        <div>
+          <label>Min Initial Liquidity (ETH)</label>
+          <input id="minInitEth" type="number" step="0.000001" value="0.001" />
+        </div>
+        <div>
+          <label>Percent Benchmarks (comma-sep)</label>
+          <input id="percents" type="text" value="1,5,10,25,50,75,90,95,99,99.8,100" />
+        </div>
+      </div>
+
+      <div class="row4" style="margin-top:12px;">
+        <div>
+          <label>tickLower</label>
+          <input id="tickLower" type="number" step="200" value="-120000" />
+        </div>
+        <div>
+          <label>tickUpper</label>
+          <input id="tickUpper" type="number" step="200" value="200" />
+        </div>
+        <div>
+          <label>Start offset (ticks from lower)</label>
+          <input id="startOffset" type="number" step="1" value="1" />
+        </div>
+        <div>
+          <label>Fee gross-up (%) <span class="muted">(optional)</span></label>
+          <input id="feePct" type="number" step="0.01" value="3" />
+        </div>
+      </div>
+
+      <div style="margin-top:16px;">
+        <label style="margin-bottom:12px;">Tick Range (drag handles to adjust)</label>
+        <div class="range-slider" id="tickRangeSlider">
+          <div class="range-track"></div>
+          <div class="range-fill" id="rangeFill"></div>
+          <div class="range-handle" id="handleLower">
+            <div class="range-value" id="valueLower">-120000</div>
+          </div>
+          <div class="range-handle" id="handleUpper">
+            <div class="range-value" id="valueUpper">200</div>
+          </div>
+        </div>
+        <div class="range-labels">
+          <span>-200,000</span>
+          <span>0</span>
+          <span>200,000</span>
+        </div>
+      </div>
+
+      <div class="btns">
+        <button id="exportCsv">Export Table CSV</button>
+      </div>
+
+      <div id="warn" class="footnote"></div>
+    </div>
+
+    <div class="card">
+      <div class="kpis">
+        <div class="kpi">
+          <div class="title">Available for Purchase (tokens)</div>
+          <div class="val" id="availTokens">—</div>
+        </div>
+        <div class="kpi">
+          <div class="title">Start Price (ETH per token)</div>
+          <div class="val" id="startPrice">—</div>
+        </div>
+        <div class="kpi">
+          <div class="title">Liquidity L (simulated)</div>
+          <div class="val" id="liqL">—</div>
+        </div>
+      </div>
+      <div class="kpis" style="margin-top:8px;">
+        <div class="kpi">
+          <div class="title">Implied initial token1 in position (ETH)</div>
+          <div class="val" id="initEthImplied">—</div>
+        </div>
+        <div class="kpi">
+          <div class="title">Upper-bound Price (at tickUpper)</div>
+          <div class="val" id="upperPrice">—</div>
+        </div>
+        <div class="kpi">
+          <div class="title">Start Tick (approx)</div>
+          <div class="val" id="startTick">—</div>
+        </div>
+      </div>
+      <div class="kpis" style="margin-top:8px;">
+        <div class="kpi" style="grid-column:span 3;">
+          <div class="title">What happens if the creator sells all their tokens at once?</div>
+          <div class="val" id="creatorDumpAnalysis" style="font-size:14px; margin-top:4px;">—</div>
+        </div>
+      </div>
+      <div class="footnote">Model: token0=LIQUID, token1=ETH. Uses v3 formulas with constant L across active range. We solve for L and the start √price so that (i) available supply equals the token0 inventory between start and tickUpper, and (ii) your “min initial liquidity (ETH)” equals token1 between tickLower and start.</div>
+    </div>
+  </div>
+
+  <div class="charts">
+    <div class="card">
+      <div class="flex" style="justify-content:space-between;margin-bottom:8px;">
+        <div class="muted">Price per Token (left axis) & Cumulative ETH Cost (right axis) vs % of available supply purchased</div>
+      </div>
+      <canvas id="combinedChart" width="1100" height="320"></canvas>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <table id="results">
+      <thead>
+        <tr>
+          <th>% Bought</th>
+          <th class="right">Tokens (Δ)</th>
+          <th class="right">ETH per 1% Price Move</th>
+          <th class="right">ETH (cum)</th>
+          <th class="right">Price @ end (ETH/token)</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div class="footnote">
+      <div><strong>% Bought</strong>: share of available supply purchased so far (excludes the creator allocation).</div>
+      <div><strong>Tokens (Δ)</strong>: tokens bought in this step (since the previous row).</div>
+      <div><strong>ETH per 1% Price Move</strong>: ETH required in this step to push the price the last 1% higher (lagging 1% — a local depth check).</div>
+      <div><strong>ETH (cum)</strong>: total ETH paid by buyers so far (gross, includes your Total Fee/LP fee).</div>
+      <div><strong>Price @ end</strong>: the instantaneous price after this step (ETH per token).</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <h2 style="font-size:16px; margin:0 0 12px;">Fee Configuration</h2>
+    <div class="row4" style="margin-bottom:16px;">
+      <div>
+        <label>Creator Fee (%) <span class="muted">(of total fee, e.g., 25 = 25%)</span></label>
+        <input id="creatorFeePct" type="number" step="0.01" value="25" />
+      </div>
+      <div></div>
+      <div></div>
+      <div></div>
+    </div>
+    <div class="row4" style="margin-bottom:16px;">
+      <div>
+        <label>RARE Burn % <span class="muted">(of remainder)</span></label>
+        <input id="rareBurnPct" type="number" step="0.1" value="50" readonly style="background:#1a1d26; cursor:not-allowed;" />
+      </div>
+      <div>
+        <label>Protocol % <span class="muted">(of remainder)</span></label>
+        <input id="protocolPct" type="number" step="0.1" value="30" readonly style="background:#1a1d26; cursor:not-allowed;" />
+      </div>
+      <div>
+        <label>Referrer % <span class="muted">(of remainder)</span></label>
+        <input id="referrerPct" type="number" step="0.1" value="20" readonly style="background:#1a1d26; cursor:not-allowed;" />
+      </div>
+      <div></div>
+    </div>
+    <div style="margin-top:16px;">
+      <label style="margin-bottom:12px;">Remainder Split (after creator fee) - drag handles to adjust</label>
+      <div class="range-slider" id="feeSplitSlider">
+        <div class="range-track"></div>
+        <div class="range-fill" id="feeFill1"></div>
+        <div class="range-fill" id="feeFill2" style="background:#9affb5;"></div>
+        <div class="range-fill" id="feeFill3" style="background:#ffb84d;"></div>
+        <div class="range-handle" id="feeHandle1" style="background:#8ad1ff;">
+          <div class="range-value" id="feeValue1">50%</div>
+        </div>
+        <div class="range-handle" id="feeHandle2" style="background:#9affb5;">
+          <div class="range-value" id="feeValue2">30%</div>
+        </div>
+        <div class="range-label-text" id="rareBurnText">RARE Burn</div>
+        <div class="range-label-text" id="protocolText">Protocol</div>
+        <div class="range-label-text" id="referrerText">Referrer</div>
+      </div>
+      <div class="range-labels">
+        <span>RARE Burn: <span id="rareBurnLabel">50%</span></span>
+        <span>Protocol: <span id="protocolLabel">30%</span></span>
+        <span>Referrer: <span id="referrerLabel">20%</span></span>
+      </div>
+      <div class="footnote" style="margin-top:8px; font-size:11px;">
+        The slider controls how the remainder (after creator fee) is split. These three percentages must sum to 100%.
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <h2 style="font-size:16px; margin:0 0 12px;">Fee Breakdown by Trading Volume</h2>
+    <div style="margin-bottom:12px;">
+      <label>Volume Levels (ETH, comma-separated) <span class="muted">(e.g., 1,5,10,25,50,100,1000)</span></label>
+      <input id="volumeLevels" type="text" value="1,5,10,25,50,100,1000" style="margin-top:6px;" />
+    </div>
+    <table id="feeBreakdown">
+      <thead>
+        <tr>
+          <th>Volume Level (ETH)</th>
+          <th class="right">Total Fees (ETH)</th>
+          <th class="right">Creator Fee</th>
+          <th class="right">RARE Burn</th>
+          <th class="right">Protocol</th>
+          <th class="right">Referrer</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div class="footnote">Fees are calculated from cumulative trading volume (gross ETH paid by users). Creator fee is taken first, then remainder is split among RARE burn, protocol, and referrer.</div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  // ---------- helpers ----------
+  const $ = id => document.getElementById(id);
+  const fmt = (n, d=6) => {
+    if (!isFinite(n)) return "—";
+    const a = Math.abs(n);
+    if (a === 0) return "0";
+    if (a >= 1000) return n.toLocaleString(undefined,{maximumFractionDigits:2});
+    if (a < 0.000001) return n.toExponential(2);
+    return n.toLocaleString(undefined,{maximumFractionDigits: d});
+  };
+  const clamp = (x, a, b) => Math.min(Math.max(x,a), b);
+
+  // sqrt ratio from tick (no 2^96 scaling; float is fine for sim)
+  const sqrtFromTick = (t) => Math.pow(1.0001, t/2);
+  const priceFromSqrt = (s) => s*s; // ETH/token
+
+  // solve quadratic: (c2) L^2 + (c1) L + (c0) = 0
+  function solveQuadratic(c2,c1,c0){
+    const D = c1*c1 - 4*c2*c0;
+    if (D < 0) return [];
+    const sqrtD = Math.sqrt(D);
+    const twoC2 = 2 * c2;
+    const r1 = (-c1 + sqrtD) / twoC2;
+    const r2 = (-c1 - sqrtD) / twoC2;
+    return [r1, r2];
+  }
+
+  // compute nice ticks for charts
+  function niceTicks(min, max, count=5){
+    if (!isFinite(min) || !isFinite(max) || min===max) return [min];
+    const span = max - min;
+    const step0 = span / Math.max(1, count);
+    const mag = Math.pow(10, Math.floor(Math.log10(step0)));
+    const norm = step0 / mag;
+    let step;
+    if (norm < 1.5) step = 1*mag;
+    else if (norm < 3) step = 2*mag;
+    else if (norm < 7) step = 5*mag;
+    else step = 10*mag;
+    const start = Math.ceil(min / step) * step;
+    const ticks = [];
+    for (let v = start; v <= max + 1e-12; v += step) ticks.push(v);
+    return ticks;
+  }
+
+  // draw a dual-axis line chart
+  function drawDualAxisChart(canvas, xs, ys1, ys2, opts1, opts2){
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    const pad = {l:60,r:60,t:10,b:34};
+    const w = canvas.width - pad.l - pad.r;
+    const h = canvas.height - pad.t - pad.b;
+
+    const xmin = Math.min(...xs), xmax = Math.max(...xs);
+    const y1min = Math.min(...ys1), y1max = Math.max(...ys1);
+    const y2min = Math.min(...ys2), y2max = Math.max(...ys2);
+    const y1pad = (y1max - y1min) * 0.08 || 1;
+    const y2pad = (y2max - y2min) * 0.08 || 1;
+    const y10 = y1min - y1pad, y11 = y1max + y1pad;
+    const y20 = y2min - y2pad, y21 = y2max + y2pad;
+
+    // Store data on canvas for hover detection
+    canvas._chartData = {xs, ys1, ys2, opts1, opts2, pad, w, h, xmin, xmax, y10, y11, y20, y21};
+
+    // axes
+    ctx.strokeStyle = '#2a2f3a';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pad.l, pad.t);
+    ctx.lineTo(pad.l, pad.t+h);
+    ctx.lineTo(pad.l+w, pad.t+h);
+    ctx.lineTo(pad.l+w, pad.t);
+    ctx.stroke();
+
+    // Left Y axis ticks
+    ctx.fillStyle = opts1.color || '#8ad1ff';
+    ctx.font = '12px system-ui';
+    const y1t = niceTicks(y10, y11, 5);
+    y1t.forEach(v=>{
+      const y = pad.t + h - (v - y10) / (y11 - y10) * h;
+      ctx.strokeStyle = '#2a2f3a';
+      ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l+w, y); ctx.stroke();
+      ctx.fillStyle = opts1.color || '#8ad1ff';
+      ctx.fillText(opts1.yFmt ? opts1.yFmt(v) : fmt(v), 8, y+4);
+    });
+
+    // Right Y axis ticks
+    ctx.fillStyle = opts2.color || '#9affb5';
+    ctx.font = '12px system-ui';
+    const y2t = niceTicks(y20, y21, 5);
+    y2t.forEach(v=>{
+      const y = pad.t + h - (v - y20) / (y21 - y20) * h;
+      ctx.strokeStyle = '#2a2f3a';
+      ctx.beginPath(); ctx.moveTo(pad.l+w, y); ctx.lineTo(pad.l+w-4, y); ctx.stroke();
+      ctx.fillStyle = opts2.color || '#9affb5';
+      ctx.fillText(opts2.yFmt ? opts2.yFmt(v) : fmt(v), pad.l+w+8, y+4);
+    });
+
+    // x ticks (0..90 %)
+    const xt = [0,10,20,30,40,50,60,70,80,90,100];
+    xt.forEach(v=>{
+      const x = pad.l + (v - xmin)/(xmax - xmin)*w;
+      ctx.strokeStyle = '#2a2f3a';
+      ctx.beginPath(); ctx.moveTo(x, pad.t+h); ctx.lineTo(x, pad.t+h+4); ctx.stroke();
+      ctx.fillStyle = '#8b90a0';
+      ctx.fillText(v+'%', x-10, pad.t+h+18);
+    });
+
+    // Draw first line (left axis)
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = opts1.color || '#8ad1ff';
+    ctx.beginPath();
+    xs.forEach((xv,i)=>{
+      const yv = ys1[i];
+      const x = pad.l + (xv - xmin)/(xmax - xmin)*w;
+      const y = pad.t + h - (yv - y10)/(y11 - y10)*h;
+      if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+
+    // Draw second line (right axis)
+    ctx.strokeStyle = opts2.color || '#9affb5';
+    ctx.beginPath();
+    xs.forEach((xv,i)=>{
+      const yv = ys2[i];
+      const x = pad.l + (xv - xmin)/(xmax - xmin)*w;
+      const y = pad.t + h - (yv - y20)/(y21 - y20)*h;
+      if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+
+    // Legend
+    ctx.fillStyle = '#8b90a0';
+    ctx.font = '12px system-ui';
+    ctx.fillText(opts1.label || 'Price', pad.l, pad.t+14);
+    ctx.fillStyle = opts2.color || '#9affb5';
+    ctx.fillText(opts2.label || 'Cost', pad.l+w-60, pad.t+14);
+  }
+
+  // draw a simple line chart
+  function drawChart(canvas, xs, ys, opts){
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    const pad = {l:60,r:10,t:10,b:34};
+    const w = canvas.width - pad.l - pad.r;
+    const h = canvas.height - pad.t - pad.b;
+
+    const xmin = Math.min(...xs), xmax = Math.max(...xs);
+    const ymin = Math.min(...ys), ymax = Math.max(...ys);
+    const ypad = (ymax - ymin) * 0.08 || 1;
+    const y0 = ymin - ypad, y1 = ymax + ypad;
+
+    // Store data on canvas for hover detection
+    canvas._chartData = {xs, ys, opts, pad, w, h, xmin, xmax, y0, y1};
+
+    // axes
+    ctx.strokeStyle = '#2a2f3a';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pad.l, pad.t);
+    ctx.lineTo(pad.l, pad.t+h);
+    ctx.lineTo(pad.l+w, pad.t+h);
+    ctx.stroke();
+
+    // y ticks
+    ctx.fillStyle = '#8b90a0';
+    ctx.font = '12px system-ui';
+    const yt = niceTicks(y0, y1, 5);
+    yt.forEach(v=>{
+      const y = pad.t + h - (v - y0) / (y1 - y0) * h;
+      ctx.strokeStyle = '#2a2f3a';
+      ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l+w, y); ctx.stroke();
+      ctx.fillText(opts.yFmt ? opts.yFmt(v) : fmt(v), 8, y+4);
+    });
+
+    // x ticks (0..90 %)
+    const xt = [0,10,20,30,40,50,60,70,80,90];
+    xt.forEach(v=>{
+      const x = pad.l + (v - xmin)/(xmax - xmin)*w;
+      ctx.strokeStyle = '#2a2f3a';
+      ctx.beginPath(); ctx.moveTo(x, pad.t+h); ctx.lineTo(x, pad.t+h+4); ctx.stroke();
+      ctx.fillStyle = '#8b90a0';
+      ctx.fillText(v+'%', x-10, pad.t+h+18);
+    });
+
+    // line
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = opts.color || '#8ad1ff';
+    ctx.beginPath();
+    xs.forEach((xv,i)=>{
+      const yv = ys[i];
+      const x = pad.l + (xv - xmin)/(xmax - xmin)*w;
+      const y = pad.t + h - (yv - y0)/(y1 - y0)*h;
+      if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+
+    // title
+    if (opts.title){
+      ctx.fillStyle = '#8b90a0'; ctx.font = '12px system-ui';
+      ctx.fillText(opts.title, pad.l, pad.t+14);
+    }
+  }
+
+  // Setup hover tooltip for a chart
+  function setupChartHover(canvas, tooltipId, labelFn){
+    let tooltip = document.getElementById(tooltipId);
+    if (!tooltip){
+      tooltip = document.createElement('div');
+      tooltip.id = tooltipId;
+      tooltip.className = 'tooltip';
+      document.body.appendChild(tooltip);
+    }
+
+    canvas.addEventListener('mousemove', (e)=>{
+      const data = canvas._chartData;
+      if (!data) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      // Check if mouse is in chart area
+      if (x < data.pad.l || x > data.pad.l + data.w || y < data.pad.t || y > data.pad.t + data.h){
+        tooltip.style.display = 'none';
+        return;
+      }
+
+      // Find closest point on the line (interpolate between data points)
+      const xValue = data.xmin + (x - data.pad.l) / data.w * (data.xmax - data.xmin);
+      
+      // Find the two data points to interpolate between
+      let idx = 0;
+      for (let i=0; i<data.xs.length-1; i++){
+        if (xValue >= data.xs[i] && xValue <= data.xs[i+1]){
+          idx = i;
+          break;
+        }
+      }
+      if (xValue > data.xs[data.xs.length-1]) idx = data.xs.length - 2;
+      
+      // Interpolate (handle dual-axis case)
+      const x1 = data.xs[idx];
+      const x2 = data.xs[idx+1];
+      const t = (xValue - x1) / (x2 - x1);
+      const xv = xValue;
+      
+      let yv;
+      if (data.ys1 && data.ys2){
+        // Dual-axis chart - use first series for distance calculation
+        const y1 = data.ys1[idx];
+        const y2 = data.ys1[idx+1];
+        yv = y1 + (y2 - y1) * t;
+        const py = data.pad.t + data.h - (yv - data.y10)/(data.y11 - data.y10)*data.h;
+        const distToLine = Math.abs(y - py);
+        if (distToLine > 30) return;
+      } else {
+        // Single-axis chart
+        const y1 = data.ys[idx];
+        const y2 = data.ys[idx+1];
+        yv = y1 + (y2 - y1) * t;
+        const py = data.pad.t + data.h - (yv - data.y0)/(data.y1 - data.y0)*data.h;
+        const distToLine = Math.abs(y - py);
+        if (distToLine > 30){
+          tooltip.style.display = 'none';
+          return;
+        }
+      }
+
+      // Show tooltip
+      const label = labelFn(xv, yv, idx);
+      tooltip.innerHTML = label;
+      tooltip.style.display = 'block';
+      tooltip.style.left = (e.clientX + 10) + 'px';
+      tooltip.style.top = (e.clientY - 10) + 'px';
+      
+      // Prevent tooltip from going off screen
+      if (e.clientX + tooltip.offsetWidth + 20 > window.innerWidth){
+        tooltip.style.left = (e.clientX - tooltip.offsetWidth - 10) + 'px';
+      }
+      if (e.clientY + tooltip.offsetHeight + 20 > window.innerHeight){
+        tooltip.style.top = (e.clientY - tooltip.offsetHeight - 10) + 'px';
+      }
+    });
+
+    canvas.addEventListener('mouseleave', ()=>{
+      tooltip.style.display = 'none';
+    });
+  }
+
+  // Round tick to nearest tick spacing (200 for 1% fee tier)
+  function roundToTickSpacing(tick){
+    const TICK_SPACING = 60;
+    return Math.round(tick / TICK_SPACING) * TICK_SPACING;
+  }
+
+  // main compute
+  function recompute(){
+    const totalSupply = parseFloat($('totalSupply').value || '0');
+    const creatorPct  = parseFloat($('creatorPct').value  || '0');
+    const minInitEth  = parseFloat($('minInitEth').value  || '0');
+    const feePct      = parseFloat($('feePct').value      || '0');
+    let tickLower   = parseInt($('tickLower').value,10);
+    let tickUpper   = parseInt($('tickUpper').value,10);
+    const startOffset = parseInt($('startOffset').value,10) || 1;
+
+    // Round ticks to nearest 200 (tick spacing)
+    tickLower = roundToTickSpacing(tickLower);
+    tickUpper = roundToTickSpacing(tickUpper);
+    
+    // Update input fields if they were rounded
+    if (parseInt($('tickLower').value, 10) !== tickLower){
+      $('tickLower').value = tickLower;
+    }
+    if (parseInt($('tickUpper').value, 10) !== tickUpper){
+      $('tickUpper').value = tickUpper;
+    }
+
+    const warn = $('warn');
+    warn.textContent = '';
+
+    if (!(tickLower < tickUpper)){
+      warn.innerHTML = '<span class="bad">tickLower must be &lt; tickUpper.</span>';
+      return;
+    }
+    if (minInitEth < 0){
+      warn.innerHTML = '<span class="bad">Min initial liquidity cannot be negative.</span>';
+      return;
+    }
+
+    const available = totalSupply * (1 - creatorPct/100);
+
+    // sqrt prices
+    const sqrtA = sqrtFromTick(tickLower);                 // √pa
+    const sqrtB = sqrtFromTick(tickUpper);                 // √pb
+    const A = sqrtA;
+    const invSqrtB = 1 / sqrtB;                            // 1/√pb
+
+    // target starting √price s = √pa + Y/L, but L unknown; we solve L with:
+    // (A*B - 1) L^2 + (X*A + B*Y) L + X*Y = 0  where B = 1/√pb, X=available, Y=minInitEth.
+    const X = available;
+    const Y = minInitEth;
+
+    const c2 = (A * invSqrtB - 1);
+    const c1 = (X * A + invSqrtB * Y);
+    const c0 = (X * Y);
+
+    const roots = solveQuadratic(c2,c1,c0).filter(r => isFinite(r) && r > 0);
+    if (roots.length === 0){
+      warn.innerHTML = '<span class="bad">No valid liquidity solution for these inputs. Try increasing min initial liquidity or adjusting ticks.</span>';
+      return;
+    }
+
+    // choose the root that yields a start price in (√pa, √pb)
+    let L = null, s0 = null;
+    for (const r of roots){
+      const s = A + (Y / r); // √p0
+      if (s > A && s < sqrtB){ L = r; s0 = s; break; }
+    }
+    if (!L){
+      // fallback: pick the first root and clamp s into range
+      L = roots[0];
+      s0 = clamp(A + (Y/L), A * 1.0000001, sqrtB * 0.999999);
+      warn.innerHTML = '<span class="bad">Adjusted start √price into range; check inputs.</span>';
+    }
+
+    // derived start tick/price
+    const p0 = priceFromSqrt(s0); // ETH/token
+    const startTick = Math.round(Math.log(p0) / Math.log(1.0001));
+
+    // sanity: implied token1 between A and s0 should be ~Y
+    const impliedY = L * (s0 - A);
+
+    // compute series (0..100%)
+    const xs = [];
+    const priceSeries = [];
+    const costSeries = [];
+
+    // helper: √price after buying cumulative tokens xCum
+    function sqrtAfter(xCum){
+      const invStart = 1 / s0;
+      const invNew = invStart - (xCum / L);
+      return invNew <= invSqrtB ? sqrtB : (1 / invNew);
+    }
+
+    const steps = 100;
+    for (let i=0;i<=steps;i++){
+      const pct = i;
+      const xCum = X * (pct/100);
+      const s = sqrtAfter(xCum);
+      const price = priceFromSqrt(s); // ETH/token
+      const cumEth = L * (s - s0);
+      // Fee is taken from user's payment before swap, so: gross = cumEth / (1 - feePct/100)
+      const gross = feePct >= 100 ? Infinity : cumEth / (1 - feePct/100);
+      xs.push(pct);
+      priceSeries.push(price);
+      costSeries.push(gross);
+    }
+
+    // update combined chart
+    drawDualAxisChart($('combinedChart'), xs, priceSeries, costSeries, {
+      color: '#8ad1ff',
+      yFmt: v => fmt(v, 8),
+      label: 'Price per Token'
+    }, {
+      color: '#9affb5',
+      yFmt: v => fmt(v, 6),
+      label: 'Cumulative ETH'
+    });
+
+    // Setup hover tooltip for combined chart
+    setupChartHover($('combinedChart'), 'combinedTooltip', (pct, val, idx)=>{
+      const data = $('combinedChart')._chartData;
+      if (!data) return '';
+      
+      // Get interpolated values
+      const xValue = pct;
+      let price, cost;
+      
+      // Find the two data points to interpolate between
+      let i = 0;
+      for (let j=0; j<data.xs.length-1; j++){
+        if (xValue >= data.xs[j] && xValue <= data.xs[j+1]){
+          i = j;
+          break;
+        }
+      }
+      if (xValue > data.xs[data.xs.length-1]) i = data.xs.length - 2;
+      
+      const t = (xValue - data.xs[i]) / (data.xs[i+1] - data.xs[i]);
+      price = data.ys1[i] + (data.ys1[i+1] - data.ys1[i]) * t;
+      cost = data.ys2[i] + (data.ys2[i+1] - data.ys2[i]) * t;
+      
+      return `
+        <div class="label">Supply Purchased</div>
+        <div class="value">${pct.toFixed(1)}%</div>
+        <div class="label" style="margin-top:6px;">Price per Token</div>
+        <div class="value" style="color:#8ad1ff">${fmt(price, 8)} ETH</div>
+        <div class="label" style="margin-top:6px;">Cumulative ETH Cost</div>
+        <div class="value" style="color:#9affb5">${fmt(cost, 6)} ETH</div>
+      `;
+    });
+
+    // table
+    const tbody = $('results').querySelector('tbody');
+    tbody.innerHTML = '';
+    const percents = $('percents').value.split(',').map(s=>parseFloat(s.trim())).filter(v=>isFinite(v)&&v>0&&v<=100).sort((a,b)=>a-b);
+
+    let prevPct = 0;
+    let prevS = s0;
+    let prevCumEth = 0;
+    let prevPrice = priceFromSqrt(s0);
+
+    percents.forEach(pct=>{
+      const xCum = X * (pct/100);
+      const s = sqrtAfter(xCum);
+      const price = priceFromSqrt(s);
+      const cumEth = L * (s - s0);
+      // Fee is taken from user's payment before swap, so: gross = cumEth / (1 - feePct/100)
+      const cumGross = feePct >= 100 ? Infinity : cumEth / (1 - feePct/100);
+
+      // incrementals
+      const xPrev = X * (prevPct/100);
+      const sPrev = prevS;
+      const incEth = L * (s - sPrev);
+      // Fee is taken from user's payment before swap, so: gross = incEth / (1 - feePct/100)
+      const incGross = feePct >= 100 ? Infinity : incEth / (1 - feePct/100);
+      const tokensInc = X * ((pct - prevPct)/100);
+
+      // Calculate ETH per 1% price move using lagging 1% price movement
+      // Find the price that's 1% lower than current price
+      const targetPrice = price / 1.01; // 1% lower
+      const targetSqrt = Math.sqrt(targetPrice);
+      
+      // Find where on the curve this target sqrt price occurs
+      // Formula: sqrtAfter(x) = 1 / (1/s0 - x/L)
+      // So: targetSqrt = 1 / (1/s0 - xTarget/L)
+      // Therefore: xTarget = L * (1/s0 - 1/targetSqrt)
+      let ethPer1Pct = 'N/A';
+      
+      if (targetSqrt >= s0 && targetSqrt < s){
+        // Target is between start and current position
+        const invS0 = 1 / s0;
+        const invTargetSqrt = 1 / targetSqrt;
+        const xTarget = L * (invS0 - invTargetSqrt);
+        
+        if (xTarget >= 0 && xTarget <= xCum){
+          // Calculate ETH cost for moving from target price to current price (1% move)
+          // Fee is taken from user's payment before swap, so: gross = baseEth / (1 - feePct/100)
+          const ethFor1PctMoveBase = L * (s - targetSqrt);
+          const ethFor1PctMove = feePct >= 100 ? Infinity : ethFor1PctMoveBase / (1 - feePct/100);
+          ethPer1Pct = fmt(ethFor1PctMove, 6);
+        } else if (prevPct > 0){
+          // Fallback: use previous segment's price change
+          const priceChangePct = ((price - prevPrice) / prevPrice) * 100;
+          if (priceChangePct > 0){
+            ethPer1Pct = fmt(incGross / priceChangePct, 6);
+          }
+        }
+      } else if (prevPct > 0){
+        // Fallback: use previous segment's price change
+        const priceChangePct = ((price - prevPrice) / prevPrice) * 100;
+        if (priceChangePct > 0){
+          ethPer1Pct = fmt(incGross / priceChangePct, 6);
+        }
+      }
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${pct}%</td>
+        <td class="right">${fmt(tokensInc, 2)}</td>
+        <td class="right">${ethPer1Pct}</td>
+        <td class="right">${fmt(cumGross, 6)}</td>
+        <td class="right">${fmt(price, 6)}</td>
+      `;
+      tbody.appendChild(tr);
+
+      prevPct = pct;
+      prevS = s;
+      prevCumEth = cumGross;
+      prevPrice = price;
+    });
+
+    // Creator dump analysis: Find where dumping creator allocation causes >50% price drop
+    const creatorAllocation = totalSupply * (creatorPct / 100);
+    let dumpThreshold = null;
+    let dumpThresholdPct = null;
+    let dumpPriceBefore = null;
+    let dumpPriceAfter = null;
+    
+    // Check at various supply percentages
+    for (let testPct = 0; testPct <= 100; testPct += 1){
+      const xCum = X * (testPct / 100);
+      const sCurrent = sqrtAfter(xCum);
+      const priceBefore = priceFromSqrt(sCurrent);
+      
+      // Calculate sqrt price after selling creator allocation
+      // Formula: tokens_sold = L * (1/sqrt(p_new) - 1/sqrt(p_old))
+      // So: 1/sqrt(p_new) = 1/sqrt(p_old) + tokens_sold / L
+      const invSqrtCurrent = 1 / sCurrent;
+      const invSqrtAfterDump = invSqrtCurrent + (creatorAllocation / L);
+      
+      // Check if we've hit the upper bound
+      if (invSqrtAfterDump <= invSqrtB){
+        // Price would drop to minimum (at tickUpper)
+        const priceAfter = priceFromSqrt(sqrtB);
+        const priceDrop = (priceAfter / priceBefore);
+        if (priceDrop < 0.5){
+          dumpThreshold = testPct;
+          dumpThresholdPct = testPct;
+          dumpPriceBefore = priceBefore;
+          dumpPriceAfter = priceAfter;
+          break;
+        }
+      } else {
+        const sAfterDump = 1 / invSqrtAfterDump;
+        const priceAfter = priceFromSqrt(sAfterDump);
+        const priceDrop = (priceAfter / priceBefore);
+        
+        if (priceDrop < 0.5){
+          dumpThreshold = testPct;
+          dumpThresholdPct = testPct;
+          dumpPriceBefore = priceBefore;
+          dumpPriceAfter = priceAfter;
+          break;
+        }
+      }
+    }
+    
+    // Display creator dump analysis (with 4 risk levels)
+    const creatorTokensStr = fmt(creatorAllocation, 0);
+    let html = '';
+
+    if (dumpThreshold === null) {
+      // ULTRA SAFE: No threshold found between 0-100% sold
+      html = `
+        <span class="good">✓ ULTRA SAFE</span>
+        <span style="margin-left:6px; color:var(--muted);">No point between 0-100% sold where selling all ${creatorTokensStr} tokens (${creatorPct}% of supply) would drop price more than 50%.</span>
+      `;
+    } else {
+      const dropPct = ((dumpPriceBefore - dumpPriceAfter) / dumpPriceBefore * 100).toFixed(1);
+      const thresholdPctStr = dumpThresholdPct.toFixed(1);
+      
+      if (dumpThresholdPct <= 50) {
+        // STOP ALERT: ≤50% of tokens sold
+        html = `
+          <span class="bad">⛔ STOP</span>
+          <span style="margin-left:6px; color:var(--muted);">At ${thresholdPctStr}% sold, a full creator dump would crash price by ${dropPct}% (>50%).</span>
+          <div style="font-size:12px; color:var(--muted); margin-top:4px;">
+            Before: ${fmt(dumpPriceBefore, 8)} ETH → After: ${fmt(dumpPriceAfter, 8)} ETH
+          </div>
+        `;
+      } else if (dumpThresholdPct < 80) {
+        // WARNING: >50% but <80% of tokens sold
+        html = `
+          <span style="color:#ffb300; font-weight:600;">⚠ WARNING</span>
+          <span style="margin-left:6px; color:var(--muted);">At ${thresholdPctStr}% sold, a full creator dump would crash price by ${dropPct}% (>50%).</span>
+          <div style="font-size:12px; color:var(--muted); margin-top:4px;">
+            Before: ${fmt(dumpPriceBefore, 8)} ETH → After: ${fmt(dumpPriceAfter, 8)} ETH
+          </div>
+        `;
+      } else {
+        // SAFE: ≥80% of tokens sold
+        html = `
+          <span class="good">✓ SAFE</span>
+          <span style="margin-left:6px; color:var(--muted);">The >50% crash threshold is at ${thresholdPctStr}% sold (≥80%).</span>
+          <div style="font-size:12px; color:var(--muted); margin-top:4px;">
+            Before: ${fmt(dumpPriceBefore, 8)} ETH → After: ${fmt(dumpPriceAfter, 8)} ETH
+          </div>
+        `;
+      }
+    }
+
+    $('creatorDumpAnalysis').innerHTML = html;
+
+    // KPIs
+    $('availTokens').textContent = fmt(X, 2);
+    $('startPrice').textContent  = fmt(p0, 8);
+    $('liqL').textContent        = fmt(L, 6);
+    $('initEthImplied').textContent = fmt(impliedY, 6);
+    $('upperPrice').textContent  = fmt(priceFromSqrt(sqrtB), 6);
+    $('startTick').textContent   = startTick.toString();
+
+    // Fee breakdown calculation
+    // Use feePct from top-level input as the total fee
+    const totalFeePct = feePct;
+    const creatorFeePct = parseFloat($('creatorFeePct').value || '25');
+    const rareBurnPct = parseFloat($('rareBurnPct').value || '50');
+    const protocolPct = parseFloat($('protocolPct').value || '30');
+    const referrerPct = parseFloat($('referrerPct').value || '20');
+
+    // Convert percentages to BPS for calculations
+    const totalFeeBPS = totalFeePct * 100;
+    const creatorFeeBPS = creatorFeePct * 100;
+
+    // Normalize remainder percentages (in case they don't sum to 100%)
+    const remainderTotal = rareBurnPct + protocolPct + referrerPct;
+    const rareBurnNorm = remainderTotal > 0 ? rareBurnPct / remainderTotal : 0;
+    const protocolNorm = remainderTotal > 0 ? protocolPct / remainderTotal : 0;
+    const referrerNorm = remainderTotal > 0 ? referrerPct / remainderTotal : 0;
+
+    // Calculate fees for each volume level
+    const feeTbody = $('feeBreakdown').querySelector('tbody');
+    feeTbody.innerHTML = '';
+
+    // Parse volume levels
+    const volumeLevelsStr = $('volumeLevels').value || '1,5,10,25,50,100,1000';
+    const volumeLevels = volumeLevelsStr.split(',').map(s => parseFloat(s.trim())).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
+
+    volumeLevels.forEach(targetVolume => {
+      // Calculate fees directly from volume (fees are collected on both buys and sells)
+      const totalFees = targetVolume * (totalFeeBPS / 10000);
+      const creatorFee = totalFees * (creatorFeeBPS / 10000);
+      const remainder = totalFees - creatorFee;
+      const rareBurnFee = remainder * rareBurnNorm;
+      const protocolFee = remainder * protocolNorm;
+      const referrerFee = remainder * referrerNorm;
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${fmt(targetVolume, 2)} ETH</td>
+        <td class="right">${fmt(totalFees, 6)}</td>
+        <td class="right">${fmt(creatorFee, 6)}</td>
+        <td class="right">${fmt(rareBurnFee, 6)}</td>
+        <td class="right">${fmt(protocolFee, 6)}</td>
+        <td class="right">${fmt(referrerFee, 6)}</td>
+      `;
+      feeTbody.appendChild(tr);
+    });
+  }
+
+  // events
+  ['totalSupply','creatorPct','minInitEth','startOffset','feePct','percents','creatorFeePct','volumeLevels']
+    .forEach(id => $(id).addEventListener('input', recompute));
+
+  // Handle tick input changes with rounding
+  function handleTickInput(id){
+    const input = $(id);
+    input.addEventListener('input', ()=>{
+      const value = parseInt(input.value, 10);
+      if (!isNaN(value)){
+        const rounded = roundToTickSpacing(value);
+        if (rounded !== value){
+          input.value = rounded;
+        }
+        recompute();
+      }
+    });
+    input.addEventListener('blur', ()=>{
+      const value = parseInt(input.value, 10);
+      if (!isNaN(value)){
+        const rounded = roundToTickSpacing(value);
+        input.value = rounded;
+        recompute();
+      }
+    });
+  }
+
+  handleTickInput('tickLower');
+  handleTickInput('tickUpper');
+
+  // Dual-handle range slider for tick range
+  (function(){
+    const MIN_TICK = -200000;
+    const MAX_TICK = 200000;
+    const slider = $('tickRangeSlider');
+    const handleLower = $('handleLower');
+    const handleUpper = $('handleUpper');
+    const rangeFill = $('rangeFill');
+    const valueLower = $('valueLower');
+    const valueUpper = $('valueUpper');
+    const inputLower = $('tickLower');
+    const inputUpper = $('tickUpper');
+    
+    let dragging = null;
+    let sliderRect = null;
+    
+    function valueToPercent(value){
+      return ((value - MIN_TICK) / (MAX_TICK - MIN_TICK)) * 100;
+    }
+    
+    function percentToValue(percent){
+      return MIN_TICK + (percent / 100) * (MAX_TICK - MIN_TICK);
+    }
+    
+    function updateSlider(){
+      const lowerRaw = parseInt(inputLower.value, 10);
+      const upperRaw = parseInt(inputUpper.value, 10);
+      const lower = isNaN(lowerRaw) ? MIN_TICK : lowerRaw;
+      const upper = isNaN(upperRaw) ? MAX_TICK : upperRaw;
+      
+      const lowerPct = Math.max(0, Math.min(100, valueToPercent(lower)));
+      const upperPct = Math.max(0, Math.min(100, valueToPercent(upper)));
+      
+      handleLower.style.left = lowerPct + '%';
+      handleUpper.style.left = upperPct + '%';
+      
+      const left = Math.min(lowerPct, upperPct);
+      const width = Math.abs(upperPct - lowerPct);
+      rangeFill.style.left = left + '%';
+      rangeFill.style.width = width + '%';
+      
+      valueLower.textContent = lower.toLocaleString();
+      valueUpper.textContent = upper.toLocaleString();
+    }
+    
+    function getValueFromEvent(e){
+      sliderRect = slider.getBoundingClientRect();
+      const x = (e.clientX || (e.touches && e.touches[0].clientX)) - sliderRect.left;
+      const percent = Math.max(0, Math.min(100, (x / sliderRect.width) * 100));
+      return percentToValue(percent);
+    }
+    
+    function startDrag(e, handle){
+      e.preventDefault();
+      dragging = handle;
+      sliderRect = slider.getBoundingClientRect();
+      document.addEventListener('mousemove', onDrag);
+      document.addEventListener('mouseup', stopDrag);
+      document.addEventListener('touchmove', onDrag);
+      document.addEventListener('touchend', stopDrag);
+    }
+    
+    function onDrag(e){
+      if (!dragging) return;
+      const value = Math.round(getValueFromEvent(e));
+      const clampedValue = Math.max(MIN_TICK, Math.min(MAX_TICK, value));
+      const roundedValue = roundToTickSpacing(clampedValue);
+      
+      if (dragging === handleLower){
+        const upperRaw = parseInt(inputUpper.value, 10);
+        const upper = isNaN(upperRaw) ? MAX_TICK : upperRaw;
+        const newValue = Math.min(roundedValue, roundToTickSpacing(upper) - 200); // Ensure at least 200 spacing
+        inputLower.value = newValue;
+      } else {
+        const lowerRaw = parseInt(inputLower.value, 10);
+        const lower = isNaN(lowerRaw) ? MIN_TICK : lowerRaw;
+        const newValue = Math.max(roundedValue, roundToTickSpacing(lower) + 200); // Ensure at least 200 spacing
+        inputUpper.value = newValue;
+      }
+      
+      updateSlider();
+      recompute();
+    }
+    
+    function stopDrag(){
+      dragging = null;
+      document.removeEventListener('mousemove', onDrag);
+      document.removeEventListener('mouseup', stopDrag);
+      document.removeEventListener('touchmove', onDrag);
+      document.removeEventListener('touchend', stopDrag);
+    }
+    
+    handleLower.addEventListener('mousedown', (e) => startDrag(e, handleLower));
+    handleUpper.addEventListener('mousedown', (e) => startDrag(e, handleUpper));
+    handleLower.addEventListener('touchstart', (e) => startDrag(e, handleLower));
+    handleUpper.addEventListener('touchstart', (e) => startDrag(e, handleUpper));
+    
+    // Sync slider when inputs change
+    inputLower.addEventListener('input', updateSlider);
+    inputUpper.addEventListener('input', updateSlider);
+    
+    // Initial update
+    updateSlider();
+  })();
+
+  // Fee split slider (ensures percentages sum to 100%)
+  (function(){
+    const slider = $('feeSplitSlider');
+    const handle1 = $('feeHandle1'); // RARE Burn
+    const handle2 = $('feeHandle2'); // Protocol
+    const fill1 = $('feeFill1');
+    const fill2 = $('feeFill2');
+    const fill3 = $('feeFill3');
+    const value1 = $('feeValue1');
+    const value2 = $('feeValue2');
+    const rareBurnLabel = $('rareBurnLabel');
+    const protocolLabel = $('protocolLabel');
+    const referrerLabel = $('referrerLabel');
+    const rareBurnText = $('rareBurnText');
+    const protocolText = $('protocolText');
+    const referrerText = $('referrerText');
+    const inputRareBurn = $('rareBurnPct');
+    const inputProtocol = $('protocolPct');
+    const inputReferrer = $('referrerPct');
+    
+    let dragging = null;
+    let sliderRect = null;
+    
+    function percentToValue(percent){
+      return percent; // 0-100 range
+    }
+    
+    function valueToPercent(value){
+      return Math.max(0, Math.min(100, value));
+    }
+    
+    function updateFeeSlider(){
+      const rareBurn = parseFloat(inputRareBurn.value) || 50;
+      const protocol = parseFloat(inputProtocol.value) || 30;
+      const referrer = 100 - rareBurn - protocol;
+      
+      // Clamp values to valid ranges
+      const rareBurnClamped = Math.max(0, Math.min(100, rareBurn));
+      const protocolClamped = Math.max(0, Math.min(100 - rareBurnClamped, protocol));
+      const referrerClamped = 100 - rareBurnClamped - protocolClamped;
+      
+      // Update inputs
+      inputRareBurn.value = rareBurnClamped.toFixed(1);
+      inputProtocol.value = protocolClamped.toFixed(1);
+      inputReferrer.value = referrerClamped.toFixed(1);
+      
+      // Update slider positions
+      const rareBurnPct = rareBurnClamped;
+      const protocolPct = protocolClamped;
+      const referrerPct = referrerClamped;
+      
+      handle1.style.left = rareBurnPct + '%';
+      handle2.style.left = (rareBurnPct + protocolPct) + '%';
+      
+      // Update fills
+      fill1.style.left = '0%';
+      fill1.style.width = rareBurnPct + '%';
+      fill2.style.left = rareBurnPct + '%';
+      fill2.style.width = protocolPct + '%';
+      fill3.style.left = (rareBurnPct + protocolPct) + '%';
+      fill3.style.width = referrerPct + '%';
+      
+      // Update text labels - center them in each section
+      if (rareBurnPct > 5) {
+        rareBurnText.style.display = 'block';
+        rareBurnText.style.left = (rareBurnPct / 2) + '%';
+        rareBurnText.style.width = 'auto';
+        rareBurnText.style.transform = 'translateX(-50%) translateY(-50%)';
+      } else {
+        rareBurnText.style.display = 'none';
+      }
+      
+      if (protocolPct > 5) {
+        protocolText.style.display = 'block';
+        protocolText.style.left = (rareBurnPct + protocolPct / 2) + '%';
+        protocolText.style.width = 'auto';
+        protocolText.style.transform = 'translateX(-50%) translateY(-50%)';
+      } else {
+        protocolText.style.display = 'none';
+      }
+      
+      if (referrerPct > 5) {
+        referrerText.style.display = 'block';
+        referrerText.style.left = (rareBurnPct + protocolPct + referrerPct / 2) + '%';
+        referrerText.style.width = 'auto';
+        referrerText.style.transform = 'translateX(-50%) translateY(-50%)';
+      } else {
+        referrerText.style.display = 'none';
+      }
+      
+      // Update labels
+      value1.textContent = rareBurnClamped.toFixed(1) + '%';
+      value2.textContent = protocolClamped.toFixed(1) + '%';
+      rareBurnLabel.textContent = rareBurnClamped.toFixed(1) + '%';
+      protocolLabel.textContent = protocolClamped.toFixed(1) + '%';
+      referrerLabel.textContent = referrerClamped.toFixed(1) + '%';
+    }
+    
+    function getValueFromEvent(e){
+      sliderRect = slider.getBoundingClientRect();
+      const x = (e.clientX || (e.touches && e.touches[0].clientX)) - sliderRect.left;
+      const percent = Math.max(0, Math.min(100, (x / sliderRect.width) * 100));
+      return percent;
+    }
+    
+    function startDrag(e, handle){
+      e.preventDefault();
+      dragging = handle;
+      sliderRect = slider.getBoundingClientRect();
+      document.addEventListener('mousemove', onDrag);
+      document.addEventListener('mouseup', stopDrag);
+      document.addEventListener('touchmove', onDrag);
+      document.addEventListener('touchend', stopDrag);
+    }
+    
+    function onDrag(e){
+      if (!dragging) return;
+      const percent = getValueFromEvent(e);
+      
+      const currentRareBurn = parseFloat(inputRareBurn.value) || 50;
+      const currentProtocol = parseFloat(inputProtocol.value) || 30;
+      
+      if (dragging === handle1){
+        // RARE Burn handle: can move 0-100%, but Protocol handle must follow
+        const newRareBurn = Math.max(0, Math.min(100, percent));
+        const maxProtocol = 100 - newRareBurn;
+        const newProtocol = Math.min(currentProtocol, maxProtocol);
+        inputRareBurn.value = newRareBurn.toFixed(1);
+        inputProtocol.value = newProtocol.toFixed(1);
+      } else if (dragging === handle2){
+        // Protocol handle: can move from RARE Burn position to 100%
+        // percent is absolute position (0-100%), so protocol = percent - rareBurn
+        const newRareBurn = currentRareBurn;
+        const maxProtocol = 100 - newRareBurn;
+        const protocolFromPercent = Math.max(0, percent - newRareBurn);
+        const newProtocol = Math.min(maxProtocol, protocolFromPercent);
+        inputProtocol.value = newProtocol.toFixed(1);
+      }
+      
+      updateFeeSlider();
+      recompute();
+    }
+    
+    function stopDrag(){
+      dragging = null;
+      document.removeEventListener('mousemove', onDrag);
+      document.removeEventListener('mouseup', stopDrag);
+      document.removeEventListener('touchmove', onDrag);
+      document.removeEventListener('touchend', stopDrag);
+    }
+    
+    handle1.addEventListener('mousedown', (e) => startDrag(e, handle1));
+    handle2.addEventListener('mousedown', (e) => startDrag(e, handle2));
+    handle1.addEventListener('touchstart', (e) => startDrag(e, handle1));
+    handle2.addEventListener('touchstart', (e) => startDrag(e, handle2));
+    
+    // Initial update
+    updateFeeSlider();
+  })();
+
+  $('exportCsv').addEventListener('click', ()=>{
+    const rows = [['Percent','Tokens (delta)','ETH (delta)','ETH (cumulative)','Price @ end (ETH/token)']];
+    const tbody = $('results').querySelector('tbody');
+    [...tbody.querySelectorAll('tr')].forEach(tr=>{
+      const cols = [...tr.children].map(td=>td.textContent);
+      rows.push(cols);
+    });
+    const csv = rows.map(r=>r.join(',')).join('\n');
+    const blob = new Blob([csv], {type:'text/csv'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'bonding-curve-sim.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+
+  // init
+  recompute();
+})();
+</script>
+</body>
+</html>
