@@ -117,9 +117,9 @@ contract RAREBurnerForkTest is Test {
         );
 
         // Verify it was set correctly - read individual state variables
-        address rareToken = testBurner.rareToken();
-        address v4PoolManager = testBurner.v4PoolManager();
-        address v4Quoter = testBurner.v4Quoter();
+        address rareToken = testBurner.RARE_TOKEN();
+        address v4PoolManager = testBurner.V4_POOL_MANAGER();
+        address v4Quoter = testBurner.V4_QUOTER();
         address storedBurnAddr = testBurner.burnAddress();
         uint16 maxSlippageBPS = testBurner.maxSlippageBPS();
 

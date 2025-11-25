@@ -67,28 +67,28 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
 
     // Pool & Routing Parameters (immutable after deployment - set in constructor)
     /// @notice RARE token address
-    address public immutable rareToken;
+    address public immutable RARE_TOKEN;
 
     /// @notice Uniswap V4 PoolManager
-    address public immutable v4PoolManager;
+    address public immutable V4_POOL_MANAGER;
 
     /// @notice Pool hooks contract (or address(0))
-    address public immutable v4Hooks;
+    address public immutable V4_HOOKS;
 
     /// @notice Optional quoter for slippage protection (or address(0))
-    address public immutable v4Quoter;
+    address public immutable V4_QUOTER;
 
     /// @notice Precomputed pool ID (correctness guard)
-    bytes32 public immutable v4PoolId;
+    bytes32 public immutable V4_POOL_ID;
 
     /// @notice Pool fee tier (e.g. 3000 for 0.3%)
-    uint24 public immutable v4PoolFee;
+    uint24 public immutable V4_POOL_FEE;
 
     /// @notice Pool tick spacing (e.g. 60)
-    int24 public immutable v4TickSpacing;
+    int24 public immutable V4_TICK_SPACING;
 
-    /// @notice True if native ETH is currency0 vs rareToken (cached computation)
-    bool public immutable ethIs0;
+    /// @notice True if native ETH is currency0 vs RARE_TOKEN (cached computation)
+    bool public immutable ETH_IS_0;
 
     /// @notice Destination for burned RARE tokens
     address public burnAddress;
@@ -137,66 +137,66 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
 
     /// @notice Creates a new RAREBurner with full configuration
     /// @dev Deploys RAREBurner with all parameters set. Full configuration is required on deployment.
-    ///      Pool parameters (rareToken, v4PoolManager, fee, tickSpacing, hooks) are immutable after deployment.
+    ///      Pool parameters (RARE_TOKEN, V4_POOL_MANAGER, fee, tickSpacing, hooks) are immutable after deployment.
     /// @param _owner Owner address for access control (typically protocol multisig)
     /// @param _tryOnDeposit Whether to auto-try burn on deposit (true) or require manual flush (false)
-    /// @param _rareToken The address of the RARE token to burn (must not be address(0))
-    /// @param _v4PoolManager The Uniswap V4 PoolManager contract address (must not be address(0))
+    /// @param _RARE_TOKEN The address of the RARE token to burn (must not be address(0))
+    /// @param _V4_POOL_MANAGER The Uniswap V4 PoolManager contract address (must not be address(0))
     /// @param _fee Pool fee tier (e.g. 3000 for 0.3%)
     /// @param _tickSpacing Pool tick spacing (e.g. 60)
     /// @param _hooks Pool hooks contract address (or address(0))
     /// @param _burnAddress Destination for burned RARE (must not be address(0))
-    /// @param _v4Quoter Optional Quoter address for slippage protection (required if maxSlippageBPS > 0)
+    /// @param _V4_QUOTER Optional Quoter address for slippage protection (required if maxSlippageBPS > 0)
     /// @param _maxSlippageBPS Maximum slippage in basis points (0-1000, max 10%)
     /// @param _enabled Whether burning is enabled
     constructor(
         address _owner,
         bool _tryOnDeposit,
-        address _rareToken,
-        address _v4PoolManager,
+        address _RARE_TOKEN,
+        address _V4_POOL_MANAGER,
         uint24 _fee,
         int24 _tickSpacing,
         address _hooks,
         address _burnAddress,
-        address _v4Quoter,
+        address _V4_QUOTER,
         uint16 _maxSlippageBPS,
         bool _enabled
     ) Ownable(_owner) {
         // Validate critical parameters - full configuration required
-        if (_rareToken == address(0)) revert IRAREBurner.AddressZero();
-        if (_v4PoolManager == address(0)) revert IRAREBurner.AddressZero();
+        if (_RARE_TOKEN == address(0)) revert IRAREBurner.AddressZero();
+        if (_V4_POOL_MANAGER == address(0)) revert IRAREBurner.AddressZero();
         if (_maxSlippageBPS > 1000)
             revert IRAREBurner.SlippageTooHigh(_maxSlippageBPS, 1000);
         if (_burnAddress == address(0)) revert IRAREBurner.AddressZero();
-        if (_maxSlippageBPS > 0 && _v4Quoter == address(0))
+        if (_maxSlippageBPS > 0 && _V4_QUOTER == address(0))
             revert IRAREBurner.AddressZero();
 
         // Store all configuration parameters
-        rareToken = _rareToken;
-        v4PoolManager = _v4PoolManager;
-        v4Hooks = _hooks;
-        v4Quoter = _v4Quoter;
+        RARE_TOKEN = _RARE_TOKEN;
+        V4_POOL_MANAGER = _V4_POOL_MANAGER;
+        V4_HOOKS = _hooks;
+        V4_QUOTER = _V4_QUOTER;
         burnAddress = _burnAddress;
-        v4PoolFee = _fee;
-        v4TickSpacing = _tickSpacing;
+        V4_POOL_FEE = _fee;
+        V4_TICK_SPACING = _tickSpacing;
         maxSlippageBPS = _maxSlippageBPS;
         enabled = _enabled;
         tryOnDeposit = _tryOnDeposit;
 
         // Compute and cache currency ordering
-        ethIs0 = uint160(address(0)) < uint160(_rareToken);
+        ETH_IS_0 = uint160(address(0)) < uint160(_RARE_TOKEN);
 
         // Build PoolKey and compute PoolId
         Currency ethC = Currency.wrap(address(0));
-        Currency rareC = Currency.wrap(_rareToken);
+        Currency rareC = Currency.wrap(_RARE_TOKEN);
         PoolKey memory key = PoolKey({
-            currency0: ethIs0 ? ethC : rareC,
-            currency1: ethIs0 ? rareC : ethC,
+            currency0: ETH_IS_0 ? ethC : rareC,
+            currency1: ETH_IS_0 ? rareC : ethC,
             fee: _fee,
             tickSpacing: _tickSpacing,
             hooks: IHooks(_hooks)
         });
-        v4PoolId = PoolId.unwrap(PoolIdLibrary.toId(key));
+        V4_POOL_ID = PoolId.unwrap(PoolIdLibrary.toId(key));
 
         // Emit configuration event
         emit ConfigUpdated(_enabled, _maxSlippageBPS);
@@ -288,27 +288,27 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
     function isRAREBurnActive() public view returns (bool) {
         return
             enabled &&
-            rareToken != address(0) &&
-            v4PoolManager != address(0) &&
-            v4PoolId != bytes32(0);
+            RARE_TOKEN != address(0) &&
+            V4_POOL_MANAGER != address(0) &&
+            V4_POOL_ID != bytes32(0);
     }
 
     /// @notice Validates that stored pool parameters recompute to stored PoolId
     /// @dev Used to detect misconfigurations that would cause silent burn failures
     /// @return ok True if PoolId matches recomputed value
     function validatePoolConfig() external view returns (bool ok) {
-        if (v4PoolId == bytes32(0) || rareToken == address(0)) return false;
+        if (V4_POOL_ID == bytes32(0) || RARE_TOKEN == address(0)) return false;
 
         Currency ethC = Currency.wrap(address(0));
-        Currency rareC = Currency.wrap(rareToken);
+        Currency rareC = Currency.wrap(RARE_TOKEN);
         PoolKey memory key = PoolKey({
-            currency0: ethIs0 ? ethC : rareC,
-            currency1: ethIs0 ? rareC : ethC,
-            fee: v4PoolFee,
-            tickSpacing: v4TickSpacing,
-            hooks: IHooks(v4Hooks)
+            currency0: ETH_IS_0 ? ethC : rareC,
+            currency1: ETH_IS_0 ? rareC : ethC,
+            fee: V4_POOL_FEE,
+            tickSpacing: V4_TICK_SPACING,
+            hooks: IHooks(V4_HOOKS)
         });
-        return PoolId.unwrap(PoolIdLibrary.toId(key)) == v4PoolId;
+        return PoolId.unwrap(PoolIdLibrary.toId(key)) == V4_POOL_ID;
     }
 
     // ============================================
@@ -382,42 +382,42 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
 
         // Build Uniswap V4 PoolKey from local settings (no external reads)
         Currency ethC = Currency.wrap(address(0));
-        Currency rareC = Currency.wrap(rareToken);
+        Currency rareC = Currency.wrap(RARE_TOKEN);
         PoolKey memory key = PoolKey({
-            currency0: ethIs0 ? ethC : rareC,
-            currency1: ethIs0 ? rareC : ethC,
-            fee: v4PoolFee,
-            tickSpacing: v4TickSpacing,
-            hooks: IHooks(v4Hooks)
+            currency0: ETH_IS_0 ? ethC : rareC,
+            currency1: ETH_IS_0 ? rareC : ethC,
+            fee: V4_POOL_FEE,
+            tickSpacing: V4_TICK_SPACING,
+            hooks: IHooks(V4_HOOKS)
         });
 
         // Verify PoolId matches config (critical security check)
         bytes32 computedId = PoolId.unwrap(PoolIdLibrary.toId(key));
-        if (computedId != v4PoolId) {
+        if (computedId != V4_POOL_ID) {
             // Pool config mismatch - do not attempt burn, keep funds pending
             emit BurnFailed(ethToUse, FAIL_CONFIG);
             return;
         }
 
         // Compute directional price limit (V4 requires non-zero)
-        uint160 priceLimit = ethIs0
+        uint160 priceLimit = ETH_IS_0
             ? V4TickMath.MIN_SQRT_PRICE + 1
             : V4TickMath.MAX_SQRT_PRICE - 1;
 
         // Calculate minOut using quoter if slippage protection is enabled
         uint256 minOut = 0;
-        if (maxSlippageBPS > 0 && v4Quoter != address(0)) {
+        if (maxSlippageBPS > 0 && V4_QUOTER != address(0)) {
             // Build params for V4 Quoter
             IV4Quoter.QuoteExactSingleParams memory params = IV4Quoter
                 .QuoteExactSingleParams({
                     poolKey: key,
-                    zeroForOne: ethIs0,
+                    zeroForOne: ETH_IS_0,
                     exactAmount: _toUint128Safe(ethToUse),
                     hookData: ""
                 });
 
             // V4 Quoter uses revert-to-simulate pattern
-            try IV4Quoter(v4Quoter).quoteExactInputSingle(params) returns (
+            try IV4Quoter(V4_QUOTER).quoteExactInputSingle(params) returns (
                 uint256 _amountOut,
                 uint256
             ) {
@@ -446,7 +446,7 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
         try
             this._executeV4Swap(
                 ethToUse,
-                v4PoolManager,
+                V4_POOL_MANAGER,
                 key,
                 priceLimit,
                 minOut,
@@ -465,7 +465,7 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
     /// @notice Executes V4 swap via unlock callback mechanism
     /// @dev External to enable try/catch in _tryFlush. Must be called by self.
     /// @param ethAmount Amount of ETH to swap
-    /// @param _v4PoolManager V4 PoolManager address
+    /// @param _V4_POOL_MANAGER V4 PoolManager address
     /// @param key Pool key for the swap
     /// @param priceLimit Price limit for the swap
     /// @param minOut Minimum RARE output (slippage protection)
@@ -473,7 +473,7 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
     /// @param _burnAddress Address to send burned RARE
     function _executeV4Swap(
         uint256 ethAmount,
-        address _v4PoolManager,
+        address _V4_POOL_MANAGER,
         PoolKey memory key,
         uint160 priceLimit,
         uint256 minOut,
@@ -492,7 +492,7 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
         );
 
         _v4BurnCtx = keccak256(data);
-        IPoolManager(_v4PoolManager).unlock(data);
+        IPoolManager(_V4_POOL_MANAGER).unlock(data);
 
         if (_v4BurnCtx != bytes32(0)) revert UnexpectedUnlock();
     }
@@ -503,7 +503,7 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
 
     /// @notice Implementation of IUnlockCallback for V4 RARE burn swaps
     /// @dev Called by Uniswap V4 PoolManager during unlock(). Executes ETH->RARE swap and burns RARE.
-    ///      Protected by one-shot context guard. Reads v4PoolManager from local storage.
+    ///      Protected by one-shot context guard. Reads V4_POOL_MANAGER from local storage.
     /// @param data Encoded swap data (ethAmount, key, priceLimit, minOut, rareC, burnAddress)
     /// @return Empty bytes (required by IUnlockCallback interface)
     function unlockCallback(
@@ -523,7 +523,7 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
             );
 
         // Verify caller is configured PoolManager (read from local storage, no external call)
-        if (msg.sender != v4PoolManager) revert OnlyPoolManager();
+        if (msg.sender != V4_POOL_MANAGER) revert OnlyPoolManager();
 
         // One-shot context guard
         if (_v4BurnCtx == bytes32(0) || _v4BurnCtx != keccak256(data))
@@ -531,21 +531,25 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
         _v4BurnCtx = bytes32(0);
 
         // Determine swap direction
-        bool _ethIs0 = Currency.unwrap(key.currency0) == address(0);
+        bool _ETH_IS_0 = Currency.unwrap(key.currency0) == address(0);
 
         // Prepare swap parameters
         IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
-            zeroForOne: _ethIs0,
+            zeroForOne: _ETH_IS_0,
             amountSpecified: -SafeCast.toInt256(ethAmount),
             sqrtPriceLimitX96: priceLimit
         });
 
         // Execute swap
-        BalanceDelta delta = IPoolManager(v4PoolManager).swap(key, params, "");
+        BalanceDelta delta = IPoolManager(V4_POOL_MANAGER).swap(
+            key,
+            params,
+            ""
+        );
 
         // Find amounts
-        int128 ethDelta = _ethIs0 ? delta.amount0() : delta.amount1();
-        int128 rareDelta = _ethIs0 ? delta.amount1() : delta.amount0();
+        int128 ethDelta = _ETH_IS_0 ? delta.amount0() : delta.amount1();
+        int128 rareDelta = _ETH_IS_0 ? delta.amount1() : delta.amount0();
 
         // Validate expected signs: ETH should be negative (paid), RARE should be positive (received)
         if (ethDelta >= 0 || rareDelta <= 0) revert UnexpectedSwapDirection();
@@ -558,10 +562,10 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
         if (minOut > 0 && rareOut < minOut) revert SlippageExceeded();
 
         // Settle ETH input
-        IPoolManager(v4PoolManager).settle{value: ethToPay}();
+        IPoolManager(V4_POOL_MANAGER).settle{value: ethToPay}();
 
         // Take RARE output
-        IPoolManager(v4PoolManager).take(rareC, address(this), rareOut);
+        IPoolManager(V4_POOL_MANAGER).take(rareC, address(this), rareOut);
 
         // Transfer RARE to burn address
         SafeERC20.safeTransfer(

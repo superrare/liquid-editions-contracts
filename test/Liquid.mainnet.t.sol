@@ -301,13 +301,13 @@ contract LiquidBaseMainnetTest is Test {
         console.log("Pool config validation: PASSED");
 
         // Verify configuration was set correctly - read individual state variables
-        address rareToken = testBurner.rareToken();
-        address v4PoolManager = testBurner.v4PoolManager();
-        address v4Hooks = testBurner.v4Hooks();
+        address rareToken = testBurner.RARE_TOKEN();
+        address v4PoolManager = testBurner.V4_POOL_MANAGER();
+        address v4Hooks = testBurner.V4_HOOKS();
         address storedBurnAddress = testBurner.burnAddress();
-        bytes32 v4PoolId = testBurner.v4PoolId();
-        uint24 v4PoolFee = testBurner.v4PoolFee();
-        int24 v4TickSpacing = testBurner.v4TickSpacing();
+        bytes32 v4PoolId = testBurner.V4_POOL_ID();
+        uint24 v4PoolFee = testBurner.V4_POOL_FEE();
+        int24 v4TickSpacing = testBurner.V4_TICK_SPACING();
         uint16 maxSlippageBPS = testBurner.maxSlippageBPS();
         bool enabled = testBurner.enabled();
 

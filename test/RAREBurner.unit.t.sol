@@ -74,13 +74,13 @@ contract RAREBurnerUnitTest is Test {
         );
 
         // Verify configuration was set - read individual state variables
-        address rareToken = burner.rareToken();
-        address v4PoolManager = burner.v4PoolManager();
-        address v4Hooks = burner.v4Hooks();
+        address rareToken = burner.RARE_TOKEN();
+        address v4PoolManager = burner.V4_POOL_MANAGER();
+        address v4Hooks = burner.V4_HOOKS();
         address storedBurnAddr = burner.burnAddress();
-        bytes32 v4PoolId = burner.v4PoolId();
-        uint24 v4PoolFee = burner.v4PoolFee();
-        int24 v4TickSpacing = burner.v4TickSpacing();
+        bytes32 v4PoolId = burner.V4_POOL_ID();
+        uint24 v4PoolFee = burner.V4_POOL_FEE();
+        int24 v4TickSpacing = burner.V4_TICK_SPACING();
         uint16 maxSlippageBPS = burner.maxSlippageBPS();
         bool enabled = burner.enabled();
 
