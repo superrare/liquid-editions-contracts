@@ -1,0 +1,31 @@
+# Foundry
+/out
+/cache
+/broadcast
+/deployments
+
+# Dependencies
+/lib
+
+# Environment variables
+.env
+.env_*
+.env.*
+
+# Hardhat files (legacy)
+/artifacts
+/typechain
+/typechain-types
+/coverage
+/coverage.json
+/ignition/deployments/chain-31337
+
+# Coverage reports
+/coverage-report
+lcov.info
+
+# Node.js
+node_modules
+
+/cursor-tasks
+
