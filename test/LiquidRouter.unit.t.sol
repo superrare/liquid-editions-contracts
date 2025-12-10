@@ -122,6 +122,7 @@ contract MockUniversalRouter {
     MockERC20 public token;
     uint256 public tokenPerEth = 1000e18; // 1000 tokens per ETH
     bool public shouldFail;
+    uint256 public pullAmountOverride;
 
     /// @notice Canonical Permit2 address (same on all chains)
     address internal constant PERMIT2 =
@@ -137,6 +138,10 @@ contract MockUniversalRouter {
 
     function setShouldFail(bool _fail) external {
         shouldFail = _fail;
+    }
+
+    function setPullAmountOverride(uint256 amount) external {
+        pullAmountOverride = amount;
     }
 
     /// @dev Mock execute function that simulates swaps
@@ -173,8 +178,15 @@ contract MockUniversalRouter {
             uint256 approved = token.allowance(msg.sender, PERMIT2);
             if (approved > 0) {
                 // Pull tokens (MockERC20 allows this if Permit2 is approved)
-                token.transferFrom(msg.sender, address(this), approved);
-                uint256 ethOut = (approved * 1e18) / tokenPerEth;
+                uint256 amountToPull = pullAmountOverride > 0
+                    ? pullAmountOverride
+                    : approved;
+
+                // Clamp to approved amount to avoid over-pulling
+                if (amountToPull > approved) amountToPull = approved;
+
+                token.transferFrom(msg.sender, address(this), amountToPull);
+                uint256 ethOut = (amountToPull * 1e18) / tokenPerEth;
                 (bool success, ) = msg.sender.call{value: ethOut}("");
                 require(success, "ETH transfer failed");
             }
@@ -683,6 +695,41 @@ contract LiquidRouterUnitTest is Test {
             user1,
             referrer,
             1000 ether, // Unreasonably high min out
+            abi.encodeWithSelector(
+                router.execute.selector,
+                "",
+                new bytes[](0),
+                block.timestamp
+            ),
+            block.timestamp + 1 hours
+        );
+    }
+
+    function testSellRevertsOnUnexpectedTokenRefund() public {
+        uint256 tokenAmount = 1000e18;
+        uint256 amountToPull = tokenAmount / 2;
+
+        vm.prank(user1);
+        token.approve(address(liquidRouter), tokenAmount);
+
+        // Configure mock Universal Router to only pull half the approved tokens
+        router.setPullAmountOverride(amountToPull);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ILiquidRouter.UnexpectedTokenRefund.selector,
+                tokenAmount,
+                tokenAmount - amountToPull
+            )
+        );
+
+        vm.prank(user1);
+        liquidRouter.sell(
+            address(token),
+            tokenAmount,
+            user1,
+            referrer,
+            1, // minEthOut (must be > 0)
             abi.encodeWithSelector(
                 router.execute.selector,
                 "",

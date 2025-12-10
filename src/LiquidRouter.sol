@@ -361,6 +361,16 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         IERC20(token).forceApprove(PERMIT2, 0);
         IPermit2(PERMIT2).approve(token, universalRouter, 0, 0);
 
+        // SECURITY: Ensure all tokens taken from the user were consumed by the Universal Router
+        // Mis-encoded routes (e.g., EXACT_OUTPUT or smaller input) would leave leftovers in the router
+        uint256 finalTokenBalance = IERC20(token).balanceOf(address(this));
+        if (finalTokenBalance != tokenBalanceBefore) {
+            uint256 leftover = finalTokenBalance > tokenBalanceBefore
+                ? finalTokenBalance - tokenBalanceBefore
+                : tokenBalanceBefore - finalTokenBalance;
+            revert UnexpectedTokenRefund(tokensReceived, leftover);
+        }
+
         // Measure how much ETH the swap produced
         uint256 ethBalanceAfter = address(this).balance;
         uint256 grossEthReceived = ethBalanceAfter - ethBalanceBefore;
