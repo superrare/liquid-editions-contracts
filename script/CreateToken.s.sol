@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {LiquidFactory} from "../src/LiquidFactory.sol";
+import {NetworkConfig} from "./NetworkConfig.sol";
 import {console} from "forge-std/console.sol";
 import {Script} from "forge-std/Script.sol";
 
@@ -9,7 +10,6 @@ contract CreateToken is Script {
     function run() external {
         // Load environment variables
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address factoryAddress = vm.envAddress("FACTORY_ADDRESS");
         address tokenCreator = vm.envAddress("TOKEN_CREATOR");
         string memory tokenURI = vm.envString("TOKEN_URI");
         string memory tokenName = vm.envString("TOKEN_NAME");
@@ -21,7 +21,30 @@ contract CreateToken is Script {
             initialEth = 0.001 ether; // Default to 0.001 ETH if not specified
         }
 
+        // Get chain ID from environment or use block.chainid
+        uint256 chainId;
+        try vm.envUint("CHAIN_ID") returns (uint256 _chainId) {
+            chainId = _chainId;
+        } catch {
+            chainId = block.chainid;
+        }
+
+        // Get factory address from NetworkConfig or environment override
+        address factoryAddress;
+        try vm.envAddress("FACTORY_ADDRESS") returns (address _factory) {
+            factoryAddress = _factory;
+        } catch {
+            NetworkConfig.Config memory config = NetworkConfig.getConfig(chainId);
+            factoryAddress = config.liquidFactory;
+        }
+
+        require(
+            factoryAddress != address(0),
+            "Factory address not configured. Set FACTORY_ADDRESS env var or update NetworkConfig.liquidFactory"
+        );
+
         console.log("Creating Liquid token...");
+        console.log("Chain ID:", chainId);
         console.log("Factory address:", factoryAddress);
         console.log("Token creator:", tokenCreator);
         console.log("Token name:", tokenName);
