@@ -58,8 +58,8 @@ library NetworkConfig {
                     uniswapV4PositionManager: 0x4B2C77d209D3405F41a037Ec6c77F7F5b8e2ca80,
                     uniswapV4Quoter: 0x4A6513c898fe1B2d0E78d3b0e0A4a151589B1cBa,
                     uniswapUniversalRouter: 0x95273d871c8156636e114b63797d78D7E1720d81,
-                    liquidFactory: 0x405273DB0f7615b25AA9fD4D9b1c9e86aFd6C95D,
-                    liquidRouter: 0x0000000000000000000000000000000000000000
+                    liquidFactory: 0xc265a84Dc7EeC0fc15f5F91B61C6C094e7De7116,
+                    liquidRouter: 0x137A81F1C8cC11B69179F8Bf6ACb7e53D7DBC50F
                 });
         } else if (chainId == 11155111) {
             // Ethereum Sepolia
@@ -73,8 +73,8 @@ library NetworkConfig {
                     uniswapV4PositionManager: 0x429ba70129df741B2Ca2a85BC3A2a3328e5c09b4,
                     uniswapV4Quoter: 0x61B3f2011A92d183C7dbaDBdA940a7555Ccf9227,
                     uniswapUniversalRouter: 0x3A9D48AB9751398BbFa63ad67599Bb04e4BdF98b,
-                    liquidFactory: 0x090b455579DE5e3DB03bE0dD32a39fC1bF8F0904,
-                    liquidRouter: 0x34a00cd690d892675da7B2Ded1B309EdAB6b6BAe
+                    liquidFactory: 0x94115c7215B238aA1aec1b62e154b29BBC511142,
+                    liquidRouter: 0x11D7eC6dAaf538aDd8b0AE3a8c37455508629F56
                 });
         }
         revert("NetworkConfig: Unsupported chain ID");

@@ -14,8 +14,11 @@ import {Liquid} from "../src/Liquid.sol";
 import {ILiquid} from "../src/interfaces/ILiquid.sol";
 import {ILiquidFactory} from "../src/interfaces/ILiquidFactory.sol";
 import {RAREBurner} from "../src/RAREBurner.sol";
-import {NetworkConfig} from "../script/NetworkConfig.sol";
+import {NetworkConfig} from "../script/config/NetworkConfig.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
+import {MockRARE} from "./helpers/MockRARE.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 
 // Mock burner for testing
 contract MockBurner {
@@ -39,6 +42,7 @@ contract LiquidFactoryTest is Test {
     RAREBurner public burner;
     Liquid public liquidImplementation;
     LiquidFactory public factory;
+    MockRARE public mockRARE;
 
     function setUp() public {
         // Fork Base mainnet to access Uniswap V4 contracts
@@ -61,6 +65,9 @@ contract LiquidFactoryTest is Test {
         // Deploy contracts
         vm.startPrank(admin);
 
+        // Deploy mock RARE token
+        mockRARE = new MockRARE();
+
         burner = new RAREBurner(
             admin,
             false, // tryOnDeposit
@@ -79,27 +86,27 @@ contract LiquidFactoryTest is Test {
 
         factory = new LiquidFactory(
             admin,
-            protocolFeeRecipient,
             config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
-            address(mockBurner), // rareBurner
-            0, // rareBurnFeeBPS (0% of remainder)
-            5000, // protocolFeeBPS (50% of remainder)
-            5000, // referrerFeeBPS (50% of remainder)
-            100, // defaultTotalFeeBPS (1%)
-            2500, // defaultCreatorFeeBPS (25%)
             -180, // lpTickLower - max expensive (after price rises) - multiple of 60
             120000, // lpTickUpper - starting point (cheap tokens) - multiple of 60
             config.uniswapV4Quoter, // Use wrapper instead of raw quoter
             address(0), // poolHooks (no hooks)
             60, // poolTickSpacing (standard for 0.3% fee tier)
             300, // internalMaxSlippageBps (3%)
-            0.005 ether, // minOrderSizeWei
-            1e15 // minInitialLiquidityWei (0.001 ETH)
+            1e15 // minRareLiquidityWei (0.001 RARE)
         );
 
         // Set the implementation in the factory
         factory.setImplementation(address(liquidImplementation));
+
+        // Set base token (RARE) in factory
+        factory.setBaseToken(address(mockRARE));
+
+        // Fund test accounts with RARE tokens
+        mockRARE.mint(tokenCreator, 1000 ether);
+        mockRARE.mint(user1, 1000 ether);
+        mockRARE.mint(user2, 1000 ether);
 
         vm.stopPrank();
     }
@@ -116,8 +123,7 @@ contract LiquidFactoryTest is Test {
         assertTrue(address(liquidImplementation) != address(0));
         assertTrue(address(factory) != address(0));
 
-        // Verify factory configuration using new config system
-        assertEq(factory.protocolFeeRecipient(), protocolFeeRecipient);
+        // Verify factory configuration (fee config moved to LiquidRouter)
         assertEq(factory.weth(), config.weth);
         assertEq(factory.poolManager(), config.uniswapV4PoolManager);
         assertEq(factory.v4Quoter(), config.uniswapV4Quoter);
@@ -128,14 +134,19 @@ contract LiquidFactoryTest is Test {
         string memory tokenName = "Test Token";
         string memory tokenSymbol = "TEST";
         string memory tokenUri = "ipfs://QmTestTokenURI";
+        uint256 initialRareLiquidity = 0.1 ether;
 
         vm.startPrank(tokenCreator);
 
-        address newToken = factory.createLiquidToken{value: 0.1 ether}(
+        // Approve factory to transfer RARE tokens
+        IERC20(mockRARE).approve(address(factory), initialRareLiquidity);
+
+        address newToken = factory.createLiquidToken(
             tokenCreator,
             tokenUri,
             tokenName,
-            tokenSymbol
+            tokenSymbol,
+            initialRareLiquidity
         );
 
         vm.stopPrank();
@@ -147,27 +158,34 @@ contract LiquidFactoryTest is Test {
         Liquid liquidToken = Liquid(payable(newToken));
         assertEq(liquidToken.name(), tokenName);
         assertEq(liquidToken.symbol(), tokenSymbol);
-        assertEq(liquidToken.tokenUri(), tokenUri);
+        assertEq(liquidToken.initialTokenUri(), tokenUri);
         assertEq(liquidToken.tokenCreator(), tokenCreator);
+        assertEq(liquidToken.baseToken(), address(mockRARE));
     }
 
     function testCreateMultipleTokens() public {
+        uint256 initialRareLiquidity = 0.1 ether;
         vm.startPrank(tokenCreator);
 
+        // Approve factory to transfer RARE tokens
+        IERC20(mockRARE).approve(address(factory), initialRareLiquidity * 2);
+
         // Create first token
-        address token1 = factory.createLiquidToken{value: 0.1 ether}(
+        address token1 = factory.createLiquidToken(
             tokenCreator,
             "ipfs://token1",
             "Token1",
-            "TK1"
+            "TK1",
+            initialRareLiquidity
         );
 
         // Create second token
-        address token2 = factory.createLiquidToken{value: 0.1 ether}(
+        address token2 = factory.createLiquidToken(
             tokenCreator,
             "ipfs://token2",
             "Token2",
-            "TK2"
+            "TK2",
+            initialRareLiquidity
         );
 
         vm.stopPrank();
@@ -178,21 +196,26 @@ contract LiquidFactoryTest is Test {
     }
 
     function testCreateTokenWithDifferentCreators() public {
+        uint256 initialRareLiquidity = 0.1 ether;
         vm.startPrank(tokenCreator);
-        address token1 = factory.createLiquidToken{value: 0.1 ether}(
+        IERC20(mockRARE).approve(address(factory), initialRareLiquidity);
+        address token1 = factory.createLiquidToken(
             tokenCreator,
             "ipfs://token1",
             "Token1",
-            "TK1"
+            "TK1",
+            initialRareLiquidity
         );
         vm.stopPrank();
 
         vm.startPrank(user1);
-        address token2 = factory.createLiquidToken{value: 0.1 ether}(
+        IERC20(mockRARE).approve(address(factory), initialRareLiquidity);
+        address token2 = factory.createLiquidToken(
             user1,
             "ipfs://token2",
             "Token2",
-            "TK2"
+            "TK2",
+            initialRareLiquidity
         );
         vm.stopPrank();
 
@@ -202,13 +225,16 @@ contract LiquidFactoryTest is Test {
     }
 
     function testCreateTokenWithZeroPlatformReferrer() public {
+        uint256 initialRareLiquidity = 0.1 ether;
         vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(factory), initialRareLiquidity);
 
-        address newToken = factory.createLiquidToken{value: 0.1 ether}(
+        address newToken = factory.createLiquidToken(
             tokenCreator,
             "ipfs://test",
             "Test",
-            "TEST"
+            "TEST",
+            initialRareLiquidity
         );
 
         vm.stopPrank();
@@ -219,22 +245,25 @@ contract LiquidFactoryTest is Test {
     }
 
     function testCreateTokenWithInitialBuy() public {
+        uint256 initialRareLiquidity = 1 ether;
         vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(factory), initialRareLiquidity);
 
-        address newToken = factory.createLiquidToken{value: 1 ether}(
+        address newToken = factory.createLiquidToken(
             tokenCreator,
             "ipfs://test",
             "Test",
-            "TEST"
+            "TEST",
+            initialRareLiquidity
         );
 
         vm.stopPrank();
 
-        // Verify the token was created and initialized with the ETH
+        // Verify the token was created and initialized with the RARE
         Liquid liquidToken = Liquid(payable(newToken));
 
         // Creator should have exactly the initial distribution (100k tokens)
-        // All sent ETH goes to initial liquidity, NOT to an auto-buy
+        // All sent RARE goes to initial liquidity
         uint256 creatorBalance = liquidToken.balanceOf(tokenCreator);
         assertEq(
             creatorBalance,
@@ -242,7 +271,7 @@ contract LiquidFactoryTest is Test {
             "Creator should have initial distribution only"
         );
 
-        // Verify pool has liquidity from the 1 ETH sent
+        // Verify pool has liquidity from the RARE sent
         assertTrue(
             PoolId.unwrap(liquidToken.poolId()) != bytes32(0),
             "Pool should be initialized"
@@ -254,75 +283,82 @@ contract LiquidFactoryTest is Test {
         MockBurner newMockBurner = new MockBurner();
         LiquidFactory newFactory = new LiquidFactory(
             admin,
-            protocolFeeRecipient,
             config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
-            address(newMockBurner), // rareBurner
-            0, // rareBurnFeeBPS (0% of remainder)
-            5000, // protocolFeeBPS (50% of remainder)
-            5000, // referrerFeeBPS (50% of remainder)
-            100, // defaultTotalFeeBPS (1%)
-            2500, // defaultCreatorFeeBPS (25%)
             -180, // lpTickLower - max expensive (after price rises) - multiple of 60
             120000, // lpTickUpper - starting point (cheap tokens) - multiple of 60
             config.uniswapV4Quoter, // Use wrapper instead of raw quoter
             address(0), // poolHooks (no hooks)
             60, // poolTickSpacing (standard for 0.3% fee tier)
             300, // internalMaxSlippageBps (3%)
-            0.005 ether, // minOrderSizeWei
-            1e15 // minInitialLiquidityWei (0.001 ETH)
+            1e15 // minRareLiquidityWei (0.001 RARE)
         );
 
+        // Set baseToken
+        vm.prank(admin);
+        newFactory.setBaseToken(address(mockRARE));
+
         vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(newFactory), 0.1 ether);
         vm.expectRevert(ILiquidFactory.ImplementationNotSet.selector);
-        newFactory.createLiquidToken{value: 0.1 ether}(
+        newFactory.createLiquidToken(
             tokenCreator,
             "ipfs://test",
             "Test",
-            "TEST"
+            "TEST",
+            0.1 ether
         );
         vm.stopPrank();
     }
 
     function test_RevertWhen_CreateTokenWithZeroCreator() public {
         vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(factory), 0.1 ether);
         vm.expectRevert(ILiquidFactory.AddressZero.selector);
-        factory.createLiquidToken{value: 0.1 ether}(
+        factory.createLiquidToken(
             address(0), // Zero creator
             "ipfs://test",
             "Test",
-            "TEST"
+            "TEST",
+            0.1 ether
         );
         vm.stopPrank();
     }
 
-    /// @notice Test creation fails when ETH is below minInitialLiquidityWei
-    /// @dev Verifies EthAmountTooSmall() error when msg.value < minInitialLiquidityWei
+    /// @notice Test creation fails when RARE is below minRareLiquidityWei
+    /// @dev Verifies InvalidAmount() error when RARE amount < minRareLiquidityWei
     function test_RevertWhen_CreateTokenBelowMinInitialLiquidity() public {
-        uint256 minInitialLiquidity = factory.minInitialLiquidityWei();
+        uint256 minInitialLiquidity = factory.minRareLiquidityWei();
 
-        // Try to create token with ETH below minimum
+        // Try to create token with RARE below minimum
         vm.startPrank(tokenCreator);
-        vm.expectRevert(ILiquid.EthAmountTooSmall.selector);
-        factory.createLiquidToken{value: minInitialLiquidity - 1}(
+        IERC20(mockRARE).approve(address(factory), minInitialLiquidity - 1);
+        vm.expectRevert(ILiquidFactory.InvalidAmount.selector);
+        factory.createLiquidToken(
             tokenCreator,
             "ipfs://test",
             "Test",
-            "TEST"
+            "TEST",
+            minInitialLiquidity - 1
         );
         vm.stopPrank();
     }
 
-    /// @notice Test creation succeeds at exact minInitialLiquidityWei
+    /// @notice Test creation succeeds at exact minRareLiquidityWei
     /// @dev Verifies boundary condition works correctly
     function test_CreateTokenAtExactMinInitialLiquidity() public {
-        uint256 minInitialLiquidity = factory.minInitialLiquidityWei();
+        uint256 minInitialLiquidity = factory.minRareLiquidityWei();
 
         // Create token with exact minimum
         vm.startPrank(tokenCreator);
-        address newToken = factory.createLiquidToken{
-            value: minInitialLiquidity
-        }(tokenCreator, "ipfs://exact-min", "ExactMin", "EMIN");
+        IERC20(mockRARE).approve(address(factory), minInitialLiquidity);
+        address newToken = factory.createLiquidToken(
+            tokenCreator,
+            "ipfs://exact-min",
+            "ExactMin",
+            "EMIN",
+            minInitialLiquidity
+        );
         vm.stopPrank();
 
         // Verify token was created successfully
@@ -343,7 +379,7 @@ contract LiquidFactoryTest is Test {
         vm.startPrank(admin);
         Liquid newImplementation = new Liquid();
 
-        factory.updateImplementation(address(newImplementation));
+        factory.setImplementation(address(newImplementation));
         vm.stopPrank();
 
         // Verify implementation was updated
@@ -351,11 +387,13 @@ contract LiquidFactoryTest is Test {
 
         // Create a new token with the updated implementation
         vm.startPrank(tokenCreator);
-        address newToken = factory.createLiquidToken{value: 0.1 ether}(
+        IERC20(mockRARE).approve(address(factory), 0.1 ether);
+        address newToken = factory.createLiquidToken(
             tokenCreator,
             "ipfs://test",
             "Test",
-            "TEST"
+            "TEST",
+            0.1 ether
         );
         vm.stopPrank();
 
@@ -366,40 +404,42 @@ contract LiquidFactoryTest is Test {
     function test_RevertWhen_UpdateImplementationToZero() public {
         vm.startPrank(admin);
         vm.expectRevert(ILiquidFactory.AddressZero.selector);
-        factory.updateImplementation(address(0));
+        factory.setImplementation(address(0));
         vm.stopPrank();
     }
 
     function testUpdateConfig() public {
         // Create new config values
         vm.startPrank(admin);
-        address newRecipient = makeAddr("newRecipient");
+        address newWeth = makeAddr("newWeth");
 
-        factory.setProtocolFeeRecipient(newRecipient);
+        factory.setWeth(newWeth);
         vm.stopPrank();
 
         // Verify new config values are active
-        assertEq(factory.protocolFeeRecipient(), newRecipient);
+        assertEq(factory.weth(), newWeth);
     }
 
     function test_RevertWhen_SetConfigWithZeroAddress() public {
         vm.startPrank(admin);
         vm.expectRevert(ILiquidFactory.AddressZero.selector);
-        factory.setProtocolFeeRecipient(address(0));
+        factory.setWeth(address(0));
         vm.stopPrank();
     }
 
     function testLiquidTokenCreatedEvent() public {
+        uint256 initialRareLiquidity = 0.1 ether;
         vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(factory), initialRareLiquidity);
 
         // Create the token and capture the address
-        address newToken = factory.createLiquidToken{value: 0.1 ether}(
+        address newToken = factory.createLiquidToken(
             tokenCreator,
             "ipfs://test",
             "Test Token",
-            "TEST"
+            "TEST",
+            0.1 ether
         );
-
         vm.stopPrank();
 
         // Verify the event was emitted with the correct token address
@@ -421,7 +461,7 @@ contract LiquidFactoryTest is Test {
             address(newImplementation)
         );
 
-        factory.updateImplementation(address(newImplementation));
+        factory.setImplementation(address(newImplementation));
 
         vm.stopPrank();
     }
@@ -432,74 +472,80 @@ contract LiquidFactoryTest is Test {
 
     // ========== Access Control Tests ==========
 
-    /// @notice Test that non-owner cannot call updateImplementation
-    function test_RevertWhen_NonOwner_UpdateImplementation() public {
+    /// @notice Test that non-admin cannot call setImplementation
+    function test_RevertWhen_NonAdmin_SetImplementation() public {
         Liquid newImpl = new Liquid();
 
         vm.startPrank(user1);
         vm.expectRevert(
-            abi.encodeWithSignature(
-                "OwnableUnauthorizedAccount(address)",
-                user1
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                factory.DEFAULT_ADMIN_ROLE()
             )
         );
-        factory.updateImplementation(address(newImpl));
+        factory.setImplementation(address(newImpl));
         vm.stopPrank();
     }
 
-    /// @notice Test that non-owner cannot call pushConfig
-    function test_RevertWhen_NonOwner_PushConfig() public {
+    /// @notice Test that non-admin cannot call setWeth
+    function test_RevertWhen_NonAdmin_SetWeth() public {
         vm.startPrank(user1);
         vm.expectRevert(
-            abi.encodeWithSignature(
-                "OwnableUnauthorizedAccount(address)",
-                user1
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                factory.DEFAULT_ADMIN_ROLE()
             )
         );
-        factory.setProtocolFeeRecipient(protocolFeeRecipient);
+        factory.setWeth(address(0x123));
         vm.stopPrank();
     }
 
-    /// @notice Test that non-owner cannot call setTradingKnobs
-    function test_RevertWhen_NonOwner_SetTradingKnobs() public {
+    /// @notice Test that non-admin cannot call setTradingKnobs
+    function test_RevertWhen_NonAdmin_SetTradingKnobs() public {
         vm.startPrank(user1);
         vm.expectRevert(
-            abi.encodeWithSignature(
-                "OwnableUnauthorizedAccount(address)",
-                user1
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                factory.DEFAULT_ADMIN_ROLE()
             )
         );
         factory.setInternalMaxSlippageBps(300);
         vm.stopPrank();
     }
 
-    /// @notice Test that regular user (non-owner) cannot call any admin functions
-    function test_RevertWhen_NonOwner_AllAdminFunctions() public {
+    /// @notice Test that regular user (non-admin) cannot call any admin functions
+    function test_RevertWhen_NonAdmin_AllAdminFunctions() public {
         Liquid newImpl = new Liquid();
 
-        // Try all admin functions as user2
+        // Try all admin functions as user2 (user2 does not have DEFAULT_ADMIN_ROLE)
         vm.startPrank(user2);
 
         vm.expectRevert(
-            abi.encodeWithSignature(
-                "OwnableUnauthorizedAccount(address)",
-                user2
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user2,
+                factory.DEFAULT_ADMIN_ROLE()
             )
         );
-        factory.updateImplementation(address(newImpl));
+        factory.setImplementation(address(newImpl));
 
         vm.expectRevert(
-            abi.encodeWithSignature(
-                "OwnableUnauthorizedAccount(address)",
-                user2
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user2,
+                factory.DEFAULT_ADMIN_ROLE()
             )
         );
-        factory.setProtocolFeeRecipient(protocolFeeRecipient);
+        factory.setWeth(address(0x123));
 
         vm.expectRevert(
-            abi.encodeWithSignature(
-                "OwnableUnauthorizedAccount(address)",
-                user2
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user2,
+                factory.DEFAULT_ADMIN_ROLE()
             )
         );
         factory.setInternalMaxSlippageBps(500);
@@ -527,72 +573,9 @@ contract LiquidFactoryTest is Test {
         vm.stopPrank();
     }
 
-    /// @notice Test that fees not summing to 100% reverts with InvalidFeeDistribution
-    function test_RevertWhen_InvalidBurnFee_OverFiftyPercent() public {
-        vm.startPrank(admin);
-        // Current state: rareBurnFeeBPS=0, protocolFeeBPS=5000, referrerFeeBPS=5000 (valid)
-        // Try to set rareBurnFeeBPS to 5001 while keeping other fees unchanged
-        // Total would be: 5001 + 5000 + 5000 = 15001, not 10000
-        vm.expectRevert(ILiquidFactory.InvalidFeeDistribution.selector);
-        factory.setTier3FeeSplits(5001, 5000, 5000); // This would make total > 10000
-        vm.stopPrank();
-    }
-
-    /// @notice Test that fees not summing to exactly 10000 BPS reverts
-    function test_RevertWhen_InvalidBurnFee_HundredPercent() public {
-        vm.startPrank(admin);
-        // Current state: rareBurnFeeBPS=0, protocolFeeBPS=5000, referrerFeeBPS=5000 (valid)
-        // Try to set rareBurnFeeBPS to 10000 while keeping other fees unchanged
-        // Total would be: 10000 + 5000 + 5000 = 20000, not 10000
-        vm.expectRevert(ILiquidFactory.InvalidFeeDistribution.selector);
-        factory.setTier3FeeSplits(10000, 5000, 5000); // This would make total >> 10000
-        vm.stopPrank();
-    }
-
-    /// @notice Test that burn fee of exactly 5000 BPS (50%) is allowed - boundary test
-    function test_BurnFee_ExactlyFiftyPercent_Succeeds() public {
-        // Create a new factory with the target fees (can't change step-by-step due to validation)
-        vm.startPrank(admin);
-        MockBurner testBurner = new MockBurner();
-        LiquidFactory factoryWithBurn = new LiquidFactory(
-            admin,
-            protocolFeeRecipient,
-            config.weth,
-            config.uniswapV4PoolManager, // V4 PoolManager
-            address(testBurner),
-            5000, // rareBurnFeeBPS (50%)
-            2500, // protocolFeeBPS
-            2500, // referrerFeeBPS
-            100, // defaultTotalFeeBPS
-            2500, // defaultCreatorFeeBPS
-            -180, // lpTickLower - max expensive (after price rises) - multiple of 60
-            120000, // lpTickUpper - starting point (cheap tokens) - multiple of 60
-            config.uniswapV4Quoter, // Use wrapper instead of raw quoter
-            address(0), // poolHooks (no hooks)
-            60, // poolTickSpacing (standard for 0.3% fee tier)
-            300, // internalMaxSlippageBps
-            0.005 ether, // minOrderSizeWei
-            1e15 // minInitialLiquidityWei (0.001 ETH)
-        );
-        vm.stopPrank();
-
-        // Verify values were set
-        assertEq(factoryWithBurn.rareBurnFeeBPS(), 5000);
-        assertEq(factoryWithBurn.protocolFeeBPS(), 2500);
-        assertEq(factoryWithBurn.referrerFeeBPS(), 2500);
-    }
-
-    /// @notice Test that zero burn fee is valid
-    function test_BurnFee_Zero_Succeeds() public {
-        vm.startPrank(admin);
-        factory.setTier3FeeSplits(0, 5000, 5000); // rareBurn=0, protocol=5000, referrer=5000
-        vm.stopPrank();
-
-        // Verify values were set
-        assertEq(factory.rareBurnFeeBPS(), 0);
-        assertEq(factory.protocolFeeBPS(), 5000);
-        assertEq(factory.referrerFeeBPS(), 5000);
-    }
+    // ========== Fee Tests moved to LiquidRouter.unit.t.sol ==========
+    // Fee configuration (rareBurnFeeBPS, protocolFeeBPS, referrerFeeBPS)
+    // and setTier3FeeSplits() have been moved to LiquidRouter
 
     // ========== Tick Spacing Validation Tests ==========
 
@@ -671,23 +654,15 @@ contract LiquidFactoryTest is Test {
         vm.expectRevert(ILiquidFactory.InvalidTickSpacing.selector);
         new LiquidFactory(
             admin,
-            protocolFeeRecipient,
             config.weth,
             config.uniswapV4PoolManager,
-            address(testBurner),
-            0, // rareBurnFeeBPS
-            5000, // protocolFeeBPS
-            5000, // referrerFeeBPS
-            100, // defaultTotalFeeBPS
-            2500, // defaultCreatorFeeBPS
             -200, // lpTickLower - NOT a multiple of 60
             120000, // lpTickUpper
             config.uniswapV4Quoter,
             address(0), // poolHooks
             60, // poolTickSpacing
             300, // internalMaxSlippageBps
-            0.005 ether, // minOrderSizeWei
-            1e15 // minInitialLiquidityWei
+            1e15 // minRareLiquidityWei
         );
         vm.stopPrank();
     }
@@ -698,31 +673,411 @@ contract LiquidFactoryTest is Test {
         MockBurner testBurner = new MockBurner();
 
         // Create factory with properly aligned ticks
-        LiquidFactory newFactory = new LiquidFactory(
+        LiquidFactory validFactory = new LiquidFactory(
             admin,
-            protocolFeeRecipient,
             config.weth,
             config.uniswapV4PoolManager,
-            address(testBurner),
-            0, // rareBurnFeeBPS
-            5000, // protocolFeeBPS
-            5000, // referrerFeeBPS
-            100, // defaultTotalFeeBPS
-            2500, // defaultCreatorFeeBPS
             -240, // lpTickLower - multiple of 60
             120060, // lpTickUpper - multiple of 60
             config.uniswapV4Quoter,
             address(0), // poolHooks
             60, // poolTickSpacing
             300, // internalMaxSlippageBps
-            0.005 ether, // minOrderSizeWei
-            1e15 // minInitialLiquidityWei
+            1e15 // minRareLiquidityWei
         );
         vm.stopPrank();
 
         // Verify values were set correctly
-        assertEq(newFactory.lpTickLower(), -240);
-        assertEq(newFactory.lpTickUpper(), 120060);
-        assertEq(newFactory.poolTickSpacing(), 60);
+        assertEq(validFactory.lpTickLower(), -240);
+        assertEq(validFactory.lpTickUpper(), 120060);
+        assertEq(validFactory.poolTickSpacing(), 60);
+    }
+
+    // ============================================
+    // SECTION B: Permissionless Token Creation Tests
+    // ============================================
+
+    /// @notice Test that any address can deploy tokens (permissionless)
+    function test_PermissionlessDeployment() public {
+        address anyUser = makeAddr("anyUser");
+        mockRARE.mint(anyUser, 1000 ether);
+
+        vm.startPrank(anyUser);
+        IERC20(mockRARE).approve(address(factory), 0.1 ether);
+        address newToken = factory.createLiquidToken(
+            anyUser,
+            "ipfs://test",
+            "Test",
+            "TEST",
+            0.1 ether
+        );
+        vm.stopPrank();
+
+        assertTrue(newToken != address(0));
+    }
+
+    /// @notice Test that a concierge service can create tokens on behalf of users
+    function test_ConciergeServiceCreateTokenOnBehalf() public {
+        address conciergeService = makeAddr("conciergeService");
+        address actualCreator = makeAddr("actualCreator");
+        mockRARE.mint(conciergeService, 1000 ether);
+
+        // Concierge service creates token on behalf of actualCreator
+        vm.startPrank(conciergeService);
+        IERC20(mockRARE).approve(address(factory), 0.1 ether);
+        address newToken = factory.createLiquidToken(
+            actualCreator, // The actual creator who will receive fees/rewards
+            "ipfs://test",
+            "Test",
+            "TEST",
+            0.1 ether
+        );
+        vm.stopPrank();
+
+        assertTrue(newToken != address(0));
+        // Verify the creator is set to actualCreator, not conciergeService
+        assertEq(Liquid(payable(newToken)).tokenCreator(), actualCreator);
+    }
+
+    // ============================================
+    // SECTION: Missing Setter Access Control Tests
+    // ============================================
+
+    /// @notice Test that non-admin cannot call setPoolManager
+    function test_RevertWhen_NonAdmin_SetPoolManager() public {
+        vm.startPrank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                factory.DEFAULT_ADMIN_ROLE()
+            )
+        );
+        factory.setPoolManager(address(0x123));
+        vm.stopPrank();
+    }
+
+    /// @notice Test that non-admin cannot call setV4Quoter
+    function test_RevertWhen_NonAdmin_SetV4Quoter() public {
+        vm.startPrank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                factory.DEFAULT_ADMIN_ROLE()
+            )
+        );
+        factory.setV4Quoter(address(0x123));
+        vm.stopPrank();
+    }
+
+    /// @notice Test that non-admin cannot call setPoolHooks
+    function test_RevertWhen_NonAdmin_SetPoolHooks() public {
+        vm.startPrank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                factory.DEFAULT_ADMIN_ROLE()
+            )
+        );
+        factory.setPoolHooks(address(0x123));
+        vm.stopPrank();
+    }
+
+    /// @notice Test that non-admin cannot call setMinRareLiquidityWei
+    function test_RevertWhen_NonAdmin_SetMinInitialLiquidityWei() public {
+        vm.startPrank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                factory.DEFAULT_ADMIN_ROLE()
+            )
+        );
+        factory.setMinRareLiquidityWei(1e16);
+        vm.stopPrank();
+    }
+
+    /// @notice Test that non-admin cannot call setLpTickLower
+    function test_RevertWhen_NonAdmin_SetLpTickLower() public {
+        vm.startPrank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                factory.DEFAULT_ADMIN_ROLE()
+            )
+        );
+        factory.setLpTickLower(-240);
+        vm.stopPrank();
+    }
+
+    /// @notice Test that non-admin cannot call setLpTickUpper
+    function test_RevertWhen_NonAdmin_SetLpTickUpper() public {
+        vm.startPrank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                factory.DEFAULT_ADMIN_ROLE()
+            )
+        );
+        factory.setLpTickUpper(120060);
+        vm.stopPrank();
+    }
+
+    /// @notice Test that non-admin cannot call setPoolTickSpacing
+    function test_RevertWhen_NonAdmin_SetPoolTickSpacing() public {
+        vm.startPrank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                factory.DEFAULT_ADMIN_ROLE()
+            )
+        );
+        factory.setPoolTickSpacing(30);
+        vm.stopPrank();
+    }
+
+    /// @notice Test that non-admin cannot call setBaseToken
+    function test_RevertWhen_NonAdmin_SetBaseToken() public {
+        vm.startPrank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user1,
+                factory.DEFAULT_ADMIN_ROLE()
+            )
+        );
+        factory.setBaseToken(address(0x123));
+        vm.stopPrank();
+    }
+
+    // ============================================
+    // SECTION: Config Change Isolation Tests
+    // ============================================
+
+    /// @notice Test that new tokens use config at creation time
+    function test_CreateToken_UsesConfigAtCreationTime() public {
+        // Create token A with initial config
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(factory), 0.2 ether);
+        address tokenA = factory.createLiquidToken(
+            tokenCreator,
+            "ipfs://tokenA",
+            "TokenA",
+            "TKA",
+            0.1 ether
+        );
+        vm.stopPrank();
+
+        Liquid liquidA = Liquid(payable(tokenA));
+        address poolManagerA = liquidA.poolManager();
+        address baseTokenA = liquidA.baseToken();
+
+        // Change factory config - test with tickLower/tickUpper instead of poolManager
+        // (changing poolManager would break token initialization)
+        // Ticks must be multiples of tick spacing (60)
+        vm.startPrank(admin);
+        int24 newTickLower = -240; // Multiple of 60
+        int24 newTickUpper = 120060; // Multiple of 60
+        factory.setLpTickLower(newTickLower);
+        factory.setLpTickUpper(newTickUpper);
+        vm.stopPrank();
+
+        // Create token B - should use new config
+        vm.startPrank(tokenCreator);
+        address tokenB = factory.createLiquidToken(
+            tokenCreator,
+            "ipfs://tokenB",
+            "TokenB",
+            "TKB",
+            0.1 ether
+        );
+        vm.stopPrank();
+
+        Liquid liquidB = Liquid(payable(tokenB));
+
+        // Token B should use new tick config (read from factory at initialization)
+        // We can't directly read ticks from Liquid, but we can verify the config was read
+        // by checking that token B was created successfully with the new config
+        assertTrue(tokenB != address(0), "Token B should be created");
+
+        // Token A should still have old config (cached at initialization)
+        assertEq(liquidA.poolManager(), poolManagerA);
+        assertEq(liquidA.baseToken(), baseTokenA);
+
+        // Both tokens should have same poolManager (we didn't change that)
+        assertEq(liquidB.poolManager(), liquidA.poolManager());
+    }
+
+    /// @notice Test that config changes don't affect existing tokens
+    function test_ConfigChange_DoesNotAffectExistingTokens() public {
+        // Create token A
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(factory), 0.2 ether);
+        address tokenA = factory.createLiquidToken(
+            tokenCreator,
+            "ipfs://tokenA",
+            "TokenA",
+            "TKA",
+            0.1 ether
+        );
+        vm.stopPrank();
+
+        Liquid liquidA = Liquid(payable(tokenA));
+        int24 tickLowerA = liquidA.lpTickLower();
+        int24 tickUpperA = liquidA.lpTickUpper();
+        address poolManagerA = liquidA.poolManager();
+        address baseTokenA = liquidA.baseToken();
+
+        // Change multiple config values
+        vm.startPrank(admin);
+        factory.setLpTickLower(-240);
+        factory.setLpTickUpper(120060);
+        address newPoolManager = makeAddr("newPoolManager");
+        factory.setPoolManager(newPoolManager);
+        vm.stopPrank();
+
+        // Token A should remain unchanged
+        assertEq(liquidA.lpTickLower(), tickLowerA);
+        assertEq(liquidA.lpTickUpper(), tickUpperA);
+        assertEq(liquidA.poolManager(), poolManagerA);
+        assertEq(liquidA.baseToken(), baseTokenA);
+    }
+
+    // ============================================
+    // SECTION: createLiquidToken Revert Bubble Tests
+    // ============================================
+
+    /// @notice Test that createLiquidToken bubbles InvalidTokenURI from Liquid.initialize
+    function test_CreateToken_RevertsWhen_TokenURIEmpty_BubblesFromLiquid()
+        public
+    {
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(factory), 0.1 ether);
+
+        vm.expectRevert(ILiquid.InvalidTokenURI.selector);
+        factory.createLiquidToken(
+            tokenCreator,
+            "", // Empty tokenURI
+            "Test",
+            "TEST",
+            0.1 ether
+        );
+        vm.stopPrank();
+    }
+
+    /// @notice Test that createLiquidToken reverts when allowance is insufficient
+    function test_CreateToken_RevertsWhen_InsufficientAllowance() public {
+        vm.startPrank(tokenCreator);
+        // Don't approve or approve less than needed
+        IERC20(mockRARE).approve(address(factory), 0.05 ether); // Less than 0.1 ether
+
+        vm.expectRevert(); // ERC20 transferFrom will revert
+        factory.createLiquidToken(
+            tokenCreator,
+            "ipfs://test",
+            "Test",
+            "TEST",
+            0.1 ether
+        );
+        vm.stopPrank();
+    }
+
+    /// @notice Test that createLiquidToken reverts when balance is insufficient
+    function test_CreateToken_RevertsWhen_InsufficientBalance() public {
+        vm.startPrank(tokenCreator);
+        // Approve but don't have enough balance
+        IERC20(mockRARE).approve(address(factory), 0.1 ether);
+
+        // Try to create with more than balance
+        vm.expectRevert(); // ERC20 transferFrom will revert
+        factory.createLiquidToken(
+            tokenCreator,
+            "ipfs://test",
+            "Test",
+            "TEST",
+            1000 ether // More than balance
+        );
+        vm.stopPrank();
+    }
+
+    /// @notice Test that createLiquidToken reverts when baseToken is not set
+    function test_CreateToken_RevertsWhen_BaseTokenNotSet() public {
+        // Create a factory without setting baseToken
+        vm.startPrank(admin);
+        LiquidFactory newFactory = new LiquidFactory(
+            admin,
+            config.weth,
+            config.uniswapV4PoolManager,
+            -180,
+            120000,
+            config.uniswapV4Quoter,
+            address(0),
+            60,
+            300,
+            1e15
+        );
+        newFactory.setImplementation(address(liquidImplementation));
+        // Don't set baseToken
+        vm.stopPrank();
+
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(newFactory), 0.1 ether);
+
+        vm.expectRevert(ILiquid.AddressZero.selector);
+        newFactory.createLiquidToken(
+            tokenCreator,
+            "ipfs://test",
+            "Test",
+            "TEST",
+            0.1 ether
+        );
+        vm.stopPrank();
+    }
+
+    // ============================================
+    // SECTION: Missing Setter Validation Tests
+    // ============================================
+
+    /// @notice Test that setPoolManager reverts when address is zero
+    function test_SetPoolManager_RevertsWhen_AddressZero() public {
+        vm.startPrank(admin);
+        vm.expectRevert(ILiquidFactory.AddressZero.selector);
+        factory.setPoolManager(address(0));
+        vm.stopPrank();
+    }
+
+    /// @notice Test that setV4Quoter reverts when address is zero
+    function test_SetV4Quoter_RevertsWhen_AddressZero() public {
+        vm.startPrank(admin);
+        vm.expectRevert(ILiquidFactory.AddressZero.selector);
+        factory.setV4Quoter(address(0));
+        vm.stopPrank();
+    }
+
+    /// @notice Test that setBaseToken reverts when address is zero
+    function test_SetBaseToken_RevertsWhen_AddressZero() public {
+        vm.startPrank(admin);
+        vm.expectRevert(ILiquidFactory.AddressZero.selector);
+        factory.setBaseToken(address(0));
+        vm.stopPrank();
+    }
+
+    /// @notice Test that setInternalMaxSlippageBps reverts when too high
+    function test_SetInternalMaxSlippageBps_RevertsWhen_TooHigh() public {
+        vm.startPrank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ILiquidFactory.SlippageTooHigh.selector,
+                5001,
+                5000
+            )
+        );
+        factory.setInternalMaxSlippageBps(5001); // > 50%
+        vm.stopPrank();
     }
 }

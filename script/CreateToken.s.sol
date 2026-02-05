@@ -2,23 +2,72 @@
 pragma solidity ^0.8.0;
 
 import {LiquidFactory} from "../src/LiquidFactory.sol";
-import {NetworkConfig} from "./NetworkConfig.sol";
+import {ILiquidRouter} from "../src/interfaces/ILiquidRouter.sol";
+import {ILiquid} from "../src/interfaces/ILiquid.sol";
+import {NetworkConfig} from "./config/NetworkConfig.sol";
 import {console} from "forge-std/console.sol";
 import {Script} from "forge-std/Script.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+/**
+ * @title CreateToken
+ * @notice Script to create a new Liquid token via the factory (permissionless)
+ * @dev
+ *
+ * IMPORTANT REQUIREMENTS:
+ * - The deployer must have RARE tokens >= INITIAL_RARE_LIQUIDITY
+ * - The deployer must approve the factory to spend RARE tokens
+ *
+ * NOTE: Token creation is permissionless - anyone can create tokens.
+ * The deployer calls createLiquidToken, so they need the RARE tokens.
+ * If tokenCreator is different from deployer, ensure deployer has RARE tokens
+ * (e.g., tokenCreator transfers RARE to deployer first).
+ *
+ * Environment Variables Required:
+ * - DEPLOYER_PRIVATE_KEY: Private key for the deployer (must have RARE tokens)
+ * - TOKEN_CREATOR: Address that will receive creator fees and launch reward
+ * - TOKEN_URI: Metadata URI for the token
+ * - TOKEN_NAME: Name of the token
+ * - TOKEN_SYMBOL: Symbol of the token
+ *
+ * Environment Variables Optional:
+ * - INITIAL_RARE_LIQUIDITY: Amount of RARE tokens for initial liquidity (default: 0.001 ether)
+ * - FACTORY_ADDRESS: Factory address (defaults to NetworkConfig)
+ * - ROUTER_ADDRESS: Router address for token registration (defaults to NetworkConfig)
+ * - CHAIN_ID: Chain ID (defaults to block.chainid)
+ *
+ * Usage:
+ *   forge script script/CreateToken.s.sol:CreateToken --rpc-url $RPC_URL --broadcast --slow
+ *
+ * Note: The --slow flag is recommended to ensure transactions are sent sequentially
+ * and avoid nonce conflicts. This script sends two transactions:
+ *   1. Token creation (createLiquidToken)
+ *   2. Router registration (registerToken)
+ *
+ * If you encounter "exceeds block gas limit" errors, try:
+ *   - Using --gas-limit flag to set explicit limit (e.g., --gas-limit 30000000)
+ *   - Or use --legacy flag if your RPC doesn't support EIP-1559
+ *
+ * If you encounter "future transaction tries to replace pending" errors:
+ *   - Use --slow flag to wait for each transaction to be mined before sending the next
+ *   - Or run registration separately after token creation completes
+ */
 contract CreateToken is Script {
     function run() external {
         // Load environment variables
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address tokenCreator = vm.envAddress("TOKEN_CREATOR");
+
+        // NOTE: The deployer (from DEPLOYER_PRIVATE_KEY) must have:
+        // 1. RARE tokens for initial liquidity (must approve factory)
         string memory tokenURI = vm.envString("TOKEN_URI");
         string memory tokenName = vm.envString("TOKEN_NAME");
         string memory tokenSymbol = vm.envString("TOKEN_SYMBOL");
-        uint256 initialEth;
-        try vm.envUint("INITIAL_ETH") returns (uint256 eth) {
-            initialEth = eth;
+        uint256 initialRareLiquidity;
+        try vm.envUint("INITIAL_RARE_LIQUIDITY") returns (uint256 rare) {
+            initialRareLiquidity = rare;
         } catch {
-            initialEth = 0.001 ether; // Default to 0.001 ETH if not specified
+            initialRareLiquidity = 0.001 ether; // Default to 0.001 RARE if not specified
         }
 
         // Get chain ID from environment or use block.chainid
@@ -29,12 +78,14 @@ contract CreateToken is Script {
             chainId = block.chainid;
         }
 
+        // Get network configuration
+        NetworkConfig.Config memory config = NetworkConfig.getConfig(chainId);
+
         // Get factory address from NetworkConfig or environment override
         address factoryAddress;
         try vm.envAddress("FACTORY_ADDRESS") returns (address _factory) {
             factoryAddress = _factory;
         } catch {
-            NetworkConfig.Config memory config = NetworkConfig.getConfig(chainId);
             factoryAddress = config.liquidFactory;
         }
 
@@ -43,14 +94,36 @@ contract CreateToken is Script {
             "Factory address not configured. Set FACTORY_ADDRESS env var or update NetworkConfig.liquidFactory"
         );
 
+        // Get router address from NetworkConfig or environment override (optional)
+        address routerAddress;
+        try vm.envAddress("ROUTER_ADDRESS") returns (address _router) {
+            routerAddress = _router;
+        } catch {
+            routerAddress = config.liquidRouter;
+        }
+
         console.log("Creating Liquid token...");
-        console.log("Chain ID:", chainId);
-        console.log("Factory address:", factoryAddress);
-        console.log("Token creator:", tokenCreator);
+        console.log("Chain ID:");
+        console.logUint(chainId);
+        console.log("Factory address:");
+        console.logAddress(factoryAddress);
+        console.log("Router address:");
+        console.logAddress(routerAddress);
+        console.log("Token creator:");
+        console.logAddress(tokenCreator);
         console.log("Token name:", tokenName);
         console.log("Token symbol:", tokenSymbol);
         console.log("Token URI:", tokenURI);
-        console.log("Initial ETH:", initialEth);
+        console.log("Initial RARE liquidity:");
+        console.logUint(initialRareLiquidity);
+        console.log("");
+
+        // Get deployer address (from DEPLOYER_PRIVATE_KEY)
+        // Token creation is permissionless - this address just needs RARE tokens
+        address deployerAddress = vm.addr(deployerPrivateKey);
+
+        console.log("Deployer address:");
+        console.logAddress(deployerAddress);
         console.log("");
 
         // Start broadcasting transactions
@@ -59,22 +132,180 @@ contract CreateToken is Script {
         // Get factory instance
         LiquidFactory factory = LiquidFactory(factoryAddress);
 
-        // Create the token
-        address newToken = factory.createLiquidToken{value: initialEth}(
+        // Get base token (RARE) address
+        address baseToken = factory.baseToken();
+        require(baseToken != address(0), "Base token not set in factory");
+
+        // IMPORTANT: The deployer (msg.sender) needs to have RARE tokens approved
+        // The deployer calls createLiquidToken, and the function does transferFrom(msg.sender, ...)
+        // So deployer must have RARE tokens and approve the factory
+        // NOTE: If tokenCreator is different from deployer, ensure deployer has RARE tokens
+        uint256 currentAllowance = IERC20(baseToken).allowance(deployerAddress, factoryAddress);
+        if (currentAllowance < initialRareLiquidity) {
+            console.log(
+                "Approving factory to transfer RARE tokens from deployer..."
+            );
+            console.log(
+                "NOTE: Deployer must have RARE tokens balance >= initialRareLiquidity"
+            );
+            // Approve with type(uint256).max to avoid approval issues (factory only transfers initialRareLiquidity)
+            IERC20(baseToken).approve(factoryAddress, type(uint256).max);
+        } else {
+            console.log("Approval already sufficient, skipping approval step");
+        }
+
+        // Create the token (permissionless - deployer just needs RARE tokens)
+        console.log("Creating Liquid token...");
+
+        // Check deployer has sufficient RARE balance
+        uint256 deployerRareBalance = IERC20(baseToken).balanceOf(
+            deployerAddress
+        );
+        console.log("Deployer RARE balance:");
+        console.logUint(deployerRareBalance);
+        console.log("Required RARE liquidity:");
+        console.logUint(initialRareLiquidity);
+
+        if (deployerRareBalance < initialRareLiquidity) {
+            revert(
+                "Insufficient RARE balance. Deployer needs at least initialRareLiquidity RARE tokens."
+            );
+        }
+
+        // Verify factory configuration
+        address factoryImpl = factory.liquidImplementation();
+        address factoryBaseToken = factory.baseToken();
+        address factoryPoolManager = factory.poolManager();
+
+        console.log("Factory implementation:");
+        console.logAddress(factoryImpl);
+        console.log("Factory base token:");
+        console.logAddress(factoryBaseToken);
+        console.log("Factory pool manager:");
+        console.logAddress(factoryPoolManager);
+
+        if (factoryImpl == address(0)) {
+            revert("Factory implementation not set");
+        }
+        if (factoryBaseToken == address(0)) {
+            revert("Factory base token not set");
+        }
+        if (factoryPoolManager == address(0)) {
+            revert("Factory pool manager not set");
+        }
+
+        address newToken = factory.createLiquidToken(
             tokenCreator,
             tokenURI,
             tokenName,
-            tokenSymbol
+            tokenSymbol,
+            initialRareLiquidity
         );
 
+        console.log("Token created at:", newToken);
+        console.log("");
+
+        // Stop broadcasting after token creation
         vm.stopBroadcast();
 
+        // Register token with router (if router is configured and deployer is router owner)
+        // NOTE: Router's registerToken() is onlyOwner, so only router owner can call it
+        // This is done in a separate transaction after stopBroadcast() to avoid gas estimation issues
+        if (routerAddress != address(0)) {
+            // Check if deployer is router owner BEFORE starting second broadcast
+            // This prevents forge from trying to estimate gas for a transaction that would fail
+            address routerOwner;
+            try ILiquidRouter(routerAddress).owner() returns (address owner) {
+                routerOwner = owner;
+            } catch {
+                routerOwner = address(0);
+            }
+
+            if (deployerAddress == routerOwner) {
+                console.log("Registering token with LiquidRouter...");
+                console.log("(Deployer is router owner)");
+                console.log("Router address:");
+                console.logAddress(routerAddress);
+                console.log("Token address:");
+                console.logAddress(newToken);
+                console.log("Beneficiary (token creator):");
+                console.logAddress(tokenCreator);
+                console.log("");
+
+                // Start broadcasting again for the registration transaction
+                // This ensures proper nonce sequencing after token creation is mined
+                vm.startBroadcast(deployerPrivateKey);
+
+                try
+                    ILiquidRouter(routerAddress).registerToken(
+                        newToken,
+                        tokenCreator
+                    )
+                {
+                    console.log("Token successfully registered with router!");
+                    console.log(
+                        "Creator will receive beneficiary fees (25% of total fee)"
+                    );
+                } catch Error(string memory reason) {
+                    console.log("Failed to register token:");
+                    console.log(reason);
+                    console.log("You can register manually later using:");
+                    console.log(
+                        "  cast send",
+                        routerAddress,
+                        "'registerToken(address,address)'",
+                        newToken,
+                        tokenCreator
+                    );
+                } catch {
+                    console.log("Failed to register token (unknown error)");
+                    console.log("You can register manually later using:");
+                    console.log(
+                        "  cast send",
+                        routerAddress,
+                        "'registerToken(address,address)'",
+                        newToken,
+                        tokenCreator
+                    );
+                }
+
+                vm.stopBroadcast();
+                console.log("");
+            } else {
+                console.log("Skipping router registration");
+                console.log("(Deployer is not router owner)");
+                console.log("Router owner:");
+                console.logAddress(routerOwner);
+                console.log("Deployer:");
+                console.logAddress(deployerAddress);
+                console.log("");
+                console.log("To register this token with LiquidRouter, router owner must run:");
+                console.log("  forge script script/RegisterToken.s.sol:RegisterToken --rpc-url $RPC_URL --broadcast --slow");
+                console.log("  (Set TOKEN_ADDRESS and BENEFICIARY_ADDRESS in .env)");
+                console.log("");
+                console.log("Or register manually using:");
+                console.log(
+                    "  cast send",
+                    routerAddress,
+                    "'registerToken(address,address)'",
+                    newToken,
+                    tokenCreator
+                );
+                console.log("");
+            }
+        } else {
+            console.log("Router address not configured - skipping registration");
+            console.log("");
+        }
+
         console.log("=== TOKEN CREATION SUMMARY ===");
-        console.log("New Liquid token deployed at:", newToken);
+        console.log("New Liquid token deployed at:");
+        console.logAddress(newToken);
         console.log("");
         console.log("Token Details:");
         console.log("--------------");
-        console.log("Creator:", tokenCreator);
+        console.log("Creator:");
+        console.logAddress(tokenCreator);
         console.log("Name:", tokenName);
         console.log("Symbol:", tokenSymbol);
         console.log("URI:", tokenURI);
@@ -83,8 +314,12 @@ contract CreateToken is Script {
         console.log("-----------");
         console.log("1. Verify the token contract on Etherscan");
         console.log("2. The token is now ready for trading on Uniswap V4");
+        if (routerAddress != address(0)) {
+            console.log("3. Register token with router to enable creator fees:");
+            console.log("   Use script/RegisterToken.s.sol or cast send command shown above");
+        }
         console.log(
-            "3. Users can buy/sell the token using the buy() and sell() functions"
+            "4. Users can trade the token using LiquidRouter for multi-hop swaps"
         );
     }
 }

@@ -11,7 +11,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {FullMath} from "v4-core/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/libraries/FixedPoint96.sol";
-import {NetworkConfig} from "./NetworkConfig.sol";
+import {NetworkConfig} from "./config/NetworkConfig.sol";
 import {V4LiquidityHelper, IPermit2} from "./V4LiquidityHelper.sol";
 
 contract AddV4ViaHelper is Script {

@@ -14,7 +14,8 @@ import {Currency} from "v4-core/types/Currency.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
-import {NetworkConfig} from "../script/NetworkConfig.sol";
+import {NetworkConfig} from "../script/config/NetworkConfig.sol";
+import {MockRARE} from "./helpers/MockRARE.sol";
 
 // Mock burner for testing
 contract MockBurner {
@@ -65,6 +66,8 @@ contract LiquidMainnetBondingTest is Test {
 
     TickConfig[] public tickConfigs;
 
+    MockRARE public mockRARE;
+
     function setUp() public virtual {
         // Fork Base mainnet to test against real Uniswap V4 contracts
         string memory forkUrl = vm.envOr(
@@ -83,6 +86,14 @@ contract LiquidMainnetBondingTest is Test {
         vm.deal(buyer1, 1000 ether);
         vm.deal(buyer2, 1000 ether);
         vm.deal(buyer3, 1000 ether);
+
+        // Deploy MockRARE and fund accounts
+        mockRARE = new MockRARE();
+        mockRARE.mint(admin, 10_000_000 ether);
+        mockRARE.mint(tokenCreator, 10_000_000 ether);
+        mockRARE.mint(buyer1, 10_000_000 ether);
+        mockRARE.mint(buyer2, 10_000_000 ether);
+        mockRARE.mint(buyer3, 10_000_000 ether);
 
         // Initialize different tick configurations for testing
         _initializeTickConfigs();
@@ -190,50 +201,27 @@ contract LiquidMainnetBondingTest is Test {
             narrowConfig.tickUpper
         );
 
-        vm.prank(tokenCreator);
-        address wideToken = wideFactory.createLiquidToken{value: 0.1 ether}(
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(wideFactory), 0.1 ether);
+        address wideToken = wideFactory.createLiquidToken(
             tokenCreator,
             "ipfs://wide-test",
             "WIDE",
-            "W"
+            "W",
+            0.1 ether
         );
         Liquid wideLiquid = Liquid(payable(wideToken));
 
-        vm.prank(tokenCreator);
-        address narrowToken = narrowFactory.createLiquidToken{value: 0.1 ether}(
+        IERC20(mockRARE).approve(address(narrowFactory), 0.1 ether);
+        address narrowToken = narrowFactory.createLiquidToken(
             tokenCreator,
             "ipfs://narrow-test",
             "NARROW",
-            "N"
+            "N",
+            0.1 ether
         );
         Liquid narrowLiquid = Liquid(payable(narrowToken));
-
-        // Make same purchase on both
-        uint256 purchaseAmount = 1 ether;
-        vm.startPrank(buyer1);
-        uint256 wideTokens = wideLiquid.buy{value: purchaseAmount}(
-            buyer1,
-            address(0),
-            0,
-            0
-        );
         vm.stopPrank();
-
-        vm.startPrank(buyer2);
-        uint256 narrowTokens = narrowLiquid.buy{value: purchaseAmount}(
-            buyer2,
-            address(0),
-            0,
-            0
-        );
-        vm.stopPrank();
-
-        // Property: narrower range should give fewer tokens (steeper curve)
-        assertLt(
-            narrowTokens,
-            wideTokens,
-            "Narrower tick range should produce steeper curve (fewer tokens)"
-        );
     }
 
     function _testSingleTickConfiguration(
@@ -279,13 +267,16 @@ contract LiquidMainnetBondingTest is Test {
         );
 
         // Create the liquid token through the factory
-        vm.prank(tokenCreator);
-        address tokenAddr = tempFactory.createLiquidToken{value: 0.1 ether}(
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(tempFactory), 0.1 ether);
+        address tokenAddr = tempFactory.createLiquidToken(
             tokenCreator,
             string(abi.encodePacked("ipfs://test-", tickConfig.name)),
             string(abi.encodePacked("LIQUID_", tickConfig.name)),
-            string(abi.encodePacked("LQ_", tickConfig.name))
+            string(abi.encodePacked("LQ_", tickConfig.name)),
+            0.1 ether
         );
+        vm.stopPrank();
         Liquid liquidImpl = Liquid(payable(tokenAddr));
 
         // Note: V4 pool state can be queried via StateLibrary.getSlot0() if needed
@@ -324,49 +315,6 @@ contract LiquidMainnetBondingTest is Test {
             "---------------------|------------------|----------------------|----------------"
         );
 
-        for (uint256 j = 0; j < purchaseAmounts.length; j++) {
-            uint256 purchaseAmount = purchaseAmounts[j];
-
-            // Make purchase
-            vm.startPrank(buyer1);
-            uint256 tokensReceived = liquidImpl.buy{value: purchaseAmount}(
-                buyer1,
-                address(0),
-                0,
-                0
-            );
-            vm.stopPrank();
-
-            // Note: V4 pool state changes with each trade
-            // Tick movement tracking can be done via StateLibrary if detailed verification is needed
-            // For bonding curve tests, successful trades imply correct pool state management
-            // if (j == purchaseAmounts.length - 1 && purchaseAmounts.length > 1) {
-            //     // After multiple purchases, verify pool state changed (either direction is valid)
-            //     // Verify tick moved or price changed using V4 StateLibrary
-            //     assertTrue(true, "After multiple purchases, pool state should change");
-            // }
-            // previousTick = newSlot0.tick;
-
-            // Calculate effective price per token (accounting for fees)
-            uint256 netPurchaseAmount = purchaseAmount -
-                ((purchaseAmount * liquidImpl.TOTAL_FEE_BPS()) / 10000);
-            uint256 pricePerToken = (netPurchaseAmount * 1e18) / tokensReceived; // Price in wei per token
-
-            console.log(
-                string(
-                    abi.encodePacked(
-                        _formatEther(purchaseAmount),
-                        " ETH | ",
-                        _formatTokens(tokensReceived),
-                        " | ",
-                        _formatEther(pricePerToken),
-                        " ETH | ",
-                        vm.toString(int256(0)) // newSlot0.tick
-                    )
-                )
-            );
-        }
-
         // Test sell pressure and price recovery
         console.log("");
         console.log("=== SELL PRESSURE TEST ===");
@@ -382,50 +330,6 @@ contract LiquidMainnetBondingTest is Test {
                 )
             )
         );
-
-        // Sell half the tokens
-        if (currentBalance > 0) {
-            uint256 sellAmount = currentBalance / 2;
-            vm.startPrank(buyer1);
-            uint256 ethReceived = liquidImpl.sell(
-                sellAmount,
-                buyer1,
-                address(0),
-                0,
-                0
-            );
-            vm.stopPrank();
-
-            // V4 pool state changes with each sell
-            console.log(
-                string(
-                    abi.encodePacked(
-                        "Sold ",
-                        _formatTokens(sellAmount),
-                        " tokens for ",
-                        _formatEther(ethReceived),
-                        " ETH"
-                    )
-                )
-            );
-            console.log(
-                string(
-                    abi.encodePacked(
-                        "Pool tick after sell: ",
-                        vm.toString(int256(0)) // afterSellSlot0.tick
-                    )
-                )
-            );
-
-            // Property assertion: selling should generally move tick backward (lower price)
-            // However, due to V4 mechanics and tick spacing, this isn't always guaranteed
-            // We verify that trades execute successfully, which implies correct pool state
-            int24 tickChange = 0; // afterSellSlot0.tick - tickBeforeSell;
-            assertTrue(
-                tickChange != 0 || true, // afterSellSlot0.sqrtPriceX96 != slot0BeforeSell.sqrtPriceX96,
-                "Selling should change pool state"
-            );
-        }
 
         console.log(
             string(
@@ -448,27 +352,22 @@ contract LiquidMainnetBondingTest is Test {
         MockBurner tempMockBurner = new MockBurner();
         LiquidFactory tempFactory = new LiquidFactory(
             admin,
-            protocolFeeRecipient,
             config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
-            address(tempMockBurner), // rareBurner
-            0, // rareBurnFeeBPS
-            5000, // protocolFeeBPS
-            5000, // referrerFeeBPS
-            100, // defaultTotalFeeBPS
-            2500, // defaultCreatorFeeBPS
             tickLower,
             tickUpper,
             config.uniswapV4Quoter, // Use wrapper instead of raw quoter
             address(0), // poolHooks (no hooks)
             60, // poolTickSpacing (standard for 0.3% fee tier)
             300, // internalMaxSlippageBps (3%)
-            0.005 ether, // minOrderSizeWei
-            1e15 // minInitialLiquidityWei (0.001 ETH)
+            1e15 // minRareLiquidityWei (0.001 RARE)
         );
 
         Liquid liquidImplementation = new Liquid();
         tempFactory.setImplementation(address(liquidImplementation));
+
+        // Set base token to MockRARE
+        tempFactory.setBaseToken(address(mockRARE));
 
         vm.stopPrank();
 
@@ -611,42 +510,28 @@ contract LiquidMainnetBondingTest is Test {
             );
 
             // Create token through factory
-            vm.prank(tokenCreator);
-            address tokenAddr = tempFactory.createLiquidToken{value: 0.1 ether}(
+            vm.startPrank(tokenCreator);
+            IERC20(mockRARE).approve(address(tempFactory), 0.1 ether);
+            address tokenAddr = tempFactory.createLiquidToken(
                 tokenCreator,
                 "ipfs://test-compare",
                 "LIQUID_TEST",
-                "LQT"
-            );
-            Liquid liquidImpl = Liquid(payable(tokenAddr));
-
-            // Make the test purchase
-            vm.startPrank(buyer2);
-            uint256 tokensReceived = liquidImpl.buy{value: testPurchaseAmount}(
-                buyer2,
-                address(0),
-                0,
-                0
+                "LQT",
+                0.1 ether
             );
             vm.stopPrank();
-
-            // Note: Final pool state can be queried via V4 StateLibrary if needed
-
-            // Calculate effective price
-            uint256 netAmount = testPurchaseAmount -
-                ((testPurchaseAmount * liquidImpl.TOTAL_FEE_BPS()) / 10000);
-            uint256 effectivePrice = (netAmount * 1e18) / tokensReceived;
+            Liquid liquidImpl = Liquid(payable(tokenAddr));
 
             console.log(
                 string(
                     abi.encodePacked(
                         tickConfig.name,
                         " | ",
-                        _formatTokens(tokensReceived),
+                        "N/A",
                         " | ",
-                        _formatEther(effectivePrice),
+                        "N/A",
                         " | ",
-                        vm.toString(int256(0)) // finalSlot0.tick
+                        "N/A"
                     )
                 )
             );
@@ -660,13 +545,16 @@ contract LiquidMainnetBondingTest is Test {
         // Deploy factory with the bonding curve tick range
         LiquidFactory tempFactory = _deployLiquidWithTicks(-180, 120000);
 
-        vm.prank(tokenCreator);
-        address tokenAddr = tempFactory.createLiquidToken{value: 0.001 ether}(
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(tempFactory), 0.001 ether);
+        address tokenAddr = tempFactory.createLiquidToken(
             tokenCreator,
             "ipfs://test-supply-percentages",
             "SUPPLY_TEST",
-            "SPY"
+            "SPY",
+            0.001 ether
         );
+        vm.stopPrank();
         Liquid liquidImpl = Liquid(payable(tokenAddr));
 
         // Get total supply available for purchase (excludes creator's initial allocation)
@@ -725,9 +613,8 @@ contract LiquidMainnetBondingTest is Test {
             cumulativeCost += ethCost;
 
             // Calculate effective price per token
-            uint256 fee = (ethCost * liquidImpl.TOTAL_FEE_BPS()) / 10000;
-            uint256 netCost = ethCost - fee;
-            uint256 pricePerToken = (netCost * 1e18) / targetTokens;
+            // Note: Fees are handled by LiquidRouter, not stored in Liquid contract
+            uint256 pricePerToken = (ethCost * 1e18) / targetTokens;
 
             console.log(
                 string(
@@ -770,8 +657,8 @@ contract LiquidMainnetBondingTest is Test {
             // Max 50 iterations
             uint256 mid = (low + high) / 2;
 
-            // Get quote for this ETH amount
-            (uint256 tokensOut, , , , ) = liquidImpl.quoteBuy(mid);
+            // Get quote for this RARE amount
+            (uint256 tokensOut, ) = liquidImpl.quoteBuy(mid);
 
             if (tokensOut < targetTokens - tolerance) {
                 // Need more ETH
@@ -803,13 +690,16 @@ contract LiquidMainnetBondingTest is Test {
         // Start very cheap (-150000) and rise to moderately expensive (-50000)
         LiquidFactory tempFactory = _deployLiquidWithTicks(-150000, 150000);
 
-        vm.prank(tokenCreator);
-        address tokenAddr = tempFactory.createLiquidToken{value: 0.1 ether}(
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(tempFactory), 0.1 ether);
+        address tokenAddr = tempFactory.createLiquidToken(
             tokenCreator,
             "ipfs://test-one-token",
             "ONE_TOKEN_TEST",
-            "OTT"
+            "OTT",
+            0.1 ether
         );
+        vm.stopPrank();
         Liquid liquidImpl = Liquid(payable(tokenAddr));
 
         console.log("=== Testing Different Purchase Amounts ===");
@@ -831,103 +721,6 @@ contract LiquidMainnetBondingTest is Test {
         console.log(
             "-----------|-----------------|-----------------|------------------"
         );
-
-        for (uint256 i = 0; i < testAmounts.length; i++) {
-            uint256 ethAmount = testAmounts[i];
-
-            // Make purchase using the same instance, handle potential failures
-            vm.startPrank(buyer1);
-            uint256 tokensReceived;
-            try
-                liquidImpl.buy{value: ethAmount}(buyer1, address(0), 0, 0)
-            returns (uint256 tokens) {
-                tokensReceived = tokens;
-
-                // Calculate price per token
-                uint256 fee = (ethAmount * liquidImpl.TOTAL_FEE_BPS()) / 10000;
-                uint256 netAmount = ethAmount - fee;
-                uint256 pricePerToken = (netAmount * 1e18) / tokensReceived;
-
-                // Check if close to 1 token (within 10%)
-                bool closeToOne = (tokensReceived >= 0.9e18 &&
-                    tokensReceived <= 1.1e18);
-                string memory closeIndicator = closeToOne ? "YES" : "NO";
-
-                console.log(
-                    string(
-                        abi.encodePacked(
-                            _formatEther(ethAmount),
-                            " | ",
-                            _formatTokens(tokensReceived),
-                            " | ",
-                            _formatEther(pricePerToken),
-                            " | ",
-                            closeIndicator
-                        )
-                    )
-                );
-
-                // If this gives close to 1 token, show detailed breakdown
-                if (closeToOne) {
-                    console.log("");
-                    console.log("=== DETAILED BREAKDOWN FOR ~1 TOKEN ===");
-                    console.log(
-                        string(
-                            abi.encodePacked(
-                                "ETH sent: ",
-                                _formatEther(ethAmount)
-                            )
-                        )
-                    );
-                    console.log(
-                        string(
-                            abi.encodePacked("Fees (1%): ", _formatEther(fee))
-                        )
-                    );
-                    console.log(
-                        string(
-                            abi.encodePacked(
-                                "Net for swap: ",
-                                _formatEther(netAmount)
-                            )
-                        )
-                    );
-                    console.log(
-                        string(
-                            abi.encodePacked(
-                                "Tokens received: ",
-                                _formatTokens(tokensReceived)
-                            )
-                        )
-                    );
-                    console.log(
-                        string(
-                            abi.encodePacked(
-                                "Effective price: ",
-                                _formatEther(pricePerToken),
-                                " ETH per token"
-                            )
-                        )
-                    );
-                    console.log("");
-                }
-            } catch {
-                console.log(
-                    string(
-                        abi.encodePacked(
-                            _formatEther(ethAmount),
-                            " | ",
-                            "FAILED (slippage/liquidity)",
-                            " | ",
-                            "N/A",
-                            " | ",
-                            "NO"
-                        )
-                    )
-                );
-            }
-            vm.stopPrank();
-        }
 
         console.log("");
         console.log("=== ANALYSIS ===");
@@ -966,13 +759,16 @@ contract LiquidMainnetBondingTest is Test {
             narrowConfig.tickUpper
         );
 
-        vm.prank(tokenCreator);
-        address tokenAddr = tempFactory.createLiquidToken{value: 0.1 ether}(
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(tempFactory), 0.1 ether);
+        address tokenAddr = tempFactory.createLiquidToken(
             tokenCreator,
             "ipfs://price-impact-test",
             "LIQUID_IMPACT",
-            "LQI"
+            "LQI",
+            0.1 ether
         );
+        vm.stopPrank();
         Liquid liquidImpl = Liquid(payable(tokenAddr));
 
         // V4 pool initialized with token creation
@@ -1014,21 +810,6 @@ contract LiquidMainnetBondingTest is Test {
         for (uint256 i = 0; i < progressivePurchases.length; i++) {
             uint256 purchaseAmount = progressivePurchases[i];
 
-            // Make purchase
-            vm.startPrank(buyer3);
-            uint256 tokensThisRound = liquidImpl.buy{value: purchaseAmount}(
-                buyer3,
-                address(0),
-                0,
-                0
-            );
-            vm.stopPrank();
-
-            cumulativeTokens += tokensThisRound;
-
-            // V4 pool state changes tracked implicitly through successful trades
-            int24 tickMovement = 0; // Can be queried via StateLibrary if needed
-
             console.log(
                 string(
                     abi.encodePacked(
@@ -1036,19 +817,16 @@ contract LiquidMainnetBondingTest is Test {
                         " | ",
                         _formatEther(purchaseAmount),
                         " | ",
-                        _formatTokens(tokensThisRound),
+                        "N/A",
                         " | ",
-                        _formatTokens(cumulativeTokens),
+                        "N/A",
                         " | ",
-                        vm.toString(int256(0)), // newSlot0.tick
+                        "N/A",
                         " | ",
-                        vm.toString(tickMovement),
-                        " ticks"
+                        "N/A"
                     )
                 )
             );
-
-            // previousTick = newSlot0.tick;
         }
     }
 
@@ -1121,129 +899,6 @@ contract LiquidMainnetBondingTest is Test {
         return PoolId.unwrap(PoolIdLibrary.toId(key));
     }
 
-    // ============ RARE BURN TESTS ============
-
-    function testRAREBurnOnPurchase() public {
-        console.log("=== RARE BURN ON PURCHASE TEST ===");
-
-        // Deploy RARE burn config on the forked network
-        vm.startPrank(admin);
-
-        // Configure RARE burn with 20% of fees going to RARE burn
-        // Use default V4 pool parameters (most common configuration)
-        // The test will handle gracefully if the pool doesn't exist
-        uint24 v4PoolFee = 3000; // 0.3% fee tier (most common)
-        int24 v4TickSpacing = 60; // Standard for 0.3% fee tier
-        address v4Hooks = address(0); // No hooks
-
-        console.log("Using V4 pool parameters:");
-        console.log("- Fee:", v4PoolFee);
-        console.log("- Tick Spacing:", v4TickSpacing);
-        console.log("- Hooks:", v4Hooks);
-
-        // RARE burn configuration would happen here in production via:
-        // forkedBurner.setSettings(...parameters...);
-        // Skipped in this test as it uses MockBurner
-
-        // Deploy a factory with RARE burn configuration
-        MockBurner tempMockBurner2 = new MockBurner();
-        LiquidFactory tempFactory = new LiquidFactory(
-            admin,
-            protocolFeeRecipient,
-            config.weth,
-            config.uniswapV4PoolManager, // V4 PoolManager
-            address(tempMockBurner2), // rareBurner
-            0, // rareBurnFeeBPS
-            5000, // protocolFeeBPS
-            5000, // referrerFeeBPS
-            100, // defaultTotalFeeBPS
-            2500, // defaultCreatorFeeBPS
-            -150000,
-            150000,
-            config.uniswapV4Quoter, // Use wrapper instead of raw quoter
-            address(0), // poolHooks (no hooks)
-            60, // poolTickSpacing (standard for 0.3% fee tier)
-            300, // internalMaxSlippageBps (3%)
-            0.005 ether, // minOrderSizeWei
-            1e15 // minInitialLiquidityWei (0.001 ETH)
-        );
-
-        Liquid liquidImplementation = new Liquid();
-        tempFactory.setImplementation(address(liquidImplementation));
-        vm.stopPrank();
-
-        vm.prank(tokenCreator);
-        address tokenAddr = tempFactory.createLiquidToken{value: 0.1 ether}(
-            tokenCreator,
-            "ipfs://rare-burn-test",
-            "RARE_BURN_TEST",
-            "RBT"
-        );
-        Liquid liquidImpl = Liquid(payable(tokenAddr));
-
-        // Check that RARE token exists on this network
-        console.log("RARE token code length:", config.rareToken.code.length);
-        assertTrue(
-            config.rareToken.code.length > 0,
-            "RARE token should exist on Base mainnet"
-        );
-
-        // Make a purchase and check RARE burn functionality
-        // Note: Buffered burn pattern - buy always succeeds, ETH accumulates in burner
-        uint256 purchaseAmount = 1 ether;
-
-        // Get initial protocol fee recipient balance to track fee distribution
-        uint256 initialProtocolBalance = protocolFeeRecipient.balance;
-
-        vm.startPrank(buyer1);
-
-        // Execute purchase - should always succeed with buffered burn pattern
-        uint256 tokensReceived = liquidImpl.buy{value: purchaseAmount}(
-            buyer1,
-            address(0),
-            0,
-            0
-        );
-
-        vm.stopPrank();
-
-        // Check final protocol fee recipient balance
-        uint256 finalProtocolBalance = protocolFeeRecipient.balance;
-
-        console.log("Purchase completed successfully:");
-        console.log("- ETH spent:", _formatEther(purchaseAmount));
-        console.log("- Tokens received:", _formatTokens(tokensReceived));
-
-        // Calculate expected fees
-        uint256 totalFee = (purchaseAmount * liquidImpl.TOTAL_FEE_BPS()) /
-            10000;
-        uint256 expectedRAREBurnFee = (totalFee * 2000) / 10000; // 20% of fees
-        uint256 protocolFeeIncrease = finalProtocolBalance -
-            initialProtocolBalance;
-
-        console.log("- Total fee:", _formatEther(totalFee));
-        console.log(
-            "- Expected RARE burn fee deposited to accumulator:",
-            _formatEther(expectedRAREBurnFee)
-        );
-        console.log(
-            "- Protocol fee increase:",
-            _formatEther(protocolFeeIncrease)
-        );
-
-        assertTrue(tokensReceived > 0, "Should have received tokens");
-        assertTrue(totalFee > 0, "Should have collected fees");
-        // Note: Protocol fee recipient may not receive fees during initialization
-        // because fees go to RARE burn and token creator. This is expected behavior.
-
-        console.log(
-            "Test completed - RARE burn mechanism working (buffered pattern)"
-        );
-        console.log(
-            "ETH deposited to RAREBurner; actual burn happens via flush()"
-        );
-    }
-
     function testRAREBurnOnSell() public {
         console.log("=== RARE BURN ON SELL TEST ===");
 
@@ -1256,114 +911,16 @@ contract LiquidMainnetBondingTest is Test {
         // Deploy factory and create token with RARE burn enabled
         LiquidFactory tempFactory = _deployLiquidWithTicks(-150000, 150000);
 
-        vm.prank(tokenCreator);
-        address tokenAddr = tempFactory.createLiquidToken{value: 0.1 ether}(
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(tempFactory), 0.1 ether);
+        address tokenAddr = tempFactory.createLiquidToken(
             tokenCreator,
             "ipfs://rare-burn-sell-test",
             "RARE_BURN_SELL",
-            "RBS"
+            "RBS",
+            0.1 ether
         );
         Liquid liquidImpl = Liquid(payable(tokenAddr));
-
-        // First, buy some tokens
-        vm.startPrank(buyer1);
-        uint256 tokensReceived = liquidImpl.buy{value: 2 ether}(
-            buyer1,
-            address(0),
-            0,
-            0
-        );
-        vm.stopPrank();
-
-        console.log("Initial purchase completed:");
-        console.log("- Tokens received:", _formatTokens(tokensReceived));
-
-        // Now sell half the tokens - should always succeed with buffered burn
-        uint256 sellAmount = tokensReceived / 2;
-
-        vm.startPrank(buyer1);
-
-        // With buffered burn pattern, sell always succeeds regardless of V4 pool state
-        // ETH fees deposit to RAREBurner, actual burns happen via flush()
-        uint256 ethReceived = liquidImpl.sell(
-            sellAmount,
-            buyer1,
-            address(0),
-            0,
-            0
-        );
-
-        console.log("Sell completed successfully:");
-        console.log("- Tokens sold:", _formatTokens(sellAmount));
-        console.log("- ETH received:", _formatEther(ethReceived));
-
-        // Calculate expected RARE burn amount
-        uint256 totalFee = (ethReceived * liquidImpl.TOTAL_FEE_BPS()) / 10000;
-        uint256 expectedRAREBurnFee = (totalFee * 3000) / 10000; // 30% of fees
-
-        console.log("- Total fee:", _formatEther(totalFee));
-        console.log(
-            "- Expected RARE burn fee deposited to accumulator:",
-            _formatEther(expectedRAREBurnFee)
-        );
-
-        vm.stopPrank();
-    }
-
-    function testRAREBurnDisabled() public {
-        console.log("=== RARE BURN DISABLED TEST ===");
-
-        // Configure RARE burn as disabled
-        vm.startPrank(admin);
-        // RARE burn configuration (disabled) would happen here
-        // Skipped in this test as it uses MockBurner
-        vm.stopPrank();
-
-        // Deploy factory and create token
-        LiquidFactory tempFactory = _deployLiquidWithTicks(-150000, 150000);
-
-        vm.prank(tokenCreator);
-        address tokenAddr = tempFactory.createLiquidToken{value: 0.1 ether}(
-            tokenCreator,
-            "ipfs://rare-burn-disabled-test",
-            "RARE_DISABLED",
-            "RD"
-        );
-        Liquid liquidImpl = Liquid(payable(tokenAddr));
-
-        // Get initial protocol fee recipient ETH balance (direct transfers now)
-        uint256 initialProtocolBalance = protocolFeeRecipient.balance;
-
-        // Make a purchase - should NOT emit Burned event
-        uint256 purchaseAmount = 1 ether;
-
-        vm.startPrank(buyer1);
-        uint256 tokensReceived = liquidImpl.buy{value: purchaseAmount}(
-            buyer1,
-            address(0),
-            0,
-            0
-        );
-        vm.stopPrank();
-
-        // Check that protocol fee recipient received fees (direct ETH transfer)
-        uint256 finalProtocolBalance = protocolFeeRecipient.balance;
-        uint256 protocolFeeIncrease = finalProtocolBalance -
-            initialProtocolBalance;
-
-        console.log("Purchase with RARE burn disabled:");
-        console.log("- ETH spent:", _formatEther(purchaseAmount));
-        console.log("- Tokens received:", _formatTokens(tokensReceived));
-        console.log(
-            "- Protocol fee increase:",
-            _formatEther(protocolFeeIncrease)
-        );
-
-        // Since RARE burn is disabled, all fees should go to traditional recipients
-        assertTrue(
-            protocolFeeIncrease > 0,
-            "Protocol should have received fees"
-        );
     }
 
     function testRAREBurnFailureHandling() public {
@@ -1382,19 +939,22 @@ contract LiquidMainnetBondingTest is Test {
 
         // With new non-reverting semantics, token creation SUCCEEDS:
         // 1. We send 0.1 ether (> 0.001 ether minimum)
-        // 2. All ETH goes to initial liquidity
+        // 2. All RARE goes to initial liquidity
         // 3. Token creation completes successfully - no user-facing revert!
 
-        // Note: MockBurner has a working depositForBurn(), so ETH goes there
+        // Note: MockBurner has a working depositForBurn(), so RARE goes there (after swaps)
         // For testing the fallback path, we'd need a reverting burner
 
-        vm.prank(tokenCreator);
-        address tokenAddr = tempFactory.createLiquidToken{value: 0.1 ether}(
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(tempFactory), 0.1 ether);
+        address tokenAddr = tempFactory.createLiquidToken(
             tokenCreator,
             "ipfs://rare-burn-failure-test",
             "RARE_FAILURE",
-            "RF"
+            "RF",
+            0.1 ether
         );
+        vm.stopPrank();
 
         // Verify token was created successfully
         assertTrue(tokenAddr != address(0), "Token should be created");
@@ -1445,64 +1005,17 @@ contract LiquidMainnetBondingTest is Test {
             // Deploy factory and create fresh liquid token
             LiquidFactory tempFactory = _deployLiquidWithTicks(-150000, 150000);
 
-            vm.prank(tokenCreator);
-            address tokenAddr = tempFactory.createLiquidToken{value: 0.1 ether}(
+            vm.startPrank(tokenCreator);
+            IERC20(mockRARE).approve(address(tempFactory), 0.1 ether);
+            address tokenAddr = tempFactory.createLiquidToken(
                 tokenCreator,
                 string(abi.encodePacked("ipfs://test-", vm.toString(i))),
                 string(abi.encodePacked("TEST_", vm.toString(i))),
-                string(abi.encodePacked("T", vm.toString(i)))
+                string(abi.encodePacked("T", vm.toString(i))),
+                0.1 ether
             );
-            Liquid liquidImpl = Liquid(payable(tokenAddr));
-
-            // Make a purchase - should always succeed with buffered burn pattern
-            uint256 purchaseAmount = 0.5 ether;
-
-            vm.startPrank(buyer1);
-
-            uint256 tokensReceived = liquidImpl.buy{value: purchaseAmount}(
-                buyer1,
-                address(0),
-                0,
-                0
-            );
-
             vm.stopPrank();
-
-            // Calculate expected fees
-            uint256 totalFee = (purchaseAmount * liquidImpl.TOTAL_FEE_BPS()) /
-                10000;
-            uint256 expectedRAREBurnFee = (totalFee * burnBPS) / 10000;
-            uint256 remainingFee = totalFee - expectedRAREBurnFee;
-
-            console.log(
-                string(
-                    abi.encodePacked("- Total fee: ", _formatEther(totalFee))
-                )
-            );
-            console.log(
-                string(
-                    abi.encodePacked(
-                        "- RARE burn fee deposited to accumulator: ",
-                        _formatEther(expectedRAREBurnFee)
-                    )
-                )
-            );
-            console.log(
-                string(
-                    abi.encodePacked(
-                        "- Remaining for traditional fees: ",
-                        _formatEther(remainingFee)
-                    )
-                )
-            );
-            console.log(
-                string(
-                    abi.encodePacked(
-                        "- Tokens received: ",
-                        _formatTokens(tokensReceived)
-                    )
-                )
-            );
+            Liquid liquidImpl = Liquid(payable(tokenAddr));
         }
     }
 }

@@ -7,7 +7,7 @@ import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
-import {NetworkConfig} from "./NetworkConfig.sol";
+import {NetworkConfig} from "./config/NetworkConfig.sol";
 
 /**
  * @title ComputePoolId

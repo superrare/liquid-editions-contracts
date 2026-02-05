@@ -65,8 +65,11 @@ const RECIPIENTS = {
 // V4 action codes (from v4-periphery Actions.sol)
 const V4_ACTIONS = {
   SWAP_EXACT_IN_SINGLE: 0x06,
+  SWAP_EXACT_IN: 0x07, // Multi-hop swap
   SETTLE_ALL: 0x0c,
+  SETTLE: 0x09,        // Settle specific amount (for intermediate hops)
   TAKE_ALL: 0x0f,
+  TAKE: 0x0d,          // Take specific amount
 };
 
 // V4 Quoter ABI
@@ -99,8 +102,10 @@ const V4_CONTRACTS: Record<number, { quoter: string; poolManager: string }> = {
 };
 
 // Common V4 fee tiers to check
-const V4_FEE_TIERS = [100, 500, 3000, 10000]; // 0.01%, 0.05%, 0.3%, 1%
+// Note: Liquid tokens use fee=0, so we include it first
+const V4_FEE_TIERS = [0, 100, 500, 3000, 10000]; // 0%, 0.01%, 0.05%, 0.3%, 1%
 const V4_TICK_SPACINGS: Record<number, number> = {
+  0: 60,    // Liquid tokens use tickSpacing=60 with fee=0
   100: 1,
   500: 10,
   3000: 60,
@@ -411,10 +416,357 @@ function encodeMixedRoute(route: SwapRoute, isExactIn: boolean): { commands: str
 }
 
 /**
+ * Get multi-hop quote for Liquid tokens: ETH → RARE → Liquid Token
+ * This handles the two-hop route required for Liquid tokens which are paired with RARE, not ETH
+ */
+async function getMultiHopLiquidQuote(
+  provider: ethers.providers.Provider,
+  chainId: number,
+  wethAddress: string,
+  baseTokenAddress: string, // RARE address
+  liquidTokenAddress: string,
+  ethForSwap: ethers.BigNumber,
+  slippageBps: number
+): Promise<{
+  amountOut: ethers.BigNumber;
+  rareAmount: ethers.BigNumber;
+  v4Quote: V4QuoteResult;
+  description: string;
+  firstHop: {
+    type: 'v4' | 'v3';
+    v4Quote?: V4QuoteResult;
+    v3Fee?: number;
+    usesNativeEth: boolean;
+  };
+} | null> {
+  console.log(`  Checking multi-hop: ETH → RARE → Liquid...`);
+  
+  // Step 1: Quote ETH → RARE via V4 (or could use V3)
+  // First check if there's a V4 pool for ETH/RARE
+  // Try both native ETH (address(0)) and WETH addresses
+  let ethToRareV4 = await getV4DirectQuote(
+    provider,
+    chainId,
+    ethers.constants.AddressZero, // Native ETH
+    baseTokenAddress, // RARE
+    ethForSwap
+  );
+  
+  let usesNativeEth = true;
+  
+  // If no pool found with native ETH, try WETH
+  if (!ethToRareV4) {
+    ethToRareV4 = await getV4DirectQuote(
+      provider,
+      chainId,
+      wethAddress, // WETH
+      baseTokenAddress, // RARE
+      ethForSwap
+    );
+    usesNativeEth = false;
+  }
+  
+  let rareAmount: ethers.BigNumber;
+  let ethToRareRoute: string;
+  let firstHop: { type: 'v4' | 'v3'; v4Quote?: V4QuoteResult; v3Fee?: number; usesNativeEth: boolean };
+  
+  if (ethToRareV4) {
+    rareAmount = ethToRareV4.amountOut;
+    ethToRareRoute = `V4(${ethToRareV4.fee / 10000}%)`;
+    firstHop = { type: 'v4', v4Quote: ethToRareV4, usesNativeEth };
+    console.log(`    ETH → RARE: ${ethers.utils.formatEther(rareAmount)} RARE via ${ethToRareRoute}`);
+  } else {
+    // Try V3 for ETH → RARE (common fee tiers)
+    // Get V3 Quoter address by chain
+    let v3QuoterAddress: string;
+    if (chainId === 8453) {
+      v3QuoterAddress = '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a'; // Base Mainnet V3 QuoterV2
+    } else if (chainId === 84532) {
+      v3QuoterAddress = '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a'; // Base Sepolia V3 QuoterV2 (same as Base)
+    } else if (chainId === 11155111) {
+      v3QuoterAddress = '0xEd1f6473345F4150F13EeE36E51F4C2F43f63975'; // Ethereum Sepolia V3 QuoterV2
+    } else {
+      v3QuoterAddress = '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6'; // Ethereum Mainnet V3 QuoterV2
+    }
+    
+    const v3Quoter = new ethers.Contract(
+      v3QuoterAddress,
+      ['function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) external returns (uint256 amountOut)'],
+      provider
+    );
+    
+    // Try common V3 fee tiers
+    const v3FeeTiers = [500, 3000, 10000]; // 0.05%, 0.3%, 1%
+    let bestV3Quote: ethers.BigNumber | null = null;
+    let bestV3Fee = 0;
+    
+    for (const fee of v3FeeTiers) {
+      try {
+        const quote = await v3Quoter.callStatic.quoteExactInputSingle(
+          wethAddress,
+          baseTokenAddress,
+          fee,
+          ethForSwap,
+          0
+        );
+        if (!bestV3Quote || quote.gt(bestV3Quote)) {
+          bestV3Quote = quote;
+          bestV3Fee = fee;
+        }
+      } catch {
+        // Pool doesn't exist at this fee tier
+      }
+    }
+    
+    if (bestV3Quote) {
+      rareAmount = bestV3Quote;
+      ethToRareRoute = `V3(${bestV3Fee / 10000}%)`;
+      firstHop = { type: 'v3', v3Fee: bestV3Fee, usesNativeEth: false };
+      console.log(`    ETH → RARE: ${ethers.utils.formatEther(rareAmount)} RARE via ${ethToRareRoute}`);
+    } else {
+      console.log(`    ✗ No ETH → RARE route found`);
+      return null;
+    }
+  }
+  
+  // Step 2: Quote RARE → Liquid token via V4
+  // Apply slippage to RARE amount for the next hop
+  const rareForSwap = rareAmount.mul(10000 - Math.floor(slippageBps / 2)).div(10000);
+  
+  const rareToLiquidV4 = await getV4DirectQuote(
+    provider,
+    chainId,
+    baseTokenAddress, // RARE
+    liquidTokenAddress,
+    rareForSwap
+  );
+  
+  if (!rareToLiquidV4) {
+    console.log(`    ✗ No RARE → Liquid V4 pool found`);
+    return null;
+  }
+  
+  console.log(`    RARE → Liquid: ${ethers.utils.formatEther(rareToLiquidV4.amountOut)} tokens via V4(${rareToLiquidV4.fee / 10000}%)`);
+  
+  return {
+    amountOut: rareToLiquidV4.amountOut,
+    rareAmount,
+    v4Quote: rareToLiquidV4,
+    description: `ETH → RARE (${ethToRareRoute}) → Liquid (V4 ${rareToLiquidV4.fee / 10000}%)`,
+    firstHop,
+  };
+}
+
+/**
+ * Encode multi-hop swap: ETH → RARE → Liquid token
+ * 
+ * For V4→V4 multi-hop, we use a SINGLE V4_SWAP command with both swaps.
+ * The PoolManager tracks deltas internally, so:
+ * 1. Settle ETH (input)
+ * 2. First swap: ETH → RARE (RARE stays as internal delta)
+ * 3. Second swap: RARE → Liquid (uses RARE delta from first swap)
+ * 4. Take Liquid tokens (output)
+ * 
+ * For V3→V4 multi-hop, we need separate commands:
+ * 1. WRAP_ETH
+ * 2. V3_SWAP (outputs RARE to router)
+ * 3. V4_SWAP (router has RARE, needs to settle via Permit2)
+ */
+function encodeMultiHopV4Swap(
+  wethAddress: string,
+  baseTokenAddress: string, // RARE
+  liquidTokenAddress: string,
+  ethAmount: ethers.BigNumber,
+  rareAmount: ethers.BigNumber,
+  liquidTokenAmountMin: ethers.BigNumber,
+  v4RareToLiquid: V4QuoteResult,
+  firstHop: { type: 'v4' | 'v3'; v4Quote?: V4QuoteResult; v3Fee?: number; usesNativeEth: boolean }
+): { commands: string; inputs: string[]; description: string } {
+  const commands: string[] = [];
+  const inputs: string[] = [];
+  const descriptions: string[] = [];
+  
+  // ============================================
+  // CASE 1: V4 → V4 (single V4_SWAP with both hops)
+  // ============================================
+  if (firstHop.type === 'v4' && firstHop.v4Quote) {
+    const v4Quote = firstHop.v4Quote;
+    
+    // Sort currencies for first hop (ETH → RARE)
+    let currency0_1 = firstHop.usesNativeEth ? ethers.constants.AddressZero : wethAddress;
+    let currency1_1 = baseTokenAddress;
+    let zeroForOne1 = true;
+    
+    if (currency0_1.toLowerCase() > currency1_1.toLowerCase()) {
+      [currency0_1, currency1_1] = [currency1_1, currency0_1];
+      zeroForOne1 = false;
+    }
+    
+    // Sort currencies for second hop (RARE → Liquid)
+    let currency0_2 = baseTokenAddress;
+    let currency1_2 = liquidTokenAddress;
+    let zeroForOne2 = true;
+    
+    if (currency0_2.toLowerCase() > currency1_2.toLowerCase()) {
+      [currency0_2, currency1_2] = [currency1_2, currency0_2];
+      zeroForOne2 = false;
+    }
+    
+    // Build actions: 
+    // 1. First swap (ETH → RARE)
+    // 2. Second swap (RARE → Liquid) 
+    // 3. Settle ETH input
+    // 4. Take Liquid output
+    // Note: RARE is intermediate and balances out via internal deltas
+    const actions = ethers.utils.solidityPack(
+      ['uint8', 'uint8', 'uint8', 'uint8'],
+      [
+        V4_ACTIONS.SWAP_EXACT_IN_SINGLE, // First swap
+        V4_ACTIONS.SWAP_EXACT_IN_SINGLE, // Second swap
+        V4_ACTIONS.SETTLE_ALL,           // Settle ETH
+        V4_ACTIONS.TAKE_ALL,             // Take Liquid
+      ]
+    );
+    
+    const params: string[] = [];
+    
+    // First swap params (ETH → RARE)
+    params.push(ethers.utils.defaultAbiCoder.encode(
+      ['tuple(tuple(address,address,uint24,int24,address),bool,uint128,uint128,bytes)'],
+      [[
+        [currency0_1, currency1_1, v4Quote.fee, v4Quote.tickSpacing, ethers.constants.AddressZero],
+        zeroForOne1,
+        ethAmount,
+        0, // No min for intermediate (we check final output)
+        '0x'
+      ]]
+    ));
+    
+    // Second swap params (RARE → Liquid)
+    // Use 0 as amountIn to signal "use delta from previous swap"
+    // Actually, we need to use the expected rareAmount
+    params.push(ethers.utils.defaultAbiCoder.encode(
+      ['tuple(tuple(address,address,uint24,int24,address),bool,uint128,uint128,bytes)'],
+      [[
+        [currency0_2, currency1_2, v4RareToLiquid.fee, v4RareToLiquid.tickSpacing, ethers.constants.AddressZero],
+        zeroForOne2,
+        rareAmount,
+        liquidTokenAmountMin,
+        '0x'
+      ]]
+    ));
+    
+    // Settle ETH (input currency)
+    params.push(ethers.utils.defaultAbiCoder.encode(
+      ['address', 'uint128'],
+      [firstHop.usesNativeEth ? ethers.constants.AddressZero : wethAddress, ethAmount]
+    ));
+    
+    // Take Liquid tokens (output currency)
+    params.push(ethers.utils.defaultAbiCoder.encode(
+      ['address', 'uint128'],
+      [liquidTokenAddress, liquidTokenAmountMin]
+    ));
+    
+    const v4SwapInput = ethers.utils.defaultAbiCoder.encode(
+      ['bytes', 'bytes[]'],
+      [actions, params]
+    );
+    
+    commands.push(COMMANDS.V4_SWAP);
+    inputs.push(v4SwapInput);
+    descriptions.push(`ETH → RARE (V4 ${v4Quote.fee / 10000}%) → Liquid (V4 ${v4RareToLiquid.fee / 10000}%)`);
+    
+  } else if (firstHop.type === 'v3' && firstHop.v3Fee !== undefined) {
+    // ============================================
+    // CASE 2: V3 → V4 (separate commands)
+    // ============================================
+    // V3 swap requires wrapping ETH first
+    // 1. WRAP_ETH
+    const wrapEthInput = ethers.utils.defaultAbiCoder.encode(
+      ['address', 'uint256'],
+      [RECIPIENTS.ROUTER, ethAmount]
+    );
+    
+    commands.push(COMMANDS.WRAP_ETH);
+    inputs.push(wrapEthInput);
+    descriptions.push('WRAP_ETH');
+    
+    // 2. V3_SWAP_EXACT_IN (WETH → RARE)
+    // Output to ROUTER so we can use it for V4 swap
+    const path = ethers.utils.solidityPack(
+      ['address', 'uint24', 'address'],
+      [wethAddress, firstHop.v3Fee, baseTokenAddress]
+    );
+    
+    const v3SwapInput = ethers.utils.defaultAbiCoder.encode(
+      ['address', 'uint256', 'uint256', 'bytes', 'bool'],
+      [RECIPIENTS.ROUTER, ethAmount, rareAmount.mul(10000 - 100).div(10000), path, false]
+    );
+    
+    commands.push(COMMANDS.V3_SWAP_EXACT_IN);
+    inputs.push(v3SwapInput);
+    descriptions.push(`WETH → RARE (V3 ${firstHop.v3Fee / 10000}%)`);
+    
+    // 3. V4_SWAP (RARE → Liquid)
+    // The RARE is now in the Universal Router
+    // For V4, we need to transfer RARE to the PoolManager via Permit2
+    // But Universal Router has the RARE, and needs to approve Permit2
+    // This is complex... let's use a different approach
+    
+    // Actually, for V3→V4, we need the Universal Router to transfer RARE to PoolManager
+    // The Universal Router doesn't auto-approve Permit2 for intermediate tokens
+    // So this case is very complex and may not work without custom integration
+    
+    // For now, let's sort currencies for RARE → Liquid pool
+    let currency0 = baseTokenAddress;
+    let currency1 = liquidTokenAddress;
+    let zeroForOne = true;
+    
+    if (baseTokenAddress.toLowerCase() > liquidTokenAddress.toLowerCase()) {
+      currency0 = liquidTokenAddress;
+      currency1 = baseTokenAddress;
+      zeroForOne = false;
+    }
+
+    // Try using SETTLE (0x09) which takes from msg.sender balance in PoolManager
+    // But after V3 swap, the RARE is in Universal Router, not PoolManager
+    // This won't work directly...
+    
+    // Alternative: Use TRANSFER command to move RARE from router to PoolManager
+    // But that's also complex...
+    
+    // For V3→V4, the simplest solution is to:
+    // 1. Do the V3 swap with output to MSG_SENDER (LiquidRouter)
+    // 2. Have LiquidRouter approve Permit2 for RARE
+    // 3. Then V4 can pull RARE via Permit2
+    // But this requires changes to LiquidRouter contract...
+    
+    // For now, throw an error for V3→V4 routes
+    throw new Error('V3→V4 multi-hop not yet supported. Please ensure ETH→RARE has a V4 pool.');
+    
+  } else {
+    throw new Error('Invalid first hop type');
+  }
+
+  // Combine commands (remove 0x prefix from all but first)
+  const combinedCommands = commands.join('').replace(/0x/g, (match, offset) => offset === 0 ? '0x' : '');
+
+  return {
+    commands: combinedCommands,
+    inputs,
+    description: descriptions.join(' → '),
+  };
+}
+
+/**
  * Encode Universal Router calldata for ETH → Token buy
+ * 
+ * For Liquid tokens (paired with RARE), pass baseTokenAddress to enable multi-hop routing:
+ * ETH → RARE → Liquid token
  */
 export async function getManualBuyQuote(
-  params: ManualBuyQuoteParams,
+  params: ManualBuyQuoteParams & { baseTokenAddress?: string },
   chainId: number,
   rpcUrl: string,
   wethAddress: string,
@@ -427,6 +779,7 @@ export async function getManualBuyQuote(
     slippageBps = 500,
     recipient,
     poolFee = 3000,
+    baseTokenAddress, // Optional: RARE address for Liquid tokens
   } = params;
 
   const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
@@ -434,7 +787,33 @@ export async function getManualBuyQuote(
   const ethForSwap = ethAmountBN.mul(10000 - liquidRouterFeeBps).div(10000);
 
   console.log(`Getting quote for ${ethers.utils.formatEther(ethForSwap)} ETH → ${token.slice(0, 10)}...`);
-  console.log(`  Checking V4 pools...`);
+  
+  // ============================================
+  // Step 1: Try multi-hop if baseTokenAddress provided (Liquid tokens)
+  // ============================================
+  let multiHopQuote: Awaited<ReturnType<typeof getMultiHopLiquidQuote>> = null;
+  
+  if (baseTokenAddress) {
+    multiHopQuote = await getMultiHopLiquidQuote(
+      provider,
+      chainId,
+      wethAddress,
+      baseTokenAddress,
+      token,
+      ethForSwap,
+      slippageBps
+    );
+    
+    if (multiHopQuote) {
+      console.log(`  ✓ Multi-hop Quote: ${ethers.utils.formatEther(multiHopQuote.amountOut)} tokens`);
+      console.log(`    Route: ${multiHopQuote.description}`);
+    }
+  }
+  
+  // ============================================
+  // Step 2: Try direct V4 quote (ETH → token)
+  // ============================================
+  console.log(`  Checking direct V4 pools...`);
   const v4Quote = await getV4DirectQuote(
     provider,
     chainId,
@@ -444,72 +823,115 @@ export async function getManualBuyQuote(
   );
   
   if (v4Quote) {
-    console.log(`  ✓ V4 Quote: ${ethers.utils.formatUnits(v4Quote.amountOut, tokenDecimals)} tokens (${v4Quote.fee / 10000}% fee)`);
+    console.log(`  ✓ Direct V4 Quote: ${ethers.utils.formatUnits(v4Quote.amountOut, tokenDecimals)} tokens (${v4Quote.fee / 10000}% fee)`);
   } else {
-    console.log(`  ✗ No V4 pools found`);
+    console.log(`  ✗ No direct V4 pools found`);
   }
 
   // ============================================
-  // Step 2: Get AlphaRouter quote (V2/V3)
+  // Step 3: Get AlphaRouter quote (V2/V3)
   // ============================================
   console.log(`  Checking V2/V3 via AlphaRouter...`);
-  const router = new AlphaRouter({ chainId, provider });
+  let alphaRoute: SwapRoute | null = null;
+  let alphaAmountOut = ethers.BigNumber.from(0);
   
-  const wethToken = new Token(chainId, wethAddress, 18, 'WETH', 'Wrapped Ether');
-  const outputToken = new Token(chainId, token, tokenDecimals);
-  
-  const amountIn = CurrencyAmount.fromRawAmount(wethToken, ethForSwap.toString());
-  
-  const alphaRoute = await router.route(
-    amountIn,
-    outputToken,
-    TradeType.EXACT_INPUT,
-    {
-      type: SwapType.UNIVERSAL_ROUTER,
-      recipient: recipient || RECIPIENTS.MSG_SENDER,
-      slippageTolerance: new Percent(slippageBps, 10000),
-      version: UniversalRouterVersion.V1_2,
-    }
-  );
+  try {
+    const router = new AlphaRouter({ chainId, provider });
+    
+    const wethToken = new Token(chainId, wethAddress, 18, 'WETH', 'Wrapped Ether');
+    const outputToken = new Token(chainId, token, tokenDecimals);
+    
+    const amountIn = CurrencyAmount.fromRawAmount(wethToken, ethForSwap.toString());
+    
+    alphaRoute = await router.route(
+      amountIn,
+      outputToken,
+      TradeType.EXACT_INPUT,
+      {
+        type: SwapType.UNIVERSAL_ROUTER,
+        recipient: recipient || RECIPIENTS.MSG_SENDER,
+        slippageTolerance: new Percent(slippageBps, 10000),
+        version: UniversalRouterVersion.V1_2,
+      }
+    );
 
-  const alphaAmountOut = alphaRoute ? ethers.BigNumber.from(alphaRoute.quote.quotient.toString()) : ethers.BigNumber.from(0);
-  
-  if (alphaRoute) {
-    console.log(`  ✓ AlphaRouter Quote: ${ethers.utils.formatUnits(alphaAmountOut, tokenDecimals)} tokens (${alphaRoute.route.map((r: any) => r.protocol).join('+')})`);
-  } else {
-    console.log(`  ✗ No V2/V3 route found`);
+    alphaAmountOut = alphaRoute ? ethers.BigNumber.from(alphaRoute.quote.quotient.toString()) : ethers.BigNumber.from(0);
+    
+    if (alphaRoute) {
+      console.log(`  ✓ AlphaRouter Quote: ${ethers.utils.formatUnits(alphaAmountOut, tokenDecimals)} tokens (${alphaRoute.route.map((r: any) => r.protocol).join('+')})`);
+    } else {
+      console.log(`  ✗ No V2/V3 route found`);
+    }
+  } catch (e: any) {
+    console.log(`  ✗ AlphaRouter failed: ${e.message?.slice(0, 50) || 'unknown error'}`);
   }
 
   // ============================================
-  // Step 3: Choose best route
+  // Step 4: Choose best route
   // ============================================
-  const useV4 = v4Quote && (!alphaRoute || v4Quote.amountOut.gt(alphaAmountOut));
-  
+  // Priority: multi-hop (for Liquid) > direct V4 > AlphaRouter
   let amountOut: string;
   let minAmountOut: string;
   let swapEncoding: { commands: string; inputs: any[]; description: string };
   
-  if (useV4 && v4Quote) {
-    console.log(`\n✓ Best route: V4 (${v4Quote.fee / 10000}% fee)`);
-    amountOut = v4Quote.amountOut.toString();
-    minAmountOut = v4Quote.amountOut.mul(10000 - slippageBps).div(10000).toString();
+  // Compare all available quotes
+  const quotes: { type: string; amount: ethers.BigNumber; data: any }[] = [];
+  
+  if (multiHopQuote) {
+    quotes.push({ type: 'multihop', amount: multiHopQuote.amountOut, data: multiHopQuote });
+  }
+  if (v4Quote) {
+    quotes.push({ type: 'v4', amount: v4Quote.amountOut, data: v4Quote });
+  }
+  if (alphaRoute && alphaAmountOut.gt(0)) {
+    quotes.push({ type: 'alpha', amount: alphaAmountOut, data: alphaRoute });
+  }
+  
+  if (quotes.length === 0) {
+    throw new Error('No route found - no V4, V3, V2, or multi-hop pools available');
+  }
+  
+  // Find best quote
+  const bestQuote = quotes.reduce((best, current) => 
+    current.amount.gt(best.amount) ? current : best
+  );
+  
+  if (bestQuote.type === 'multihop') {
+    const mh = bestQuote.data as NonNullable<typeof multiHopQuote>;
+    console.log(`\n✓ Best route: Multi-hop (${mh.description})`);
+    amountOut = mh.amountOut.toString();
+    minAmountOut = mh.amountOut.mul(10000 - slippageBps).div(10000).toString();
+    
+    // Encode full multi-hop route: ETH → RARE → Liquid
+    swapEncoding = encodeMultiHopV4Swap(
+      wethAddress,
+      baseTokenAddress!,
+      token,
+      ethForSwap,
+      mh.rareAmount,
+      ethers.BigNumber.from(minAmountOut),
+      mh.v4Quote,
+      mh.firstHop
+    );
+  } else if (bestQuote.type === 'v4') {
+    const v4 = bestQuote.data as V4QuoteResult;
+    console.log(`\n✓ Best route: Direct V4 (${v4.fee / 10000}% fee)`);
+    amountOut = v4.amountOut.toString();
+    minAmountOut = v4.amountOut.mul(10000 - slippageBps).div(10000).toString();
     swapEncoding = encodeDirectV4Swap(
       ethers.constants.AddressZero,
       token,
-      v4Quote.fee,
-      v4Quote.tickSpacing,
+      v4.fee,
+      v4.tickSpacing,
       ethForSwap,
       ethers.BigNumber.from(minAmountOut)
     );
-  } else if (alphaRoute) {
-    console.log(`\n✓ Best route: ${alphaRoute.route.map((r: any) => r.protocol).join('+')}`);
+  } else {
+    const alpha = bestQuote.data as SwapRoute;
+    console.log(`\n✓ Best route: ${alpha.route.map((r: any) => r.protocol).join('+')}`);
     amountOut = alphaAmountOut.toString();
     minAmountOut = alphaAmountOut.mul(10000 - slippageBps).div(10000).toString();
-    
-    // Encode V2/V3 route
-    swapEncoding = encodeSwapPath(alphaRoute, true);
-  } else {
-    throw new Error('No route found - no V4, V3, or V2 pools available');
+    swapEncoding = encodeSwapPath(alpha, true);
   }
 
   console.log(`  Expected out: ${ethers.utils.formatUnits(amountOut, tokenDecimals)} tokens`);
@@ -517,48 +939,64 @@ export async function getManualBuyQuote(
   console.log(`  Route: ${swapEncoding.description}`);
 
   const deadline = getDeadline();
-  const wrapEthInput = ethers.utils.defaultAbiCoder.encode(
-    ['address', 'uint256'],
-    [RECIPIENTS.ROUTER, ethForSwap]
-  );
-
-  const swapInputs: any[] = [];
   
-  if (swapEncoding.commands === COMMANDS.V3_SWAP_EXACT_IN) {
-    swapInputs.push(
-      ethers.utils.defaultAbiCoder.encode(
-        ['address', 'uint256', 'uint256', 'bytes', 'bool'],
-        [RECIPIENTS.MSG_SENDER, ethForSwap, minAmountOut, swapEncoding.inputs[0], false]
-      )
-    );
-  } else if (swapEncoding.commands === COMMANDS.V2_SWAP_EXACT_IN) {
-    swapInputs.push(
-      ethers.utils.defaultAbiCoder.encode(
-        ['address', 'uint256', 'uint256', 'address[]', 'bool'],
-        [RECIPIENTS.MSG_SENDER, ethForSwap, minAmountOut, swapEncoding.inputs[0], false]
-      )
-    );
-  } else if (swapEncoding.commands === COMMANDS.V4_SWAP) {
-    swapInputs.push(swapEncoding.inputs[0]);
-  } else if (swapEncoding.commands.length > 4) {
-    throw new Error('Mixed routes not fully supported');
+  // For multi-hop routes, commands and inputs are already fully encoded
+  // For single-hop routes, we need to process them differently
+  let commands: string;
+  let inputs: any[];
+  
+  if (bestQuote.type === 'multihop') {
+    // Multi-hop already has all commands and inputs encoded
+    commands = swapEncoding.commands;
+    inputs = swapEncoding.inputs;
   } else {
-    throw new Error(`Unsupported swap command: ${swapEncoding.commands}`);
-  }
+    // Single-hop routes need input processing
+    const wrapEthInput = ethers.utils.defaultAbiCoder.encode(
+      ['address', 'uint256'],
+      [RECIPIENTS.ROUTER, ethForSwap]
+    );
 
-  const commands = swapEncoding.commands === COMMANDS.V4_SWAP 
-    ? swapEncoding.commands 
-    : COMMANDS.WRAP_ETH + swapEncoding.commands.slice(2);
-  const inputs = swapEncoding.commands === COMMANDS.V4_SWAP 
-    ? swapInputs 
-    : [wrapEthInput, ...swapInputs];
+    const swapInputs: any[] = [];
+    
+    if (swapEncoding.commands === COMMANDS.V3_SWAP_EXACT_IN) {
+      swapInputs.push(
+        ethers.utils.defaultAbiCoder.encode(
+          ['address', 'uint256', 'uint256', 'bytes', 'bool'],
+          [RECIPIENTS.MSG_SENDER, ethForSwap, minAmountOut, swapEncoding.inputs[0], false]
+        )
+      );
+      // V3 routes need WRAP_ETH first
+      commands = COMMANDS.WRAP_ETH + swapEncoding.commands.slice(2);
+      inputs = [wrapEthInput, ...swapInputs];
+    } else if (swapEncoding.commands === COMMANDS.V2_SWAP_EXACT_IN) {
+      swapInputs.push(
+        ethers.utils.defaultAbiCoder.encode(
+          ['address', 'uint256', 'uint256', 'address[]', 'bool'],
+          [RECIPIENTS.MSG_SENDER, ethForSwap, minAmountOut, swapEncoding.inputs[0], false]
+        )
+      );
+      // V2 routes need WRAP_ETH first
+      commands = COMMANDS.WRAP_ETH + swapEncoding.commands.slice(2);
+      inputs = [wrapEthInput, ...swapInputs];
+    } else if (swapEncoding.commands === COMMANDS.V4_SWAP) {
+      // Single V4 swap uses native ETH (address(0)), no wrapping needed
+      swapInputs.push(swapEncoding.inputs[0]);
+      commands = swapEncoding.commands;
+      inputs = swapInputs;
+    } else {
+      throw new Error(`Unsupported swap command: ${swapEncoding.commands}`);
+    }
+  }
 
   const universalRouterInterface = new ethers.utils.Interface([
     'function execute(bytes commands, bytes[] inputs, uint256 deadline)',
   ]);
 
+  // Ensure commands is a hex string starting with 0x
+  const commandsHex = commands.startsWith('0x') ? commands : '0x' + commands;
+  
   const routeData = universalRouterInterface.encodeFunctionData('execute', [
-    commands,
+    commandsHex,
     inputs,
     deadline,
   ]);
@@ -578,7 +1016,290 @@ export async function getManualBuyQuote(
 }
 
 /**
+ * Get multi-hop sell quote for Liquid tokens: Liquid Token → RARE → ETH
+ */
+async function getMultiHopSellQuote(
+  provider: ethers.providers.Provider,
+  chainId: number,
+  wethAddress: string,
+  baseTokenAddress: string, // RARE address
+  liquidTokenAddress: string,
+  tokenAmount: ethers.BigNumber,
+  slippageBps: number
+): Promise<{
+  amountOut: ethers.BigNumber;
+  rareAmount: ethers.BigNumber;
+  v4Quote: V4QuoteResult; // First hop: Liquid → RARE
+  description: string;
+  secondHop: {
+    type: 'v4' | 'v3';
+    v4Quote?: V4QuoteResult;
+    v3Fee?: number;
+    usesNativeEth: boolean;
+  };
+} | null> {
+  console.log(`  Checking multi-hop: Liquid → RARE → ETH...`);
+  
+  // Step 1: Quote Liquid → RARE via V4
+  const liquidToRareV4 = await getV4DirectQuote(
+    provider,
+    chainId,
+    liquidTokenAddress,
+    baseTokenAddress, // RARE
+    tokenAmount
+  );
+  
+  if (!liquidToRareV4) {
+    console.log(`    ✗ No Liquid → RARE V4 pool found`);
+    return null;
+  }
+  
+  const rareAmount = liquidToRareV4.amountOut;
+  console.log(`    Liquid → RARE: ${ethers.utils.formatEther(rareAmount)} RARE via V4(${liquidToRareV4.fee / 10000}%)`);
+  
+  // Step 2: Quote RARE → ETH via V4 or V3
+  // Apply slippage to RARE amount for the next hop
+  const rareForSwap = rareAmount.mul(10000 - Math.floor(slippageBps / 2)).div(10000);
+  
+  // Try both native ETH (address(0)) and WETH addresses
+  let rareToEthV4 = await getV4DirectQuote(
+    provider,
+    chainId,
+    baseTokenAddress, // RARE
+    ethers.constants.AddressZero, // Native ETH
+    rareForSwap
+  );
+  
+  let usesNativeEth = true;
+  
+  // If no pool found with native ETH, try WETH
+  if (!rareToEthV4) {
+    rareToEthV4 = await getV4DirectQuote(
+      provider,
+      chainId,
+      baseTokenAddress, // RARE
+      wethAddress, // WETH
+      rareForSwap
+    );
+    usesNativeEth = false;
+  }
+  
+  let ethAmount: ethers.BigNumber;
+  let rareToEthRoute: string;
+  let secondHop: { type: 'v4' | 'v3'; v4Quote?: V4QuoteResult; v3Fee?: number; usesNativeEth: boolean };
+  
+  if (rareToEthV4) {
+    ethAmount = rareToEthV4.amountOut;
+    rareToEthRoute = `V4(${rareToEthV4.fee / 10000}%)`;
+    secondHop = { type: 'v4', v4Quote: rareToEthV4, usesNativeEth };
+    console.log(`    RARE → ETH: ${ethers.utils.formatEther(ethAmount)} ETH via ${rareToEthRoute}`);
+  } else {
+    // Try V3 for RARE → ETH (common fee tiers)
+    // Get V3 Quoter address by chain
+    let v3QuoterAddress: string;
+    if (chainId === 8453) {
+      v3QuoterAddress = '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a'; // Base Mainnet V3 QuoterV2
+    } else if (chainId === 84532) {
+      v3QuoterAddress = '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a'; // Base Sepolia V3 QuoterV2 (same as Base)
+    } else if (chainId === 11155111) {
+      v3QuoterAddress = '0xEd1f6473345F4150F13EeE36E51F4C2F43f63975'; // Ethereum Sepolia V3 QuoterV2
+    } else {
+      v3QuoterAddress = '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6'; // Ethereum Mainnet V3 QuoterV2
+    }
+    
+    const v3Quoter = new ethers.Contract(
+      v3QuoterAddress,
+      ['function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) external returns (uint256 amountOut)'],
+      provider
+    );
+    
+    const v3FeeTiers = [500, 3000, 10000];
+    let bestV3Quote: ethers.BigNumber | null = null;
+    let bestV3Fee = 0;
+    
+    for (const fee of v3FeeTiers) {
+      try {
+        const quote = await v3Quoter.callStatic.quoteExactInputSingle(
+          baseTokenAddress,
+          wethAddress,
+          fee,
+          rareForSwap,
+          0
+        );
+        if (!bestV3Quote || quote.gt(bestV3Quote)) {
+          bestV3Quote = quote;
+          bestV3Fee = fee;
+        }
+      } catch {
+        // Pool doesn't exist at this fee tier
+      }
+    }
+    
+    if (bestV3Quote) {
+      ethAmount = bestV3Quote;
+      rareToEthRoute = `V3(${bestV3Fee / 10000}%)`;
+      secondHop = { type: 'v3', v3Fee: bestV3Fee, usesNativeEth: false };
+      console.log(`    RARE → ETH: ${ethers.utils.formatEther(ethAmount)} ETH via ${rareToEthRoute}`);
+    } else {
+      console.log(`    ✗ No RARE → ETH route found`);
+      return null;
+    }
+  }
+  
+  return {
+    amountOut: ethAmount,
+    rareAmount,
+    v4Quote: liquidToRareV4,
+    description: `Liquid → RARE (V4 ${liquidToRareV4.fee / 10000}%) → ETH (${rareToEthRoute})`,
+    secondHop,
+  };
+}
+
+/**
+ * Encode multi-hop sell swap: Liquid token → RARE → ETH
+ * 
+ * For V4→V4 multi-hop, we use a SINGLE V4_SWAP command with both swaps.
+ * The PoolManager tracks deltas internally, so:
+ * 1. Settle Liquid tokens (input)
+ * 2. First swap: Liquid → RARE (RARE stays as internal delta)
+ * 3. Second swap: RARE → ETH (uses RARE delta from first swap)
+ * 4. Take ETH (output)
+ */
+function encodeMultiHopV4SellSwap(
+  wethAddress: string,
+  baseTokenAddress: string, // RARE
+  liquidTokenAddress: string,
+  tokenAmount: ethers.BigNumber,
+  rareAmount: ethers.BigNumber,
+  ethAmountMin: ethers.BigNumber,
+  v4LiquidToRare: V4QuoteResult,
+  secondHop: { type: 'v4' | 'v3'; v4Quote?: V4QuoteResult; v3Fee?: number; usesNativeEth: boolean }
+): { commands: string; inputs: string[]; description: string } {
+  const commands: string[] = [];
+  const inputs: string[] = [];
+  const descriptions: string[] = [];
+  
+  // ============================================
+  // CASE 1: V4 → V4 (single V4_SWAP with both hops)
+  // ============================================
+  if (secondHop.type === 'v4' && secondHop.v4Quote) {
+    const v4Quote = secondHop.v4Quote;
+    
+    // Sort currencies for first hop (Liquid → RARE)
+    let currency0_1 = liquidTokenAddress;
+    let currency1_1 = baseTokenAddress;
+    let zeroForOne1 = true;
+    
+    if (currency0_1.toLowerCase() > currency1_1.toLowerCase()) {
+      [currency0_1, currency1_1] = [currency1_1, currency0_1];
+      zeroForOne1 = false;
+    }
+    
+    // Sort currencies for second hop (RARE → ETH)
+    let currency0_2 = baseTokenAddress;
+    let currency1_2 = secondHop.usesNativeEth ? ethers.constants.AddressZero : wethAddress;
+    let zeroForOne2 = true;
+    
+    if (currency0_2.toLowerCase() > currency1_2.toLowerCase()) {
+      [currency0_2, currency1_2] = [currency1_2, currency0_2];
+      zeroForOne2 = false;
+    }
+    
+    // Build actions: 
+    // 1. First swap (Liquid → RARE)
+    // 2. Second swap (RARE → ETH) 
+    // 3. Settle Liquid input
+    // 4. Take ETH output
+    const actions = ethers.utils.solidityPack(
+      ['uint8', 'uint8', 'uint8', 'uint8'],
+      [
+        V4_ACTIONS.SWAP_EXACT_IN_SINGLE, // First swap
+        V4_ACTIONS.SWAP_EXACT_IN_SINGLE, // Second swap
+        V4_ACTIONS.SETTLE_ALL,           // Settle Liquid tokens
+        V4_ACTIONS.TAKE_ALL,             // Take ETH
+      ]
+    );
+    
+    const params: string[] = [];
+    
+    // First swap params (Liquid → RARE)
+    params.push(ethers.utils.defaultAbiCoder.encode(
+      ['tuple(tuple(address,address,uint24,int24,address),bool,uint128,uint128,bytes)'],
+      [[
+        [currency0_1, currency1_1, v4LiquidToRare.fee, v4LiquidToRare.tickSpacing, ethers.constants.AddressZero],
+        zeroForOne1,
+        tokenAmount,
+        0, // No min for intermediate (we check final output)
+        '0x'
+      ]]
+    ));
+    
+    // Second swap params (RARE → ETH)
+    params.push(ethers.utils.defaultAbiCoder.encode(
+      ['tuple(tuple(address,address,uint24,int24,address),bool,uint128,uint128,bytes)'],
+      [[
+        [currency0_2, currency1_2, v4Quote.fee, v4Quote.tickSpacing, ethers.constants.AddressZero],
+        zeroForOne2,
+        rareAmount,
+        ethAmountMin,
+        '0x'
+      ]]
+    ));
+    
+    // Settle Liquid tokens (input currency)
+    params.push(ethers.utils.defaultAbiCoder.encode(
+      ['address', 'uint128'],
+      [liquidTokenAddress, tokenAmount]
+    ));
+    
+    // Take ETH (output currency)
+    params.push(ethers.utils.defaultAbiCoder.encode(
+      ['address', 'uint128'],
+      [secondHop.usesNativeEth ? ethers.constants.AddressZero : wethAddress, ethAmountMin]
+    ));
+    
+    const v4SwapInput = ethers.utils.defaultAbiCoder.encode(
+      ['bytes', 'bytes[]'],
+      [actions, params]
+    );
+    
+    commands.push(COMMANDS.V4_SWAP);
+    inputs.push(v4SwapInput);
+    descriptions.push(`Liquid → RARE (V4 ${v4LiquidToRare.fee / 10000}%) → ETH (V4 ${v4Quote.fee / 10000}%)`);
+    
+    // If using WETH output, we need to unwrap to native ETH
+    if (!secondHop.usesNativeEth) {
+      const unwrapInput = ethers.utils.defaultAbiCoder.encode(
+        ['address', 'uint256'],
+        [RECIPIENTS.MSG_SENDER, ethAmountMin]
+      );
+      commands.push(COMMANDS.UNWRAP_WETH);
+      inputs.push(unwrapInput);
+      descriptions.push('UNWRAP_WETH');
+    }
+    
+  } else if (secondHop.type === 'v3' && secondHop.v3Fee !== undefined) {
+    // V4→V3 is complex - not yet supported
+    throw new Error('V4→V3 multi-hop sell not yet supported. Please ensure RARE→ETH has a V4 pool.');
+  } else {
+    throw new Error('Invalid second hop type');
+  }
+
+  // Combine commands (remove 0x prefix from all but first)
+  const combinedCommands = commands.join('').replace(/0x/g, (match, offset) => offset === 0 ? '0x' : '');
+
+  return {
+    commands: combinedCommands,
+    inputs,
+    description: descriptions.join(' → '),
+  };
+}
+
+/**
  * Encode Universal Router calldata for Token → ETH sell
+ * 
+ * For Liquid tokens (paired with RARE), pass baseTokenAddress to enable multi-hop routing:
+ * Liquid token → RARE → ETH
  */
 export async function getManualSellQuote(
   params: {
@@ -588,6 +1309,7 @@ export async function getManualSellQuote(
     slippageBps?: number;
     recipient?: string;
     poolFee?: number;
+    baseTokenAddress?: string; // Optional: RARE address for Liquid tokens
   },
   chainId: number,
   rpcUrl: string,
@@ -600,13 +1322,40 @@ export async function getManualSellQuote(
     slippageBps = 500,
     recipient,
     poolFee = 3000,
+    baseTokenAddress,
   } = params;
 
   const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
   const tokenAmountBN = ethers.BigNumber.from(tokenAmount);
 
   console.log(`Getting quote for ${ethers.utils.formatUnits(tokenAmount, tokenDecimals)} tokens → ETH...`);
-  console.log(`  Checking V4 pools...`);
+  
+  // ============================================
+  // Step 1: Try multi-hop if baseTokenAddress provided (Liquid tokens)
+  // ============================================
+  let multiHopQuote: Awaited<ReturnType<typeof getMultiHopSellQuote>> = null;
+  
+  if (baseTokenAddress) {
+    multiHopQuote = await getMultiHopSellQuote(
+      provider,
+      chainId,
+      wethAddress,
+      baseTokenAddress,
+      token,
+      tokenAmountBN,
+      slippageBps
+    );
+    
+    if (multiHopQuote) {
+      console.log(`  ✓ Multi-hop Quote: ${ethers.utils.formatEther(multiHopQuote.amountOut)} ETH`);
+      console.log(`    Route: ${multiHopQuote.description}`);
+    }
+  }
+  
+  // ============================================
+  // Step 2: Try direct V4 quote
+  // ============================================
+  console.log(`  Checking direct V4 pools...`);
   const v4Quote = await getV4DirectQuote(
     provider,
     chainId,
@@ -616,52 +1365,96 @@ export async function getManualSellQuote(
   );
   
   if (v4Quote) {
-    console.log(`  ✓ V4 Quote: ${ethers.utils.formatEther(v4Quote.amountOut)} ETH (${v4Quote.fee / 10000}% fee)`);
+    console.log(`  ✓ Direct V4 Quote: ${ethers.utils.formatEther(v4Quote.amountOut)} ETH (${v4Quote.fee / 10000}% fee)`);
   } else {
-    console.log(`  ✗ No V4 pools found`);
+    console.log(`  ✗ No direct V4 pools found`);
   }
 
   // ============================================
-  // Step 2: Get AlphaRouter quote (V2/V3)
+  // Step 3: Get AlphaRouter quote (V2/V3)
   // ============================================
   console.log(`  Checking V2/V3 via AlphaRouter...`);
-  const router = new AlphaRouter({ chainId, provider });
+  let alphaRoute: SwapRoute | null = null;
+  let alphaAmountOut = ethers.BigNumber.from(0);
   
-  const inputToken = new Token(chainId, token, tokenDecimals);
-  const wethToken = new Token(chainId, wethAddress, 18, 'WETH', 'Wrapped Ether');
-  
-  const amountIn = CurrencyAmount.fromRawAmount(inputToken, tokenAmount);
-  
-  const alphaRoute = await router.route(
-    amountIn,
-    wethToken,
-    TradeType.EXACT_INPUT,
-    {
-      type: SwapType.UNIVERSAL_ROUTER,
-      recipient: recipient || RECIPIENTS.ROUTER,
-      slippageTolerance: new Percent(slippageBps, 10000),
-      version: UniversalRouterVersion.V1_2,
-    }
-  );
+  try {
+    const router = new AlphaRouter({ chainId, provider });
+    
+    const inputToken = new Token(chainId, token, tokenDecimals);
+    const wethToken = new Token(chainId, wethAddress, 18, 'WETH', 'Wrapped Ether');
+    
+    const amountIn = CurrencyAmount.fromRawAmount(inputToken, tokenAmount);
+    
+    alphaRoute = await router.route(
+      amountIn,
+      wethToken,
+      TradeType.EXACT_INPUT,
+      {
+        type: SwapType.UNIVERSAL_ROUTER,
+        recipient: recipient || RECIPIENTS.ROUTER,
+        slippageTolerance: new Percent(slippageBps, 10000),
+        version: UniversalRouterVersion.V1_2,
+      }
+    );
 
-  const alphaAmountOut = alphaRoute ? ethers.BigNumber.from(alphaRoute.quote.quotient.toString()) : ethers.BigNumber.from(0);
-  
-  if (alphaRoute) {
-    console.log(`  ✓ AlphaRouter Quote: ${ethers.utils.formatEther(alphaAmountOut)} ETH (${alphaRoute.route.map((r: any) => r.protocol).join('+')})`);
-  } else {
-    console.log(`  ✗ No V2/V3 route found`);
+    alphaAmountOut = alphaRoute ? ethers.BigNumber.from(alphaRoute.quote.quotient.toString()) : ethers.BigNumber.from(0);
+    
+    if (alphaRoute) {
+      console.log(`  ✓ AlphaRouter Quote: ${ethers.utils.formatEther(alphaAmountOut)} ETH (${alphaRoute.route.map((r: any) => r.protocol).join('+')})`);
+    } else {
+      console.log(`  ✗ No V2/V3 route found`);
+    }
+  } catch (e: any) {
+    console.log(`  ✗ AlphaRouter failed: ${e.message?.slice(0, 50) || 'unknown error'}`);
   }
 
   // ============================================
-  // Step 3: Choose best route
+  // Step 4: Choose best route
   // ============================================
-  const useV4 = v4Quote && (!alphaRoute || v4Quote.amountOut.gt(alphaAmountOut));
+  // Compare all available quotes
+  const quotes: { type: string; amount: ethers.BigNumber; data: any }[] = [];
+  
+  if (multiHopQuote) {
+    quotes.push({ type: 'multihop', amount: multiHopQuote.amountOut, data: multiHopQuote });
+  }
+  if (v4Quote) {
+    quotes.push({ type: 'v4', amount: v4Quote.amountOut, data: v4Quote });
+  }
+  if (alphaRoute && alphaAmountOut.gt(0)) {
+    quotes.push({ type: 'alpha', amount: alphaAmountOut, data: alphaRoute });
+  }
+  
+  if (quotes.length === 0) {
+    throw new Error('No route found - no V4, V3, V2, or multi-hop pools available');
+  }
+  
+  // Find best quote
+  const bestQuote = quotes.reduce((best, current) => 
+    current.amount.gt(best.amount) ? current : best
+  );
   
   let amountOut: string;
   let minAmountOut: string;
   let swapEncoding: { commands: string; inputs: any[]; description: string };
   
-  if (useV4 && v4Quote) {
+  if (bestQuote.type === 'multihop') {
+    const mh = bestQuote.data as NonNullable<typeof multiHopQuote>;
+    console.log(`\n✓ Best route: Multi-hop (${mh.description})`);
+    amountOut = mh.amountOut.toString();
+    minAmountOut = mh.amountOut.mul(10000 - slippageBps).div(10000).toString();
+    
+    // Encode full multi-hop route: Liquid → RARE → ETH
+    swapEncoding = encodeMultiHopV4SellSwap(
+      wethAddress,
+      baseTokenAddress!,
+      token,
+      tokenAmountBN,
+      mh.rareAmount,
+      ethers.BigNumber.from(minAmountOut),
+      mh.v4Quote,
+      mh.secondHop
+    );
+  } else if (bestQuote.type === 'v4' && v4Quote) {
     console.log(`\n✓ Best route: V4 (${v4Quote.fee / 10000}% fee)`);
     amountOut = v4Quote.amountOut.toString();
     minAmountOut = v4Quote.amountOut.mul(10000 - slippageBps).div(10000).toString();
@@ -689,39 +1482,55 @@ export async function getManualSellQuote(
   console.log(`  Route: ${swapEncoding.description}`);
 
   const deadline = getDeadline();
-  const swapInputs: any[] = [];
   
-  if (swapEncoding.commands === COMMANDS.V3_SWAP_EXACT_IN) {
-    swapInputs.push(
-      ethers.utils.defaultAbiCoder.encode(
-        ['address', 'uint256', 'uint256', 'bytes', 'bool'],
-        [RECIPIENTS.ROUTER, tokenAmountBN, minAmountOut, swapEncoding.inputs[0], true]
-      )
-    );
-  } else if (swapEncoding.commands === COMMANDS.V2_SWAP_EXACT_IN) {
-    swapInputs.push(
-      ethers.utils.defaultAbiCoder.encode(
-        ['address', 'uint256', 'uint256', 'address[]', 'bool'],
-        [RECIPIENTS.ROUTER, tokenAmountBN, minAmountOut, swapEncoding.inputs[0], true]
-      )
-    );
-  } else if (swapEncoding.commands === COMMANDS.V4_SWAP) {
-    swapInputs.push(swapEncoding.inputs[0]);
-  } else if (swapEncoding.commands.length > 4) {
-    throw new Error('Mixed routes not fully supported');
+  // For multi-hop routes, commands and inputs are already fully encoded
+  // For single-hop routes, we need to process them differently
+  let commands: string;
+  let inputs: any[];
+  
+  if (bestQuote.type === 'multihop') {
+    // Multi-hop already has all commands and inputs encoded
+    commands = swapEncoding.commands;
+    inputs = swapEncoding.inputs;
   } else {
-    throw new Error(`Unsupported swap command: ${swapEncoding.commands}`);
-  }
-
-  const commands = swapEncoding.commands === COMMANDS.V4_SWAP 
-    ? swapEncoding.commands 
-    : swapEncoding.commands + COMMANDS.UNWRAP_WETH.slice(2);
-  const inputs = swapEncoding.commands === COMMANDS.V4_SWAP 
-    ? swapInputs 
-    : [...swapInputs, ethers.utils.defaultAbiCoder.encode(
+    // Single-hop routes need input processing
+    const swapInputs: any[] = [];
+    
+    if (swapEncoding.commands === COMMANDS.V3_SWAP_EXACT_IN) {
+      swapInputs.push(
+        ethers.utils.defaultAbiCoder.encode(
+          ['address', 'uint256', 'uint256', 'bytes', 'bool'],
+          [RECIPIENTS.ROUTER, tokenAmountBN, minAmountOut, swapEncoding.inputs[0], true]
+        )
+      );
+      // V3 routes need UNWRAP_WETH after
+      commands = swapEncoding.commands + COMMANDS.UNWRAP_WETH.slice(2);
+      inputs = [...swapInputs, ethers.utils.defaultAbiCoder.encode(
         ['address', 'uint256'],
         [RECIPIENTS.MSG_SENDER, minAmountOut]
       )];
+    } else if (swapEncoding.commands === COMMANDS.V2_SWAP_EXACT_IN) {
+      swapInputs.push(
+        ethers.utils.defaultAbiCoder.encode(
+          ['address', 'uint256', 'uint256', 'address[]', 'bool'],
+          [RECIPIENTS.ROUTER, tokenAmountBN, minAmountOut, swapEncoding.inputs[0], true]
+        )
+      );
+      // V2 routes need UNWRAP_WETH after
+      commands = swapEncoding.commands + COMMANDS.UNWRAP_WETH.slice(2);
+      inputs = [...swapInputs, ethers.utils.defaultAbiCoder.encode(
+        ['address', 'uint256'],
+        [RECIPIENTS.MSG_SENDER, minAmountOut]
+      )];
+    } else if (swapEncoding.commands === COMMANDS.V4_SWAP) {
+      // Single V4 swap outputs native ETH directly
+      swapInputs.push(swapEncoding.inputs[0]);
+      commands = swapEncoding.commands;
+      inputs = swapInputs;
+    } else {
+      throw new Error(`Unsupported swap command: ${swapEncoding.commands}`);
+    }
+  }
 
   const universalRouterInterface = new ethers.utils.Interface([
     'function execute(bytes commands, bytes[] inputs, uint256 deadline)',

@@ -285,7 +285,7 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
     /// @notice Checks if RARE burning is currently active
     /// @dev Returns true only if all required parameters are configured and enabled is true
     /// @return True if burning is active and properly configured
-    function isRAREBurnActive() public view returns (bool) {
+    function isRAREBurnActive() external view returns (bool) {
         return
             enabled &&
             RARE_TOKEN != address(0) &&

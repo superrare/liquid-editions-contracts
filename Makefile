@@ -1,12 +1,20 @@
 # Liquid Edition Contracts Makefile
 
-# Load environment variables from .env.test file
+# Load environment variables from .env and .env.test files
+# .env contains RPC URLs with paid Alchemy API keys
+-include .env
 -include .env.test
 export
 
 # Use environment variables for RPC URLs (fallback to public endpoints if not set)
-FORK_URL ?= https://mainnet.base.org
-SEPOLIA_FORK_URL ?= https://sepolia.base.org
+# Prefer BASE_RPC_URL from .env if available (paid Alchemy endpoint)
+# Note: If BASE_RPC_URL is empty, FORK_URL will be empty and tests will use hardcoded fallback
+FORK_URL ?= $(BASE_RPC_URL)
+SEPOLIA_FORK_URL ?= $(BASE_SEPOLIA_RPC_URL)
+
+# Export FORK_URL so forge test can use it (when running via make)
+export FORK_URL
+export SEPOLIA_FORK_URL
 
 # Test commands
 .PHONY: test test-factory test-liquid test-mainnet test-bonding test-bonding-explorer test-unit test-rare test-burner test-invariants test-mev coverage coverage-report help
@@ -34,8 +42,13 @@ help:
 # Run all tests (mainnet tests create forks in setUp)
 # --jobs 1 limits parallelism to avoid RPC rate limits  
 # Skip invariant and bonding tests
+# Export FORK_URL with expanded BASE_RPC_URL so tests use paid Alchemy endpoint
 test:
-	forge test --jobs 1 -v
+	@if [ -z "$$BASE_RPC_URL" ]; then \
+		echo "⚠️  BASE_RPC_URL not set. Tests will use public RPC (may hit rate limits)"; \
+		echo "   Set BASE_RPC_URL in .env or run: export BASE_RPC_URL=your_url"; \
+	fi
+	FORK_URL=$${BASE_RPC_URL:-https://mainnet.base.org} forge test --jobs 1 -v
 
 # Run factory tests (creates fork in setUp)
 test-factory:

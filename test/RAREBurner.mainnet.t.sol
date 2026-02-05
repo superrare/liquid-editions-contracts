@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 import "forge-std/Test.sol";
 import {RAREBurner} from "../src/RAREBurner.sol";
 import {IRAREBurner} from "../src/interfaces/IRAREBurner.sol";
-import {NetworkConfig} from "../script/NetworkConfig.sol";
+import {NetworkConfig} from "../script/config/NetworkConfig.sol";
 
 /// @title RARE Burner Fork Tests
 /// @notice Fork tests for RAREBurner on Base mainnet

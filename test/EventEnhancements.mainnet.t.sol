@@ -7,16 +7,21 @@ import "../src/Liquid.sol";
 import "../src/RAREBurner.sol";
 import "../src/interfaces/ILiquidFactory.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
-import {NetworkConfig} from "../script/NetworkConfig.sol";
+import {NetworkConfig} from "../script/config/NetworkConfig.sol";
 
 // Mock ERC20 for testing
 contract MockERC20 is ERC20 {
     constructor() ERC20("Mock RARE", "MRARE") {
         _mint(msg.sender, 1000000 ether);
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
     }
 }
 
@@ -130,31 +135,29 @@ contract EventEnhancementsMainnetTest is Test {
         // Deploy Liquid implementation
         liquidImpl = new Liquid();
 
-
-        // Deploy factory with burner (25% burn fee for integration tests)
+        // Deploy factory (fee config moved to LiquidRouter)
         factory = new LiquidFactory(
             admin,
-            protocolFeeRecipient,
             config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
-            address(burner), // RAREBurner
-            2500, // rareBurnFeeBPS (25% of remainder)
-            3750, // protocolFeeBPS (37.5% of remainder)
-            3750, // referrerFeeBPS (37.5% of remainder)
-            100, // defaultTotalFeeBPS (1%)
-            2500, // defaultCreatorFeeBPS (25%)
             LP_TICK_LOWER,
             LP_TICK_UPPER,
             config.uniswapV4Quoter, // Use wrapper instead of raw quoter
             address(0), // poolHooks (no hooks)
             60, // poolTickSpacing (standard for 0.3% fee tier)
             300, // internalMaxSlippageBps (3%)
-            0.005 ether, // minOrderSizeWei
-            1e15 // minInitialLiquidityWei (0.001 ETH)
+            1e15 // minRareLiquidityWei (0.001 RARE)
         );
 
         // Set implementation
         factory.setImplementation(address(liquidImpl));
+
+        // Set base token (RARE) in factory
+        factory.setBaseToken(address(mockRARE));
+
+        // Fund test accounts with RARE tokens
+        mockRARE.mint(tokenCreator, 1000 ether);
+        mockRARE.mint(user1, 1000 ether);
 
         vm.stopPrank();
     }
@@ -166,33 +169,21 @@ contract EventEnhancementsMainnetTest is Test {
 
         LiquidFactory newFactory = new LiquidFactory(
             admin,
-            protocolFeeRecipient,
             config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
-            address(burner),
-            1000, // rareBurnFeeBPS (10% of remainder)
-            4500, // protocolFeeBPS (45% of remainder)
-            4500, // referrerFeeBPS (45% of remainder)
-            100, // defaultTotalFeeBPS (1%)
-            2500, // defaultCreatorFeeBPS (25%)
             LP_TICK_LOWER,
             LP_TICK_UPPER,
             config.uniswapV4Quoter, // Use wrapper instead of raw quoter
             address(0), // poolHooks (no hooks)
             60, // poolTickSpacing (standard for 0.3% fee tier)
             300, // internalMaxSlippageBps (3%)
-            0.005 ether, // minOrderSizeWei
-            1e15 // minInitialLiquidityWei (0.001 ETH)
+            1e15 // minRareLiquidityWei (0.001 RARE)
         );
 
         vm.stopPrank();
 
-        // Verify config values are set correctly
+        // Verify config values are set correctly (fee config moved to LiquidRouter)
         assertEq(newFactory.internalMaxSlippageBps(), 300);
-        assertEq(newFactory.minOrderSizeWei(), 0.005 ether);
-        assertEq(newFactory.rareBurnFeeBPS(), 1000);
-        assertEq(newFactory.protocolFeeBPS(), 4500);
-        assertEq(newFactory.referrerFeeBPS(), 4500);
     }
 
     /// @notice Test individual setters update configuration immediately
@@ -205,139 +196,18 @@ contract EventEnhancementsMainnetTest is Test {
         factory.setInternalMaxSlippageBps(500);
         assertEq(factory.internalMaxSlippageBps(), 500);
 
-        // Test updating min order size
-        vm.expectEmit(true, false, false, true);
-        emit ILiquidFactory.MinOrderSizeWeiUpdated(0.01 ether);
-        factory.setMinOrderSizeWei(0.01 ether);
-        assertEq(factory.minOrderSizeWei(), 0.01 ether);
-
         vm.stopPrank();
     }
 
-    /// @notice Test BurnerDeposit event emission on real buy
-    /// @dev Integration test that triggers actual trade to emit BurnerDeposit event
-    function testBurnerDepositEventEmittedOnBuy() public {
-        // Create a Liquid token
-        vm.prank(tokenCreator);
-        address tokenAddr = factory.createLiquidToken{value: 0.1 ether}(
-            tokenCreator,
-            "ipfs://test",
-            "Test Token",
-            "TEST"
-        );
-        token = Liquid(payable(tokenAddr));
+    // NOTE: buy() function removed - trading now handled by LiquidRouter
+    // function testBurnerDepositEventEmittedOnBuy() public {
+    //     // Removed - buy() no longer exists
+    // }
 
-        // Execute buy and expect BurnerDeposit event
-        uint256 buyAmount = 0.1 ether;
-
-        // Calculate expected rareBurnFee from primary fees using three-tier system
-        uint256 totalFee = (buyAmount * token.TOTAL_FEE_BPS()) / 10_000;
-        uint256 creatorFee = (totalFee * token.TOKEN_CREATOR_FEE_BPS()) /
-            10_000;
-        uint256 remainder = totalFee - creatorFee;
-        uint256 expectedPrimaryRareBurnFee = (remainder * 2500) / 10_000; // 25% of remainder (not total)
-
-        // Record burner balance before
-        uint256 burnerBalanceBefore = burner.pendingEth();
-
-        // Expect BurnerDeposit event with correct parameters (from primary fees)
-        // Note: Secondary rewards (LP fees) may also generate BurnerDeposit events,
-        // but amounts are unpredictable, so we only check the primary fee event
-        vm.expectEmit(true, true, false, true);
-        emit BurnerDeposit(
-            address(token),
-            address(burner),
-            expectedPrimaryRareBurnFee,
-            true // depositSuccess
-        );
-
-        // Execute buy
-        vm.prank(user1);
-        token.buy{value: buyAmount}(user1, address(0), 0, 0);
-
-        // Verify ETH was deposited to burner
-        // Total includes primary fees + secondary rewards (LP fees), so should be >= expected
-        uint256 burnerBalanceAfter = burner.pendingEth();
-        uint256 totalBurnFeeReceived = burnerBalanceAfter - burnerBalanceBefore;
-        assertGe(
-            totalBurnFeeReceived,
-            expectedPrimaryRareBurnFee,
-            "Burner should receive at least rareBurnFee from primary fees (may include secondary rewards)"
-        );
-        assertGt(
-            burnerBalanceAfter,
-            burnerBalanceBefore,
-            "Burner balance should increase"
-        );
-    }
-
-    /// @notice Test BurnerDeposit event with failed deposit
-    /// @dev Verifies depositSuccess flag is false when burner deposit fails
-    function testBurnerDepositEventWithFailedDeposit() public {
-        // Create a token and make initial buy to establish trading
-        vm.prank(tokenCreator);
-        address tokenAddr = factory.createLiquidToken{value: 0.1 ether}(
-            tokenCreator,
-            "ipfs://test2",
-            "Test Token 2",
-            "TEST2"
-        );
-        token = Liquid(payable(tokenAddr));
-
-        // First buy to establish the token works normally
-        vm.prank(user1);
-        token.buy{value: 0.05 ether}(user1, address(0), 0, 0);
-
-        // Now create a new factory config that points to a broken burner
-        // We'll use vm.etch to replace burner address with reverting code
-        address brokenBurner = address(
-            0xbadb00000000000000000000000000000000dEAd
-        );
-
-        // Deploy bytecode that always reverts
-        vm.etch(brokenBurner, hex"60006000fd"); // PUSH1 0 PUSH1 0 REVERT
-
-        // Update factory to use broken burner
-        vm.startPrank(admin);
-        factory.setRareBurner(brokenBurner);
-        vm.stopPrank();
-
-        // Calculate expected rareBurnFee using three-tier system
-        uint256 buyAmount = 0.1 ether;
-        uint256 totalFee = (buyAmount * token.TOTAL_FEE_BPS()) / 10_000;
-        uint256 creatorFee = (totalFee * token.TOKEN_CREATOR_FEE_BPS()) /
-            10_000;
-        uint256 remainder = totalFee - creatorFee;
-        uint256 rareBurnFee = (remainder * 2500) / 10_000; // 25% of remainder (not total)
-
-        // Record protocol fee recipient balance before (direct ETH balance)
-        uint256 protocolBalanceBefore = protocolFeeRecipient.balance;
-
-        // Expect BurnerDeposit event with depositSuccess = false
-        vm.expectEmit(true, true, false, true);
-        emit BurnerDeposit(
-            address(token),
-            brokenBurner,
-            rareBurnFee,
-            false // depositSuccess = false
-        );
-
-        // Execute buy - should succeed even though burner deposit fails
-        vm.prank(user1);
-        token.buy{value: buyAmount}(user1, address(0), 0, 0);
-
-        // Verify ETH fell back to protocol fee recipient via direct transfer
-        // When burner deposit fails, rareBurnFee is added to protocolFee and sent directly
-        uint256 protocolBalanceAfter = protocolFeeRecipient.balance;
-        assertGt(
-            protocolBalanceAfter,
-            protocolBalanceBefore,
-            "Protocol should receive fallback ETH via direct transfer"
-        );
-
-        // The fallback should include the rareBurnFee that couldn't be deposited
-        // (Note: exact amount checking would require detailed fee calculation)
-    }
+    // NOTE: buy() function removed - trading now handled by LiquidRouter
+    // function testBurnerDepositEventWithFailedDeposit() public {
+    //     // Removed - buy() no longer exists
+    // }
 
     /// @notice Test individual setters update values correctly
     function testIndividualSettersUpdateValues() public {
@@ -348,37 +218,30 @@ contract EventEnhancementsMainnetTest is Test {
         factory.setInternalMaxSlippageBps(400);
         assertEq(factory.internalMaxSlippageBps(), 400);
 
-        // Update min order size
-        factory.setMinOrderSizeWei(0.02 ether);
-        assertEq(factory.minOrderSizeWei(), 0.02 ether);
+        // Test setting base token
+        factory.setBaseToken(address(mockRARE));
+        assertEq(factory.baseToken(), address(mockRARE));
 
         vm.stopPrank();
     }
 
     /// @notice Test that configuration changes take effect immediately
     function testConfigChangesTakeEffectImmediately() public {
+        uint256 initialRareLiquidity = 0.1 ether;
         // Create a token
-        vm.prank(tokenCreator);
-        address tokenAddr = factory.createLiquidToken{value: 0.1 ether}(
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(factory), initialRareLiquidity);
+        address tokenAddr = factory.createLiquidToken(
             tokenCreator,
             "ipfs://test3",
             "Test Token 3",
-            "TEST3"
+            "TEST3",
+            initialRareLiquidity
         );
+        vm.stopPrank();
         Liquid testToken = Liquid(payable(tokenAddr));
 
-        // Update min order size
-        vm.startPrank(admin);
-        factory.setMinOrderSizeWei(0.02 ether);
-        vm.stopPrank();
-
-        // Try to buy with less than new minimum - should fail
-        vm.prank(user1);
-        vm.expectRevert(ILiquid.EthAmountTooSmall.selector);
-        testToken.buy{value: 0.01 ether}(user1, address(0), 0, 0);
-
-        // Try to buy with more than new minimum - should succeed
-        vm.prank(user1);
-        testToken.buy{value: 0.05 ether}(user1, address(0), 0, 0);
+        // NOTE: buy() function removed - trading now handled by LiquidRouter
+        // Fee handling is now centralized in LiquidRouter
     }
 }

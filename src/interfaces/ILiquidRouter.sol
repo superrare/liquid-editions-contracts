@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 /// @title ILiquidRouter
 /// @notice Interface for the LiquidRouter contract that enables Liquid-style trading for existing ERC20s
-/// @dev Fee configuration is pulled from LiquidFactory to stay in sync with Liquid tokens
+/// @dev Fee configuration is stored locally in the router contract
 interface ILiquidRouter {
     // ============================================
     // ERRORS
@@ -48,6 +48,9 @@ interface ILiquidRouter {
     /// @param expected Amount the router attempted to pull
     /// @param received Amount actually received after the token's fee/deflation
     error FeeOnTransferDetected(uint256 expected, uint256 received);
+
+    /// @notice Thrown when TIER 3 fee distribution is invalid (must sum to exactly 10000 BPS / 100%)
+    error InvalidFeeDistribution();
 
     // ============================================
     // EVENTS
@@ -195,13 +198,20 @@ interface ILiquidRouter {
         address indexed newRouter
     );
 
-    /// @notice Emitted when the LiquidFactory address is updated
-    /// @param oldFactory The previous factory address
-    /// @param newFactory The new factory address
-    event FactoryUpdated(
-        address indexed oldFactory,
-        address indexed newFactory
-    );
+    /// @notice Emitted when RARE burn fee BPS is updated
+    event RareBurnFeeBPSUpdated(uint256 rareBurnFeeBPS);
+
+    /// @notice Emitted when protocol fee BPS is updated
+    event ProtocolFeeBPSUpdated(uint256 protocolFeeBPS);
+
+    /// @notice Emitted when referrer fee BPS is updated
+    event ReferrerFeeBPSUpdated(uint256 referrerFeeBPS);
+
+    /// @notice Emitted when protocol fee recipient address is updated
+    event ProtocolFeeRecipientUpdated(address protocolFeeRecipient);
+
+    /// @notice Emitted when RARE burner address is updated
+    event RareBurnerUpdated(address rareBurner);
 
     // ============================================
     // TRADING FUNCTIONS
@@ -250,7 +260,7 @@ interface ILiquidRouter {
     // ============================================
 
     /// @notice Quote the fee breakdown for a given total fee
-    /// @dev Fee percentages are read from LiquidFactory
+    /// @dev Fee percentages are read from router storage
     /// @param totalFee The total fee amount
     /// @return beneficiaryFee Fee to beneficiary
     /// @return protocolFee Fee to protocol
@@ -317,10 +327,26 @@ interface ILiquidRouter {
     /// @param _universalRouter The new Universal Router address
     function setUniversalRouter(address _universalRouter) external;
 
-    /// @notice Update the LiquidFactory address
-    /// @dev Only callable by owner. Use for factory upgrades.
-    /// @param _factory The new LiquidFactory address
-    function setFactory(address _factory) external;
+    /// @notice Sets all TIER 3 fee splits atomically
+    /// @dev Only callable by owner. Validates that fee splits sum to exactly 10000 BPS (100%)
+    /// @param _rareBurnFeeBPS RARE burn fee in basis points
+    /// @param _protocolFeeBPS Protocol fee in basis points
+    /// @param _referrerFeeBPS Referrer fee in basis points
+    function setTier3FeeSplits(
+        uint256 _rareBurnFeeBPS,
+        uint256 _protocolFeeBPS,
+        uint256 _referrerFeeBPS
+    ) external;
+
+    /// @notice Sets the protocol fee recipient address
+    /// @dev Only callable by owner
+    /// @param _protocolFeeRecipient The new protocol fee recipient address
+    function setProtocolFeeRecipient(address _protocolFeeRecipient) external;
+
+    /// @notice Sets the RARE burner address
+    /// @dev Only callable by owner
+    /// @param _rareBurner The new RARE burner address
+    function setRareBurner(address _rareBurner) external;
 
     // ============================================
     // VIEW FUNCTIONS
@@ -344,10 +370,25 @@ interface ILiquidRouter {
     /// @return The Universal Router address
     function universalRouter() external view returns (address);
 
-    /// @notice Get the LiquidFactory address
-    /// @dev Fee configuration is read from factory at runtime
-    /// @return The LiquidFactory address
-    function factory() external view returns (address);
+    /// @notice Get the RARE burn fee BPS
+    /// @return The RARE burn fee in basis points
+    function rareBurnFeeBPS() external view returns (uint256);
+
+    /// @notice Get the protocol fee BPS
+    /// @return The protocol fee in basis points
+    function protocolFeeBPS() external view returns (uint256);
+
+    /// @notice Get the referrer fee BPS
+    /// @return The referrer fee in basis points
+    function referrerFeeBPS() external view returns (uint256);
+
+    /// @notice Get the protocol fee recipient address
+    /// @return The protocol fee recipient address
+    function protocolFeeRecipient() external view returns (address);
+
+    /// @notice Get the RARE burner address
+    /// @return The RARE burner address
+    function rareBurner() external view returns (address);
 
     /// @notice Get the total fee BPS
     /// @return The total fee in basis points

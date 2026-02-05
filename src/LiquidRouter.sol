@@ -1,34 +1,36 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin-upgradeable/contracts/access/OwnableUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin-upgradeable/contracts/utils/PausableUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {ILiquidRouter} from "./interfaces/ILiquidRouter.sol";
-import {ILiquidFactory} from "./interfaces/ILiquidFactory.sol";
 import {IRAREBurner} from "./interfaces/IRAREBurner.sol";
 import {IPermit2} from "./interfaces/IPermit2.sol";
 
 /// @title LiquidRouter
 /// @author SuperRare Labs
-/// @notice A router contract that enables Liquid-style trading (buy/sell with fees) for ANY existing ERC20 token
+/// @notice A router contract that enables Liquid-style trading (buy/sell with fees) for any existing ERC20 token
 /// @dev Routes swaps through Uniswap's Universal Router while collecting and distributing fees.
-///      Fee configuration is pulled from LiquidFactory to stay in sync with Liquid tokens.
+///      Fee configuration is stored locally in the router contract.
 ///
 /// ## Architecture Overview
-/// Unlike Liquid tokens (which are bonding-curve tokens with embedded trading), this router:
-/// - Single contract handles ALL tokens (no factory/clones needed)
-/// - Client passes token address + swap route at call time
-/// - Minimal on-chain state: token-to-beneficiary mapping + optional allowlist
-/// - Relies on Uniswap for price discovery and liquidity
+/// LiquidRouter enables fee collection and distribution for any ERC20 token:
+/// - Routes swaps through Uniswap's Universal Router (supports V2/V3/V4 and multi-hop routes)
+/// - Collects trading fees (4% TOTAL_FEE_BPS) and distributes them to beneficiary/protocol/referrer/RARE burn
+/// - Minimal on-chain state: token-to-beneficiary mapping, optional allowlist, fee configuration
+/// - Fee configuration is stored locally and can be updated by owner
+/// - Uses Permit2 for secure token approvals during sell operations
+/// - Supports both buy (ETH → token) and sell (token → ETH) operations
 ///
 /// ## Fee Flow
 /// 1. TIER 1: Total fee (TOTAL_FEE_BPS) is collected from the trade (ETH side)
 /// 2. TIER 2: Beneficiary gets their fixed cut first (BENEFICIARY_FEE_BPS)
-/// 3. TIER 3: Remainder is split among protocol/referrer/RARE burn per factory config
+/// 3. TIER 3: Remainder is split among protocol/referrer/RARE burn per router config
 /// 4. Any rounding dust goes to protocol to ensure exact accounting
 ///
 /// ## Client Integration
@@ -44,18 +46,26 @@ import {IPermit2} from "./interfaces/IPermit2.sol";
 /// - Failed fee transfers to beneficiary/referrer are absorbed (not reverted)
 /// - Protocol fee transfer failure DOES revert (ensures fees aren't lost)
 /// - Gas-limited external calls prevent griefing attacks
-contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
+/// - UUPS upgradeable pattern for future upgrades
+contract LiquidRouter is
+    ILiquidRouter,
+    ReentrancyGuardUpgradeable,
+    OwnableUpgradeable,
+    PausableUpgradeable,
+    UUPSUpgradeable
+{
     using SafeERC20 for IERC20;
 
     // ============================================
     // CONSTANTS
     // ============================================
 
-    /// @notice Total trading fee in basis points (1% = 100 BPS)
+    /// @notice Total trading fee in basis points (4% = 400 BPS)
     /// @dev This is the "TIER 1" fee - the gross amount collected from each trade.
+    ///      Increased from 3% to 4% to compensate for 0% LP fee (removed secondary rewards).
     ///      For buys, fee is deducted from ETH input BEFORE the swap.
     ///      For sells, fee is deducted from ETH output AFTER the swap.
-    uint256 public constant TOTAL_FEE_BPS = 300;
+    uint256 public constant TOTAL_FEE_BPS = 400;
 
     /// @notice Beneficiary's share of total fees in basis points
     /// @dev This is the "TIER 2" fee - beneficiary gets their cut first from the total fee.
@@ -88,11 +98,19 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     ///      Different networks have different router addresses.
     address public universalRouter;
 
-    /// @notice LiquidFactory address for shared configuration
-    /// @dev Fee config is read from factory at runtime. Can be updated by owner.
-    ///      This keeps router fees in sync with Liquid token fees automatically.
-    ///      Reads: protocolFeeRecipient, rareBurner, rareBurnFeeBPS, protocolFeeBPS, referrerFeeBPS
-    address public factory;
+    /// @notice TIER 3 fee splits (must sum to 10000 BPS)
+    /// @dev These fees are applied to the remainder after beneficiary takes their cut
+    uint256 public rareBurnFeeBPS;
+    uint256 public protocolFeeBPS;
+    uint256 public referrerFeeBPS;
+
+    /// @notice Protocol fee recipient address
+    /// @dev Receives protocol fees from trades. Can be updated by owner.
+    address public protocolFeeRecipient;
+
+    /// @notice RARE burner contract address
+    /// @dev Receives burn fees from trades. Can be updated by owner.
+    address public rareBurner;
 
     /// @notice Mapping of token address to beneficiary (receives "creator" fees)
     /// @dev Beneficiary is optional - if not set, beneficiary fee goes to protocol.
@@ -112,26 +130,57 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     ///      GOTCHA: A token can be in allowedTokens but have no beneficiary set.
     bool public allowlistEnabled;
 
+    /// @dev Storage gap for future upgrades
+    /// @notice This gap allows adding new storage variables in future upgrades without storage collision
+    uint256[50] private __gap;
+
     // ============================================
-    // CONSTRUCTOR
+    // INITIALIZER
     // ============================================
 
-    /// @notice Deploys the LiquidRouter contract
+    /// @notice Initializes the LiquidRouter contract
     /// @param _universalRouter Address of Uniswap's Universal Router
-    /// @param _factory Address of LiquidFactory for shared configuration
-    /// @dev Both addresses are immutable after deployment.
-    ///      Owner is set to msg.sender and can be transferred via Ownable.
+    /// @param _protocolFeeRecipient Address that receives protocol fees
+    /// @param _rareBurner Address of RARE burner contract
+    /// @param _rareBurnFeeBPS RARE burn fee in basis points (must sum with other TIER 3 fees to 10000)
+    /// @param _protocolFeeBPS Protocol fee in basis points (must sum with other TIER 3 fees to 10000)
+    /// @param _referrerFeeBPS Referrer fee in basis points (must sum with other TIER 3 fees to 10000)
+    /// @dev Owner is set to msg.sender and can be transferred via Ownable.
     ///      Contract starts in unpaused state with allowlist disabled.
-    constructor(
+    ///      This function replaces the constructor for upgradeable contracts.
+    function initialize(
         address _universalRouter,
-        address _factory
-    ) Ownable(msg.sender) {
-        // Both addresses are required - no recovery if set wrong (immutable)
+        address _protocolFeeRecipient,
+        address _rareBurner,
+        uint256 _rareBurnFeeBPS,
+        uint256 _protocolFeeBPS,
+        uint256 _referrerFeeBPS
+    ) public initializer {
+        // Validate addresses
         if (_universalRouter == address(0)) revert AddressZero();
-        if (_factory == address(0)) revert AddressZero();
+        if (_protocolFeeRecipient == address(0)) revert AddressZero();
+        if (_rareBurner == address(0)) revert AddressZero();
+
+        // Validate TIER 3 fees sum to exactly 100%
+        uint256 tier3Total = _rareBurnFeeBPS +
+            _protocolFeeBPS +
+            _referrerFeeBPS;
+        if (tier3Total != 10000) {
+            revert InvalidFeeDistribution();
+        }
+
+        // Initialize upgradeable contracts
+        __ReentrancyGuard_init();
+        __Ownable_init(msg.sender);
+        __Pausable_init();
+        __UUPSUpgradeable_init();
 
         universalRouter = _universalRouter;
-        factory = _factory;
+        protocolFeeRecipient = _protocolFeeRecipient;
+        rareBurner = _rareBurner;
+        rareBurnFeeBPS = _rareBurnFeeBPS;
+        protocolFeeBPS = _protocolFeeBPS;
+        referrerFeeBPS = _referrerFeeBPS;
 
         // Note: allowlistEnabled defaults to false (permissionless mode)
         // Note: contract starts unpaused
@@ -215,6 +264,8 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         // - But only part of it was actually swapped
         // - Returned ETH would be stuck in contract
         // NOTE: Expected balance after swap = ethBalanceBefore + fee
+        // EDGE CASE: A malicious actor could force-send ETH (via selfdestruct) to trigger this revert.
+        //            This is a griefing attack that costs gas, so risk is limited.
         if (address(this).balance > ethBalanceBefore + fee) {
             revert UnexpectedEthRefund();
         }
@@ -341,12 +392,13 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
 
         // Set Permit2 allowance for Universal Router with a short expiration
         // Using uint48 max for amount since we control the exact tokenAmount via ERC20 approve
-        // Expiration is deadline + 1 hour to be safe
+        // Expiration is block.timestamp + 1 hour (deadline is validated separately in _executeSwap)
+        // Using block.timestamp instead of deadline prevents overflow when deadline = type(uint256).max
         IPermit2(PERMIT2).approve(
             token,
             universalRouter,
             uint160(tokensReceived),
-            uint48(deadline + 1 hours)
+            uint48(block.timestamp + 1 hours)
         );
 
         uint256 ethBalanceBefore = address(this).balance;
@@ -426,17 +478,17 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     // Clients can do this math themselves. These helpers show how fees are DISTRIBUTED.
     //
     // ## Client Fee Math (do this yourself)
-    // For BUY:  ethFee = ethAmount × 300 / 10000, ethForSwap = ethAmount - ethFee
-    // For SELL: ethFee = grossEth × 300 / 10000, netEth = grossEth - ethFee
+    // For BUY:  ethFee = ethAmount × 400 / 10000, ethForSwap = ethAmount - ethFee
+    // For SELL: ethFee = grossEth × 400 / 10000, netEth = grossEth - ethFee
     //
     // ## Typical Client Flow
-    // 1. Calculate fee: ethForSwap = ethAmount × 9700 / 10000 (or grossEth for sell)
+    // 1. Calculate fee: ethForSwap = ethAmount × 9600 / 10000 (or grossEth for sell)
     // 2. Quote swap via Universal Router Quoter off-chain
     // 3. Apply slippage tolerance to quoted amount
     // 4. Execute buy()/sell()
 
     /// @notice Quote the fee breakdown for a given total fee
-    /// @dev Fee percentages are read from LiquidFactory (may change over time)
+    /// @dev Fee percentages are read from router storage
     /// @param totalFee The total fee amount
     /// @return beneficiaryFee Fee to beneficiary
     /// @return protocolFee Fee to protocol
@@ -451,7 +503,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     /// ## Fee Calculation Order
     /// 1. totalFee = tradeAmount × TOTAL_FEE_BPS / 10000
     /// 2. beneficiaryFee = totalFee × BENEFICIARY_FEE_BPS / 10000
-    /// 3. remaining = totalFee - beneficiaryFee (split per factory config)
+    /// 3. remaining = totalFee - beneficiaryFee (split per router config)
     function quoteFeeBreakdown(
         uint256 totalFee
     )
@@ -464,12 +516,6 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
             uint256 burnFee
         )
     {
-        // Pull current fee config from factory (may have been updated)
-        ILiquidFactory f = ILiquidFactory(factory);
-        uint256 rareBurnFeeBPS = f.rareBurnFeeBPS();
-        uint256 _protocolFeeBPS = f.protocolFeeBPS();
-        uint256 _referrerFeeBPS = f.referrerFeeBPS();
-
         // TIER 2: Beneficiary gets their fixed share first
         beneficiaryFee = _calculateFee(totalFee, BENEFICIARY_FEE_BPS);
         uint256 remainingFee = totalFee - beneficiaryFee;
@@ -477,8 +523,8 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         // TIER 3: Split remainder among burn/protocol/referrer
         // Each percentage is applied to remainingFee (not totalFee)
         burnFee = _calculateFee(remainingFee, rareBurnFeeBPS);
-        referrerFee = _calculateFee(remainingFee, _referrerFeeBPS);
-        protocolFee = _calculateFee(remainingFee, _protocolFeeBPS);
+        referrerFee = _calculateFee(remainingFee, referrerFeeBPS);
+        protocolFee = _calculateFee(remainingFee, protocolFeeBPS);
 
         // Handle rounding dust - send to protocol to ensure exact accounting
         // This can happen because BPS calculations truncate
@@ -577,15 +623,46 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         emit UniversalRouterUpdated(oldRouter, _universalRouter);
     }
 
-    /// @notice Update the LiquidFactory address
-    /// @param _factory The new LiquidFactory address
-    /// @dev Use this when deploying a new factory version.
-    ///      CAUTION: Verify the new factory is legitimate before updating.
-    function setFactory(address _factory) external onlyOwner {
-        if (_factory == address(0)) revert AddressZero();
-        address oldFactory = factory;
-        factory = _factory;
-        emit FactoryUpdated(oldFactory, _factory);
+    /// @notice Sets all TIER 3 fee splits atomically
+    /// @dev Validates that fee splits sum to exactly 10000 BPS (100%)
+    /// @param _rareBurnFeeBPS RARE burn fee in basis points
+    /// @param _protocolFeeBPS Protocol fee in basis points
+    /// @param _referrerFeeBPS Referrer fee in basis points
+    function setTier3FeeSplits(
+        uint256 _rareBurnFeeBPS,
+        uint256 _protocolFeeBPS,
+        uint256 _referrerFeeBPS
+    ) external onlyOwner {
+        uint256 tier3Total = _rareBurnFeeBPS +
+            _protocolFeeBPS +
+            _referrerFeeBPS;
+        if (tier3Total != 10000) revert InvalidFeeDistribution();
+
+        rareBurnFeeBPS = _rareBurnFeeBPS;
+        protocolFeeBPS = _protocolFeeBPS;
+        referrerFeeBPS = _referrerFeeBPS;
+
+        emit RareBurnFeeBPSUpdated(_rareBurnFeeBPS);
+        emit ProtocolFeeBPSUpdated(_protocolFeeBPS);
+        emit ReferrerFeeBPSUpdated(_referrerFeeBPS);
+    }
+
+    /// @notice Sets the protocol fee recipient address
+    /// @param _protocolFeeRecipient The new protocol fee recipient address
+    function setProtocolFeeRecipient(
+        address _protocolFeeRecipient
+    ) external onlyOwner {
+        if (_protocolFeeRecipient == address(0)) revert AddressZero();
+        protocolFeeRecipient = _protocolFeeRecipient;
+        emit ProtocolFeeRecipientUpdated(_protocolFeeRecipient);
+    }
+
+    /// @notice Sets the RARE burner address
+    /// @param _rareBurner The new RARE burner address
+    function setRareBurner(address _rareBurner) external onlyOwner {
+        if (_rareBurner == address(0)) revert AddressZero();
+        rareBurner = _rareBurner;
+        emit RareBurnerUpdated(_rareBurner);
     }
 
     /// @notice Pause the contract (emergency stop)
@@ -649,6 +726,20 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         (bool ok, ) = to.call{value: amount}("");
         if (!ok) revert EthTransferFailed();
         emit EthRescued(to, amount);
+    }
+
+    /// @notice Authorizes an upgrade to a new implementation
+    /// @dev Only callable by owner. This is required by UUPSUpgradeable.
+    ///      Override this function to add additional authorization checks if needed.
+    /// @param newImplementation The address of the new implementation contract
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal override onlyOwner {
+        // Additional validation can be added here if needed
+        // For example, checking that newImplementation is a contract
+        if (newImplementation == address(0)) revert AddressZero();
+        // Note: This function is called during upgradeTo() which is not view
+        // The linter warning is a false positive - we need to revert on invalid input
     }
 
     // ============================================
@@ -722,7 +813,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     ///
     /// ## Math
     /// fee = amount * bps / 10000
-    /// Example: 1 ETH at 300 BPS = 1e18 * 300 / 10000 = 0.03 ETH
+    /// Example: 1 ETH at 400 BPS = 1e18 * 400 / 10000 = 0.04 ETH
     ///
     /// ## Rounding
     /// Integer division truncates (rounds down), so fee is slightly less.
@@ -751,7 +842,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     /// - Beneficiary gets their cut first from total fee
     /// - See BENEFICIARY_FEE_BPS constant for current value
     ///
-    /// TIER 3: Remainder split per factory config
+    /// TIER 3: Remainder split per router config
     /// - Protocol: base protocol fee (configurable)
     /// - Referrer: incentive for order sourcing (configurable)
     /// - RARE Burn: deflationary mechanism (configurable)
@@ -786,15 +877,9 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         )
     {
         // =====================
-        // STEP 1: Load Factory Config
+        // STEP 1: Use Local Fee Config
         // =====================
-        // Fee config is read at runtime so changes to factory propagate automatically
-        ILiquidFactory f = ILiquidFactory(factory);
-        address protocolFeeRecipient = f.protocolFeeRecipient();
-        address rareBurner = f.rareBurner();
-        uint256 rareBurnFeeBPS = f.rareBurnFeeBPS();
-        uint256 _protocolFeeBPS = f.protocolFeeBPS();
-        uint256 _referrerFeeBPS = f.referrerFeeBPS();
+        // Fee config is stored locally in router and can be updated by owner
 
         // =====================
         // STEP 2: Check if referrer should receive separate transfer
@@ -816,8 +901,8 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         // =====================
         // Apply each percentage to the remaining fee (after beneficiary cut)
         rareBurnFee = _calculateFee(remainingFee, rareBurnFeeBPS);
-        referrerFee = _calculateFee(remainingFee, _referrerFeeBPS);
-        protocolFee = _calculateFee(remainingFee, _protocolFeeBPS);
+        referrerFee = _calculateFee(remainingFee, referrerFeeBPS);
+        protocolFee = _calculateFee(remainingFee, protocolFeeBPS);
 
         // =====================
         // STEP 5: Handle Dust

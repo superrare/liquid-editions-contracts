@@ -36,6 +36,15 @@ base = "${BASE_RPC_URL}"
 base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
 sepolia = "${ETH_SEPOLIA}"
 
+[etherscan]
+# Etherscan API key configuration (works for Ethereum mainnet, Sepolia, Base, and Base Sepolia)
+# Format: chain_name = { key = "${ENV_VAR}" }
+# Note: With Etherscan API V2, a single API key works for all Etherscan-based explorers
+# Set ETHERSCAN_API_KEY in .env file
+mainnet = { key = "${ETHERSCAN_API_KEY}" }
+sepolia = { key = "${ETHERSCAN_API_KEY}" }
+base = { key = "${ETHERSCAN_API_KEY}" }
+base_sepolia = { key = "${ETHERSCAN_API_KEY}" }
 
 [lint]
 ignore = ["src/TickMath.sol", "test/*.t.sol", "script/DeployV4Pool.s.sol"]

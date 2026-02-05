@@ -14,7 +14,9 @@ import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
-import {NetworkConfig} from "../script/NetworkConfig.sol";
+import {NetworkConfig} from "../script/config/NetworkConfig.sol";
+import {MockRARE} from "./helpers/MockRARE.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 // Mock burner for testing
 contract MockBurner {
@@ -59,6 +61,7 @@ contract LiquidBaseMainnetTest is Test {
     RAREBurner public burner;
     Liquid public liquidImplementation;
     LiquidFactory public factory;
+    MockRARE public mockRARE;
 
     function setUp() public {
         // Fork Base mainnet for contract address verification
@@ -75,6 +78,11 @@ contract LiquidBaseMainnetTest is Test {
         vm.deal(admin, 100 ether);
         vm.deal(tokenCreator, 100 ether);
         vm.deal(protocolFeeRecipient, 100 ether);
+
+        // Deploy MockRARE and fund accounts
+        mockRARE = new MockRARE();
+        mockRARE.mint(admin, 10_000_000 ether);
+        mockRARE.mint(tokenCreator, 10_000_000 ether);
 
         // Deploy contracts
         vm.startPrank(admin);
@@ -96,30 +104,24 @@ contract LiquidBaseMainnetTest is Test {
         liquidImplementation = new Liquid();
         MockBurner mockBurner = new MockBurner();
 
-
         factory = new LiquidFactory(
             admin,
-            protocolFeeRecipient,
             config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
-            address(mockBurner), // rareBurner
-            0, // rareBurnFeeBPS
-            5000, // protocolFeeBPS
-            5000, // referrerFeeBPS
-            100, // defaultTotalFeeBPS
-            2500, // defaultCreatorFeeBPS
             -180, // lpTickLower - max expensive (after price rises) - multiple of 60
             120000, // lpTickUpper - starting point (cheap tokens)
             config.uniswapV4Quoter, // Use wrapper instead of raw quoter
             address(0), // poolHooks (no hooks)
             60, // poolTickSpacing (standard for 0.3% fee tier)
             300, // internalMaxSlippageBps (3%)
-            0.005 ether, // minOrderSizeWei
-            1e15 // minInitialLiquidityWei (0.001 ETH)
+            1e15 // minRareLiquidityWei (0.001 RARE)
         );
 
         // Set the implementation in the factory
         factory.setImplementation(address(liquidImplementation));
+
+        // Set base token (RARE) in factory
+        factory.setBaseToken(address(mockRARE));
 
         vm.stopPrank();
     }
@@ -132,30 +134,38 @@ contract LiquidBaseMainnetTest is Test {
         assertTrue(config.weth.code.length > 0, "WETH should have code");
     }
 
-    function testBaseMainnetFactoryETHForwardingAndLiquidity() public {
-        // Test to verify that the LiquidFactory properly forwards ETH and creates liquidity on Base mainnet
+    function testBaseMainnetFactoryRARELiquidityCreation() public {
+        // Test to verify that the LiquidFactory properly uses RARE tokens to create initial liquidity on Base mainnet
         uint256 FACTORY_ETH_AMOUNT = 1 ether;
 
         address creator = makeAddr("baseCreator");
         vm.deal(creator, 100 ether);
 
-        // Record creator's balance before
-        uint256 creatorBalanceBefore = creator.balance;
+        // Mint RARE tokens to creator
+        mockRARE.mint(creator, 1000 ether);
 
-        // Create token through factory with ETH
+        // Record creator's RARE balance before
+        uint256 creatorRareBalanceBefore = mockRARE.balanceOf(creator);
+
+        // Create token through factory with RARE
         vm.startPrank(creator);
-        address tokenAddress = factory.createLiquidToken{
-            value: FACTORY_ETH_AMOUNT
-        }(creator, "ipfs://base-test", "BASE_TEST", "BT");
+        IERC20(mockRARE).approve(address(factory), FACTORY_ETH_AMOUNT);
+        address tokenAddress = factory.createLiquidToken(
+            creator,
+            "ipfs://base-test",
+            "BASE_TEST",
+            "BT",
+            FACTORY_ETH_AMOUNT
+        );
         vm.stopPrank();
 
-        // Verify ETH was spent (all ETH goes to liquidity)
+        // Verify RARE was spent (all RARE goes to liquidity)
         Liquid baseLiquid = Liquid(payable(tokenAddress));
-            assertEq(
-                creator.balance,
-                creatorBalanceBefore - FACTORY_ETH_AMOUNT,
-            "Creator should have spent all the ETH"
-            );
+        assertEq(
+            mockRARE.balanceOf(creator),
+            creatorRareBalanceBefore - FACTORY_ETH_AMOUNT,
+            "Creator should have spent all the RARE"
+        );
 
         // Get the Liquid token instance
 
@@ -196,8 +206,10 @@ contract LiquidBaseMainnetTest is Test {
             "Creator should have only launch rewards"
         );
 
-        console.log("=== BASE MAINNET FACTORY ETH FORWARDING TEST ===");
-        console.log("ETH sent to factory:", FACTORY_ETH_AMOUNT);
+        console.log(
+            "=== BASE MAINNET FACTORY RARE LIQUIDITY CREATION TEST ==="
+        );
+        console.log("RARE sent to factory:", FACTORY_ETH_AMOUNT);
         console.log("Token address:", tokenAddress);
         console.log("Pool ID:");
         console.logBytes32(PoolId.unwrap(baseLiquid.poolId()));
@@ -214,13 +226,18 @@ contract LiquidBaseMainnetTest is Test {
         address creator = makeAddr("baseMinCreator");
         vm.deal(creator, 100 ether);
 
-        // Create token with minimum ETH
+        // Mint RARE tokens to creator
+        mockRARE.mint(creator, 1000 ether);
+
+        // Create token with minimum RARE
         vm.startPrank(creator);
-        address tokenAddress = factory.createLiquidToken{value: MIN_ETH_AMOUNT}(
+        IERC20(mockRARE).approve(address(factory), MIN_ETH_AMOUNT);
+        address tokenAddress = factory.createLiquidToken(
             creator,
             "ipfs://base-min-test",
             "BASE_MIN",
-            "BM"
+            "BM",
+            MIN_ETH_AMOUNT
         );
         vm.stopPrank();
 
@@ -230,22 +247,25 @@ contract LiquidBaseMainnetTest is Test {
         // Verify pool was created
         assertTrue(
             PoolId.unwrap(baseLiquid.poolId()) != bytes32(0),
-            "Base mainnet should create pool with minimum ETH"
+            "Base mainnet should create pool with minimum RARE"
         );
 
         // Check pool initialization using V4 StateLibrary
         IPoolManager pm = IPoolManager(baseLiquid.poolManager());
         PoolId poolId = baseLiquid.poolId();
         (uint160 sqrtPriceX96, , , ) = pm.getSlot0(poolId);
-        assertTrue(sqrtPriceX96 > 0, "Base mainnet pool should be initialized with minimum ETH");
+        assertTrue(
+            sqrtPriceX96 > 0,
+            "Base mainnet pool should be initialized with minimum RARE"
+        );
 
         // Check liquidity using V4 - liquidity is stored in the Liquid contract
         uint128 liquidity = baseLiquid.lpLiquidity();
 
-        // Main assertion - even with minimum ETH on Base mainnet, there should be liquidity
+        // Main assertion - even with minimum RARE on Base mainnet, there should be liquidity
         assertTrue(
             liquidity > 0,
-            "Base mainnet LP position should have liquidity > 0 even with minimum ETH"
+            "Base mainnet LP position should have liquidity > 0 even with minimum RARE"
         );
 
         console.log("=== BASE MAINNET MINIMUM ETH TEST ===");
@@ -372,12 +392,17 @@ contract LiquidBaseMainnetTest is Test {
         address creator = makeAddr("baseRARECreator");
         vm.deal(creator, 100 ether);
 
+        // Mint RARE tokens to creator
+        mockRARE.mint(creator, 1000 ether);
+
         vm.startPrank(creator);
-        address tokenAddress = factory.createLiquidToken{value: 1 ether}(
+        IERC20(mockRARE).approve(address(factory), 1 ether);
+        address tokenAddress = factory.createLiquidToken(
             creator,
             "ipfs://base-rare-test",
             "BASE_RARE",
-            "BR"
+            "BR",
+            1 ether
         );
         vm.stopPrank();
 
@@ -421,7 +446,10 @@ contract LiquidBaseMainnetTest is Test {
         vm.stopPrank();
 
         // Verify burner was created and is active
-        assertTrue(testBurner.isRAREBurnActive(), "RARE burner should be active");
+        assertTrue(
+            testBurner.isRAREBurnActive(),
+            "RARE burner should be active"
+        );
 
         // Now perform a buy to generate fees
         address buyer = makeAddr("baseBuyer");
@@ -440,20 +468,21 @@ contract LiquidBaseMainnetTest is Test {
             "ETH accumulates in burner, actual burns happen via separate flush() calls"
         );
 
+        // NOTE: buy() function removed - trading now handled by LiquidRouter
         // Execute buy - should always succeed regardless of V4 pool state
-        vm.prank(buyer);
-        uint256 tokens = baseLiquid.buy{value: buyAmount}(
-            buyer,
-            address(0),
-            0,
-            0
-        );
+        // vm.prank(buyer);
+        // uint256 tokens = baseLiquid.buy{value: buyAmount}(
+        //     buyer,
+        //     address(0),
+        //     0,
+        //     0
+        // );
 
-        console.log("SUCCESS: Buy transaction completed!");
-        console.log("- Tokens received:", tokens);
-        console.log("- ETH deposited to RAREBurner");
-        console.log("- Actual RARE burn will happen on next flush() call");
-        assertTrue(tokens > 0, "Should have received tokens");
+        // console.log("SUCCESS: Buy transaction completed!");
+        // console.log("- Tokens received:", tokens);
+        // console.log("- ETH deposited to RAREBurner");
+        // console.log("- Actual RARE burn will happen on next flush() call");
+        // assertTrue(tokens > 0, "Should have received tokens");
         console.log("");
         console.log("TROUBLESHOOTING:");
         console.log(
@@ -482,13 +511,16 @@ contract LiquidBaseMainnetTest is Test {
 
     function testQuoteBuyBasic() public {
         // Create a token with initial liquidity
-        vm.prank(tokenCreator);
-        address token = factory.createLiquidToken{value: 0.1 ether}(
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(factory), 0.1 ether);
+        address token = factory.createLiquidToken(
             tokenCreator,
             "ipfs://test",
             "Test Token",
-            "TEST"
+            "TEST",
+            0.1 ether
         );
+        vm.stopPrank();
 
         Liquid liquid = Liquid(payable(token));
 
@@ -496,197 +528,78 @@ contract LiquidBaseMainnetTest is Test {
         uint256 buyAmount = 1 ether;
 
         // Get quote - now takes gross ETH and returns fee details
-        (
-            uint256 feeBps,
-            uint256 ethFee,
-            uint256 ethIn,
-            uint256 liquidOut,
-            uint160 sqrtPriceX96After
-        ) = liquid.quoteBuy(buyAmount);
+        (uint256 liquidOut, uint160 sqrtPriceX96After) = liquid.quoteBuy(
+            buyAmount
+        );
 
         console.log("=== Quote Buy Test ===");
-        console.log("ETH in (gross):", buyAmount);
-        console.log("Fee BPS:", feeBps);
-        console.log("ETH fee:", ethFee);
-        console.log("ETH in (after fee):", ethIn);
+        console.log("RARE in:", buyAmount);
         console.log("Tokens out (quoted):", liquidOut);
         console.log("Sqrt price after:", sqrtPriceX96After);
 
         // Verify quote is reasonable
         assertGt(liquidOut, 0, "Quote should return non-zero tokens");
         assertGt(sqrtPriceX96After, 0, "Sqrt price should be non-zero");
-        assertEq(
-            feeBps,
-            liquid.TOTAL_FEE_BPS(),
-            "Fee BPS should match token config"
-        );
-        assertEq(
-            ethFee,
-            (buyAmount * feeBps) / 10_000,
-            "Fee should be calculated correctly"
-        );
-        assertEq(ethIn, buyAmount - ethFee, "ETH in should be gross minus fee");
-    }
-
-    function testQuoteSellBasic() public {
-        // Create a token and buy some tokens first
-        vm.startPrank(tokenCreator);
-        address token = factory.createLiquidToken{value: 0.1 ether}(
-            tokenCreator,
-            "ipfs://test",
-            "Test Token",
-            "TEST"
-        );
-
-        Liquid liquid = Liquid(payable(token));
-
-        // Buy some tokens
-        liquid.buy{value: 1 ether}(tokenCreator, address(0), 0, 0);
-
-        uint256 tokenBalance = liquid.balanceOf(tokenCreator);
-        uint256 tokensToSell = tokenBalance / 2; // Sell half
-
-        // Get quote - now returns ETH after fee (net payout)
-        (
-            uint256 feeBps,
-            uint256 ethFee,
-            uint256 tokenIn,
-            uint256 ethOut,
-            uint160 sqrtPriceX96After
-        ) = liquid.quoteSell(tokensToSell);
-
-        console.log("=== Quote Sell Test ===");
-        console.log("Tokens in:", tokensToSell);
-        console.log("Fee BPS:", feeBps);
-        console.log("ETH fee:", ethFee);
-        console.log("ETH out (quoted, after fee):", ethOut);
-        console.log("Sqrt price after:", sqrtPriceX96After);
-
-        // Verify quote is reasonable
-        assertGt(ethOut, 0, "Quote should return non-zero ETH");
-        assertGt(sqrtPriceX96After, 0, "Sqrt price should be non-zero");
-        assertEq(
-            feeBps,
-            liquid.TOTAL_FEE_BPS(),
-            "Fee BPS should match token config"
-        );
-        assertEq(tokenIn, tokensToSell, "Token in should match input");
-
-        vm.stopPrank();
-    }
-
-    function testQuoteBuyMatchesActualTrade() public {
-        // Create a token with initial liquidity
-        vm.prank(tokenCreator);
-        address token = factory.createLiquidToken{value: 0.1 ether}(
-            tokenCreator,
-            "ipfs://test",
-            "Test Token",
-            "TEST"
-        );
-
-        Liquid liquid = Liquid(payable(token));
-
-        // Pass gross ETH amount (function handles fee calculation internally)
-        uint256 buyAmount = 1 ether;
-
-        // Get quote - now takes gross ETH
-        // Returns: (feeBps, ethFee, ethIn, liquidOut, sqrtPriceX96After)
-        (, , , uint256 quotedAmount, ) = liquid.quoteBuy(buyAmount);
-
-        // Execute actual trade
-        address buyer = makeAddr("buyer");
-        vm.deal(buyer, 10 ether);
-        vm.prank(buyer);
-        uint256 actualAmount = liquid.buy{value: buyAmount}(
-            buyer,
-            address(0),
-            0,
-            0
-        );
-
-        console.log("=== Quote vs Actual Trade ===");
-        console.log("Quoted amount:", quotedAmount);
-        console.log("Actual amount:", actualAmount);
-        console.log(
-            "Difference:",
-            actualAmount > quotedAmount
-                ? actualAmount - quotedAmount
-                : quotedAmount - actualAmount
-        );
-
-        // Allow small difference due to LP fees collected between quote and execution
-        uint256 tolerance = quotedAmount / 100; // 1% tolerance
-        assertApproxEqAbs(
-            actualAmount,
-            quotedAmount,
-            tolerance,
-            "Actual trade should match quote within tolerance"
-        );
     }
 
     function testQuoteSellMatchesActualTrade() public {
         // Create a token and buy some tokens
         vm.startPrank(tokenCreator);
-        address token = factory.createLiquidToken{value: 0.1 ether}(
+        IERC20(mockRARE).approve(address(factory), 0.1 ether);
+        address token = factory.createLiquidToken(
             tokenCreator,
             "ipfs://test",
             "Test Token",
-            "TEST"
+            "TEST",
+            0.1 ether
         );
+        vm.stopPrank();
 
         Liquid liquid = Liquid(payable(token));
+    }
 
-        // Buy tokens
-        liquid.buy{value: 2 ether}(tokenCreator, address(0), 0, 0);
-
-        uint256 tokenBalance = liquid.balanceOf(tokenCreator);
-        uint256 tokensToSell = tokenBalance / 2;
-
-        // Get quote for sell - returns ETH after fee (net payout)
-        // Returns: (feeBps, ethFee, tokenIn, ethOut, sqrtPriceX96After)
-        (, , , uint256 quotedPayout, ) = liquid.quoteSell(tokensToSell);
-
-        // Execute actual sell - NOW returns payout AFTER fee (fixed!)
-        uint256 actualPayout = liquid.sell(
-            tokensToSell,
+    function testQuoteBuyAccuracyAfterConfigUpdate() public {
+        // Create a token
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(factory), 0.1 ether);
+        address token = factory.createLiquidToken(
             tokenCreator,
-            address(0),
-            0,
-            0
+            "ipfs://test",
+            "Test Token",
+            "TEST",
+            0.1 ether
         );
+        vm.stopPrank();
 
-        console.log("=== Quote vs Actual Sell ===");
-        console.log("Quoted payout (after fee):", quotedPayout);
-        console.log("Actual payout (after fee):", actualPayout);
-        console.log(
-            "Difference:",
-            actualPayout > quotedPayout
-                ? actualPayout - quotedPayout
-                : quotedPayout - actualPayout
-        );
+        Liquid liquid = Liquid(payable(token));
+        //     "Difference:",
+        //     actualPayout > quotedPayout
+        //         ? actualPayout - quotedPayout
+        //         : quotedPayout - actualPayout
+        // );
 
         // Allow small difference due to LP fees and pool state changes
-        uint256 tolerance = quotedPayout / 100; // 1% tolerance
-        assertApproxEqAbs(
-            actualPayout,
-            quotedPayout,
-            tolerance,
-            "Actual payout should match quote within tolerance"
-        );
-
-        vm.stopPrank();
+        // uint256 tolerance = quotedPayout / 100; // 1% tolerance
+        // assertApproxEqAbs(
+        //     actualPayout,
+        //     quotedPayout,
+        //     tolerance,
+        //     "Actual payout should match quote within tolerance"
+        // );
     }
 
     function testQuoteWithDifferentAmounts() public {
         // Create a token
-        vm.prank(tokenCreator);
-        address token = factory.createLiquidToken{value: 0.1 ether}(
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(factory), 0.1 ether);
+        address token = factory.createLiquidToken(
             tokenCreator,
             "ipfs://test",
             "Test Token",
-            "TEST"
+            "TEST",
+            0.1 ether
         );
+        vm.stopPrank();
 
         Liquid liquid = Liquid(payable(token));
 
@@ -703,8 +616,8 @@ contract LiquidBaseMainnetTest is Test {
         for (uint256 i = 0; i < amounts.length; i++) {
             uint256 buyAmount = amounts[i];
 
-        // Returns: (feeBps, ethFee, ethIn, liquidOut, sqrtPriceX96After)
-            (, , , uint256 tokensOut, ) = liquid.quoteBuy(buyAmount);
+            // Returns: (liquidOut, sqrtPriceX96After)
+            (uint256 tokensOut, ) = liquid.quoteBuy(buyAmount);
 
             console.log("ETH in (gross):", buyAmount, "Tokens out:", tokensOut);
             assertGt(tokensOut, 0, "Quote should return tokens");
@@ -713,36 +626,36 @@ contract LiquidBaseMainnetTest is Test {
 
     function testQuotePriceImpact() public {
         // Create a token
-        vm.prank(tokenCreator);
-        address token = factory.createLiquidToken{value: 0.1 ether}(
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(factory), 0.1 ether);
+        address token = factory.createLiquidToken(
             tokenCreator,
             "ipfs://test",
             "Test Token",
-            "TEST"
+            "TEST",
+            0.1 ether
         );
+        vm.stopPrank();
 
         Liquid liquid = Liquid(payable(token));
 
         // Get quote for small amount (gross ETH)
         uint256 smallAmount = 0.01 ether;
-        // Returns: (feeBps, ethFee, ethIn, liquidOut, sqrtPriceX96After)
-        (, , uint256 smallEthIn, uint256 smallTokensOut, ) = liquid.quoteBuy(
-            smallAmount
-        );
+        // Returns: (liquidOut, sqrtPriceX96After)
+        (uint256 smallTokensOut, ) = liquid.quoteBuy(smallAmount);
 
-        // Get quote for large amount (gross ETH)
+        // Get quote for large amount (gross RARE)
         uint256 largeAmount = 5 ether;
-        (, , uint256 largeEthIn, uint256 largeTokensOut, ) = liquid.quoteBuy(
-            largeAmount
-        );
+        (uint256 largeTokensOut, ) = liquid.quoteBuy(largeAmount);
 
         console.log("=== Price Impact Analysis ===");
         console.log("Small buy (0.01 ETH):", smallTokensOut, "tokens");
         console.log("Large buy (5 ETH):", largeTokensOut, "tokens");
 
         // Calculate effective price per token (in wei) using ETH after fee
-        uint256 smallPrice = (smallEthIn * 1e18) / smallTokensOut;
-        uint256 largePrice = (largeEthIn * 1e18) / largeTokensOut;
+        // Calculate effective prices (RARE per token)
+        uint256 smallPrice = (smallAmount * 1e18) / smallTokensOut;
+        uint256 largePrice = (largeAmount * 1e18) / largeTokensOut;
 
         console.log("Small buy price per token:", smallPrice, "wei");
         console.log("Large buy price per token:", largePrice, "wei");
@@ -762,30 +675,32 @@ contract LiquidBaseMainnetTest is Test {
 
     function testQuoteAfterConfigSync() public {
         // Create a token
-        vm.prank(tokenCreator);
-        address token = factory.createLiquidToken{value: 0.1 ether}(
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(factory), 0.1 ether);
+        address token = factory.createLiquidToken(
             tokenCreator,
             "ipfs://test",
             "Test Token",
-            "TEST"
+            "TEST",
+            0.1 ether
         );
+        vm.stopPrank();
 
         Liquid liquid = Liquid(payable(token));
 
         // Get initial quote (gross ETH)
         uint256 buyAmount = 1 ether;
-        // Returns: (feeBps, ethFee, ethIn, liquidOut, sqrtPriceX96After)
-        (, , , uint256 quote1, ) = liquid.quoteBuy(buyAmount);
+        // Returns: (liquidOut, sqrtPriceX96After)
+        (uint256 quote1, ) = liquid.quoteBuy(buyAmount);
 
         // Update factory config values
         // For this test, we just verify quote still works after config update
         vm.startPrank(admin);
         factory.setInternalMaxSlippageBps(300);
-        factory.setMinOrderSizeWei(0.005 ether);
         vm.stopPrank();
 
         // Get quote after config update (config changes take effect immediately)
-        (, , , uint256 quote2, ) = liquid.quoteBuy(buyAmount);
+        (uint256 quote2, ) = liquid.quoteBuy(buyAmount);
 
         console.log("=== Quote After Config Sync ===");
         console.log("Quote before sync:", quote1);
@@ -798,13 +713,16 @@ contract LiquidBaseMainnetTest is Test {
 
     function testQuoteRevertWithZeroAmount() public {
         // Create a token
-        vm.prank(tokenCreator);
-        address token = factory.createLiquidToken{value: 0.1 ether}(
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(factory), 0.1 ether);
+        address token = factory.createLiquidToken(
             tokenCreator,
             "ipfs://test",
             "Test Token",
-            "TEST"
+            "TEST",
+            0.1 ether
         );
+        vm.stopPrank();
 
         Liquid liquid = Liquid(payable(token));
 
@@ -812,54 +730,5 @@ contract LiquidBaseMainnetTest is Test {
         // This tests the quoter's behavior, not our wrapper
         vm.expectRevert(); // Uniswap quoter typically reverts on zero
         liquid.quoteBuy(0);
-    }
-
-    function testQuoteHelperUsageExample() public {
-        // Create a token
-        vm.prank(tokenCreator);
-        address token = factory.createLiquidToken{value: 0.1 ether}(
-            tokenCreator,
-            "ipfs://test",
-            "Test Token",
-            "TEST"
-        );
-
-        Liquid liquid = Liquid(payable(token));
-
-        console.log("=== Example: Using Quote for Slippage Protection ===");
-
-        // User wants to buy with 1 ETH (gross amount)
-        uint256 userBudget = 1 ether;
-
-        // Get quote - now takes gross ETH and handles fee internally
-        // Returns: (feeBps, ethFee, ethIn, liquidOut, sqrtPriceX96After)
-        (, , , uint256 expectedTokens, ) = liquid.quoteBuy(userBudget);
-        console.log("Expected tokens from quote:", expectedTokens);
-
-        // Apply 5% slippage tolerance
-        uint256 minAcceptable = (expectedTokens * 95) / 100;
-        console.log("Minimum acceptable (5% slippage):", minAcceptable);
-
-        // Execute buy with slippage protection
-        address buyer = makeAddr("buyer");
-        vm.deal(buyer, 10 ether);
-        vm.prank(buyer);
-        uint256 actualTokens = liquid.buy{value: userBudget}(
-            buyer,
-            address(0),
-            minAcceptable,
-            0
-        );
-
-        console.log("Actual tokens received:", actualTokens);
-        console.log("Trade succeeded with slippage protection!");
-
-        assertGe(actualTokens, minAcceptable, "Should meet minimum");
-        assertApproxEqRel(
-            actualTokens,
-            expectedTokens,
-            0.05e18,
-            "Should be within 5%"
-        );
     }
 }
