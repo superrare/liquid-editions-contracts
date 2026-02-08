@@ -208,91 +208,63 @@ contract CreateToken is Script {
         // Stop broadcasting after token creation
         vm.stopBroadcast();
 
-        // Register token with router (if router is configured and deployer is router owner)
+        // Register token with router (if router is configured)
         // NOTE: Router's registerToken() is onlyOwner, so only router owner can call it
         // This is done in a separate transaction after stopBroadcast() to avoid gas estimation issues
         if (routerAddress != address(0)) {
-            // Check if deployer is router owner BEFORE starting second broadcast
-            // This prevents forge from trying to estimate gas for a transaction that would fail
-            address routerOwner;
-            try ILiquidRouter(routerAddress).owner() returns (address owner) {
-                routerOwner = owner;
-            } catch {
-                routerOwner = address(0);
-            }
+            console.log("Registering token with LiquidRouter...");
+            console.log("Note: Router registration requires deployer to be router owner");
+            console.log("Router address:");
+            console.logAddress(routerAddress);
+            console.log("Token address:");
+            console.logAddress(newToken);
+            console.log("Beneficiary (token creator):");
+            console.logAddress(tokenCreator);
+            console.log("");
 
-            if (deployerAddress == routerOwner) {
-                console.log("Registering token with LiquidRouter...");
-                console.log("(Deployer is router owner)");
-                console.log("Router address:");
-                console.logAddress(routerAddress);
-                console.log("Token address:");
-                console.logAddress(newToken);
-                console.log("Beneficiary (token creator):");
-                console.logAddress(tokenCreator);
-                console.log("");
+            // Start broadcasting again for the registration transaction
+            // This ensures proper nonce sequencing after token creation is mined
+            vm.startBroadcast(deployerPrivateKey);
 
-                // Start broadcasting again for the registration transaction
-                // This ensures proper nonce sequencing after token creation is mined
-                vm.startBroadcast(deployerPrivateKey);
-
-                try
-                    ILiquidRouter(routerAddress).registerToken(
-                        newToken,
-                        tokenCreator
-                    )
-                {
-                    console.log("Token successfully registered with router!");
-                    console.log(
-                        "Creator will receive beneficiary fees (25% of total fee)"
-                    );
-                } catch Error(string memory reason) {
-                    console.log("Failed to register token:");
-                    console.log(reason);
-                    console.log("You can register manually later using:");
-                    console.log(
-                        "  cast send",
-                        routerAddress,
-                        "'registerToken(address,address)'",
-                        newToken,
-                        tokenCreator
-                    );
-                } catch {
-                    console.log("Failed to register token (unknown error)");
-                    console.log("You can register manually later using:");
-                    console.log(
-                        "  cast send",
-                        routerAddress,
-                        "'registerToken(address,address)'",
-                        newToken,
-                        tokenCreator
-                    );
-                }
-
-                vm.stopBroadcast();
-                console.log("");
-            } else {
-                console.log("Skipping router registration");
-                console.log("(Deployer is not router owner)");
-                console.log("Router owner:");
-                console.logAddress(routerOwner);
-                console.log("Deployer:");
-                console.logAddress(deployerAddress);
-                console.log("");
-                console.log("To register this token with LiquidRouter, router owner must run:");
-                console.log("  forge script script/RegisterToken.s.sol:RegisterToken --rpc-url $RPC_URL --broadcast --slow");
-                console.log("  (Set TOKEN_ADDRESS and BENEFICIARY_ADDRESS in .env)");
-                console.log("");
-                console.log("Or register manually using:");
-                console.log(
-                    "  cast send",
-                    routerAddress,
-                    "'registerToken(address,address)'",
+            try
+                ILiquidRouter(routerAddress).registerToken(
                     newToken,
                     tokenCreator
+                )
+            {
+                console.log("Token successfully registered with router!");
+                console.log(
+                    "Creator will receive beneficiary fees (25% of total fee)"
                 );
-                console.log("");
+            } catch Error(string memory reason) {
+                console.log("Failed to register token:");
+                console.log(reason);
+                console.log("You can register manually later using:");
+                string memory castCmd = string(abi.encodePacked(
+                    "  cast send ",
+                    vm.toString(routerAddress),
+                    " 'registerToken(address,address)' ",
+                    vm.toString(newToken),
+                    " ",
+                    vm.toString(tokenCreator)
+                ));
+                console.log(castCmd);
+            } catch {
+                console.log("Failed to register token (unknown error)");
+                console.log("You can register manually later using:");
+                string memory castCmd2 = string(abi.encodePacked(
+                    "  cast send ",
+                    vm.toString(routerAddress),
+                    " 'registerToken(address,address)' ",
+                    vm.toString(newToken),
+                    " ",
+                    vm.toString(tokenCreator)
+                ));
+                console.log(castCmd2);
             }
+
+            vm.stopBroadcast();
+            console.log("");
         } else {
             console.log("Router address not configured - skipping registration");
             console.log("");
