@@ -29,3 +29,4 @@ node_modules
 
 /cursor-tasks
 
+.DS_Store
