@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MultiCurve Config Visualizer</title>
+  <style>
+    :root {
+      --trip: #ef4444;
+      --trip-bg: rgba(239,68,68,0.15);
+      --dist: #f59e0b;
+      --dist-bg: rgba(245,158,11,0.15);
+      --steady: #10b981;
+      --steady-bg: rgba(16,185,129,0.15);
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --surface2: #334155;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+    }
+    * { box-sizing: border-box; margin: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 0;
+      line-height: 1.5;
+    }
+
+    /* Header */
+    .header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--surface2);
+      padding: 1.5rem 2rem;
+    }
+    .header h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .header p { color: var(--muted); font-size: 0.85rem; margin-top: 0.25rem; }
+
+    /* Layout */
+    .layout {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      min-height: calc(100vh - 80px);
+    }
+    @media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } }
+
+    /* Sidebar */
+    .sidebar {
+      background: var(--surface);
+      border-right: 1px solid var(--surface2);
+      padding: 1.5rem;
+      overflow-y: auto;
+      max-height: calc(100vh - 80px);
+    }
+
+    /* Main */
+    .main {
+      padding: 1.5rem 2rem;
+      overflow-y: auto;
+      max-height: calc(100vh - 80px);
+    }
+
+    /* Cards */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--surface2);
+      border-radius: 12px;
+      padding: 1.25rem;
+      margin-bottom: 1.25rem;
+    }
+    .card-title {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 1rem;
+    }
+
+    /* Presets */
+    .presets {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1.25rem;
+    }
+    .preset-btn {
+      flex: 1;
+      padding: 0.5rem 0.75rem;
+      border-radius: 8px;
+      border: 1px solid var(--surface2);
+      background: transparent;
+      color: var(--text);
+      font-size: 0.8rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .preset-btn:hover { background: var(--surface2); }
+    .preset-btn.active { background: var(--accent); border-color: var(--accent); }
+
+    /* Zone sections */
+    .zone {
+      border-radius: 10px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    .zone.trip { background: var(--trip-bg); border-left: 3px solid var(--trip); }
+    .zone.dist { background: var(--dist-bg); border-left: 3px solid var(--dist); }
+    .zone.steady { background: var(--steady-bg); border-left: 3px solid var(--steady); }
+    .zone-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    .zone-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .zone-dot.trip { background: var(--trip); }
+    .zone-dot.dist { background: var(--dist); }
+    .zone-dot.steady { background: var(--steady); }
+    .zone-name { font-weight: 600; font-size: 0.9rem; }
+
+    /* Slider row */
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.5rem;
+    }
+    .slider-label {
+      font-size: 0.8rem;
+      color: var(--muted);
+      width: 72px;
+      flex-shrink: 0;
+    }
+    input[type="range"] {
+      flex: 1;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 6px;
+      border-radius: 3px;
+      background: var(--surface2);
+      outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      border: 2px solid var(--bg);
+    }
+    .slider-value {
+      width: 60px;
+      padding: 0.3rem 0.4rem;
+      text-align: center;
+      background: var(--bg);
+      border: 1px solid var(--surface2);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.85rem;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      flex-shrink: 0;
+    }
+    .tick-row {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .tick-row label {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-bottom: 0.15rem;
+      display: block;
+    }
+    .tick-row > div { flex: 1; }
+    .tick-input {
+      width: 100%;
+      padding: 0.35rem 0.5rem;
+      background: var(--bg);
+      border: 1px solid var(--surface2);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.85rem;
+    }
+    .share-sum {
+      text-align: center;
+      font-size: 0.85rem;
+      padding: 0.5rem;
+      border-radius: 8px;
+      margin-bottom: 0.5rem;
+    }
+    .share-sum.ok { background: rgba(16,185,129,0.15); color: #6ee7b7; }
+    .share-sum.bad { background: rgba(239,68,68,0.15); color: #fca5a5; }
+
+    /* ===== Visualization ===== */
+
+    /* Stacked bar */
+    .stacked-bar {
+      display: flex;
+      height: 48px;
+      border-radius: 10px;
+      overflow: hidden;
+      margin-bottom: 0.5rem;
+    }
+    .stacked-bar > div {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #fff;
+      transition: width 0.3s ease;
+      min-width: 24px;
+    }
+    .stacked-bar .trip { background: var(--trip); }
+    .stacked-bar .dist { background: var(--dist); }
+    .stacked-bar .steady { background: var(--steady); }
+    .legend {
+      display: flex;
+      gap: 1.25rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 1.5rem;
+    }
+    .legend span {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .legend-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* Tick range visualization */
+    .tick-range-viz {
+      position: relative;
+      height: 80px;
+      margin: 1.5rem 0;
+    }
+    .tick-track {
+      position: absolute;
+      top: 25px;
+      left: 0; right: 0;
+      height: 4px;
+      background: var(--surface2);
+      border-radius: 2px;
+    }
+    .tick-segment {
+      position: absolute;
+      top: 16px;
+      height: 22px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: #fff;
+    }
+    .tick-segment.trip { background: var(--trip); }
+    .tick-segment.dist { background: var(--dist); }
+    .tick-segment.steady { background: var(--steady); }
+    .tick-label-row {
+      position: absolute;
+      top: 46px;
+      left: 0; right: 0;
+      font-size: 0.7rem;
+      color: var(--muted);
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    .tick-label-row span {
+      position: absolute;
+      transform: translateX(-50%);
+      white-space: nowrap;
+    }
+    .tick-header {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-bottom: 0;
+    }
+    .tick-handle {
+      position: absolute;
+      top: 8px;
+      width: 20px;
+      height: 36px;
+      margin-left: -10px;
+      cursor: ew-resize;
+      z-index: 10;
+      background: var(--accent);
+      border-radius: 4px;
+      opacity: 0;
+      transition: opacity 0.15s;
+      border: 2px solid var(--bg);
+    }
+    .tick-handle:hover {
+      opacity: 0.8;
+    }
+    .tick-handle.dragging {
+      opacity: 1;
+    }
+    .tick-range-viz:hover .tick-handle {
+      opacity: 0.4;
+    }
+
+    /* Position dots */
+    .pos-viz {
+      display: flex;
+      gap: 2px;
+      margin: 1rem 0 0.5rem;
+    }
+    .pos-group {
+      display: flex;
+      gap: 2px;
+      flex: 1;
+    }
+    .pos-dot {
+      height: 28px;
+      flex: 1;
+      border-radius: 3px;
+      opacity: 0.7;
+    }
+    .pos-dot.trip { background: var(--trip); }
+    .pos-dot.dist { background: var(--dist); }
+    .pos-dot.steady { background: var(--steady); }
+    .pos-label {
+      font-size: 0.75rem;
+      text-align: center;
+      margin-top: 0.25rem;
+      color: var(--muted);
+    }
+
+    /* Simulation */
+    .sim-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+    .sim-card {
+      background: var(--bg);
+      border: 1px solid var(--surface2);
+      border-radius: 10px;
+      padding: 1rem;
+      text-align: center;
+    }
+    .sim-card .label {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+    .sim-card .value {
+      font-size: 1.2rem;
+      font-weight: 700;
+    }
+    .sim-card .sub {
+      font-size: 0.7rem;
+      color: var(--muted);
+      margin-top: 0.25rem;
+    }
+
+    /* Price table */
+    .price-table {
+      display: grid;
+      grid-template-columns: auto 1fr 1fr 1fr;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+      margin-top: 0.75rem;
+    }
+    .price-table-header {
+      font-weight: 600;
+      color: var(--muted);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--surface2);
+    }
+    .price-table-cell {
+      padding: 0.5rem 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .price-table-zone {
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .price-mono {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      color: var(--text);
+    }
+    .sim-slider-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .sim-slider-row input[type="range"] { flex: 1; }
+
+    /* Solidity output */
+    pre {
+      background: var(--bg);
+      border: 1px solid var(--surface2);
+      border-radius: 8px;
+      padding: 1rem;
+      overflow-x: auto;
+      font-size: 0.8rem;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      margin-top: 0.75rem;
+      color: var(--muted);
+    }
+    .copy-btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 500;
+      transition: background 0.15s;
+    }
+    .copy-btn:hover { background: var(--accent-hover); }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>MultiCurve Config Visualizer</h1>
+  <p>Adjust curve parameters and preview liquidity layout. Simulation is approximate &mdash; run forge tests for exact numbers.</p>
+</div>
+
+<div class="layout">
+  <!-- ===== Sidebar ===== -->
+  <div class="sidebar">
+    <div class="presets">
+      <button class="preset-btn active" onclick="applyPreset('default', this)">Default</button>
+      <button class="preset-btn" onclick="applyPreset('aggressive', this)">Anti-snipe</button>
+      <button class="preset-btn" onclick="applyPreset('mild', this)">Mild</button>
+    </div>
+
+    <div id="shareSum" class="share-sum ok"></div>
+
+    <!-- Trip Wire -->
+    <div class="zone trip">
+      <div class="zone-header">
+        <div class="zone-dot trip"></div>
+        <div class="zone-name">Trip Wire</div>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">Share</span>
+        <input type="range" id="tripSharesSlider" min="1" max="60" value="10" oninput="syncSlider('tripShares', this.value)">
+        <input type="text" class="slider-value" id="tripShares" value="10" oninput="syncInput('tripSharesSlider', this.value)">
+        <span style="color:var(--muted);font-size:0.8rem">%</span>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">Positions</span>
+        <input type="range" id="tripPosSlider" min="1" max="10" value="2" oninput="syncSlider('tripPos', this.value)">
+        <input type="text" class="slider-value" id="tripPos" value="2" oninput="syncInput('tripPosSlider', this.value)">
+      </div>
+      <div class="tick-row">
+        <div><label>Lower tick</label><input type="text" class="tick-input" id="tripLower" value="-27000" oninput="update()"></div>
+        <div><label>Upper tick</label><input type="text" class="tick-input" id="tripUpper" value="-18720" oninput="update()"></div>
+      </div>
+    </div>
+
+    <!-- Distribution -->
+    <div class="zone dist">
+      <div class="zone-header">
+        <div class="zone-dot dist"></div>
+        <div class="zone-name">Distribution</div>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">Share</span>
+        <input type="range" id="distSharesSlider" min="1" max="60" value="40" oninput="syncSlider('distShares', this.value)">
+        <input type="text" class="slider-value" id="distShares" value="40" oninput="syncInput('distSharesSlider', this.value)">
+        <span style="color:var(--muted);font-size:0.8rem">%</span>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">Positions</span>
+        <input type="range" id="distPosSlider" min="1" max="10" value="3" oninput="syncSlider('distPos', this.value)">
+        <input type="text" class="slider-value" id="distPos" value="3" oninput="syncInput('distPosSlider', this.value)">
+      </div>
+      <div class="tick-row">
+        <div><label>Lower tick</label><input type="text" class="tick-input" id="distLower" value="-18720" oninput="update()"></div>
+        <div><label>Upper tick</label><input type="text" class="tick-input" id="distUpper" value="-9000" oninput="update()"></div>
+      </div>
+    </div>
+
+    <!-- Steady State -->
+    <div class="zone steady">
+      <div class="zone-header">
+        <div class="zone-dot steady"></div>
+        <div class="zone-name">Steady State</div>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">Share</span>
+        <input type="range" id="steadySharesSlider" min="1" max="60" value="50" oninput="syncSlider('steadyShares', this.value)">
+        <input type="text" class="slider-value" id="steadyShares" value="50" oninput="syncInput('steadySharesSlider', this.value)">
+        <span style="color:var(--muted);font-size:0.8rem">%</span>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">Positions</span>
+        <input type="range" id="steadyPosSlider" min="1" max="10" value="5" oninput="syncSlider('steadyPos', this.value)">
+        <input type="text" class="slider-value" id="steadyPos" value="5" oninput="syncInput('steadyPosSlider', this.value)">
+      </div>
+      <div class="tick-row">
+        <div><label>Lower tick</label><input type="text" class="tick-input" id="steadyLower" value="-9000" oninput="update()"></div>
+        <div><label>Upper tick</label><input type="text" class="tick-input" id="steadyUpper" value="60000" oninput="update()"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Main ===== -->
+  <div class="main">
+
+    <!-- Liquidity Distribution -->
+    <div class="card">
+      <div class="card-title">Liquidity Share Distribution</div>
+      <div class="stacked-bar" id="stackedBar"></div>
+      <div class="legend">
+        <span><div class="legend-dot" style="background:var(--trip)"></div> Trip Wire</span>
+        <span><div class="legend-dot" style="background:var(--dist)"></div> Distribution</span>
+        <span><div class="legend-dot" style="background:var(--steady)"></div> Steady State</span>
+      </div>
+
+      <div class="card-title" style="margin-top:0.5rem">Tick Range Coverage</div>
+      <div class="tick-range-viz" id="tickRangeViz"></div>
+
+      <div class="card-title" style="margin-top:1.5rem">Positions per Zone</div>
+      <div id="posViz"></div>
+    </div>
+
+    <!-- Price Table -->
+    <div class="card">
+      <div class="card-title">Price Ranges (RARE per LIQUID)</div>
+      <div id="priceTable"></div>
+    </div>
+
+    <!-- Simulation -->
+    <div class="card">
+      <div class="card-title">Approximate Buy Simulation</div>
+      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">
+        Simplified concentrated liquidity model. The trip wire zone has high liquidity density (narrow range),
+        so it depletes quickly on large buys. Run <code>forge test</code> for exact on-chain results.
+      </p>
+      <div class="sim-slider-row" style="margin-bottom:1rem">
+        <span style="font-size:0.85rem;color:var(--muted)">RARE in:</span>
+        <input type="range" id="simAmountSlider" min="10" max="10000" value="500" step="10" oninput="document.getElementById('simAmountVal').textContent=this.value; update()">
+        <span id="simAmountVal" style="font-family:monospace;min-width:50px;text-align:right">500</span>
+      </div>
+      <div class="sim-grid" id="simGrid"></div>
+    </div>
+
+    <!-- Solidity Output -->
+    <div class="card">
+      <div class="card-title">Solidity Output</div>
+      <pre id="solidityOut"></pre>
+      <div style="margin-top:0.75rem"><button class="copy-btn" onclick="copySolidity()">Copy to Clipboard</button></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+function syncSlider(inputId, value) {
+  document.getElementById(inputId).value = value;
+  update();
+}
+function syncInput(sliderId, value) {
+  document.getElementById(sliderId).value = value;
+  update();
+}
+
+function getVals() {
+  return {
+    tripPct: Math.max(0, +document.getElementById('tripShares').value),
+    distPct: Math.max(0, +document.getElementById('distShares').value),
+    steadyPct: Math.max(0, +document.getElementById('steadyShares').value),
+    tripPos: Math.max(1, +document.getElementById('tripPos').value),
+    distPos: Math.max(1, +document.getElementById('distPos').value),
+    steadyPos: Math.max(1, +document.getElementById('steadyPos').value),
+    tripLower: +document.getElementById('tripLower').value,
+    tripUpper: +document.getElementById('tripUpper').value,
+    distLower: +document.getElementById('distLower').value,
+    distUpper: +document.getElementById('distUpper').value,
+    steadyLower: +document.getElementById('steadyLower').value,
+    steadyUpper: +document.getElementById('steadyUpper').value,
+  };
+}
+
+function update() {
+  const v = getVals();
+  const sum = v.tripPct + v.distPct + v.steadyPct;
+  const ok = Math.abs(sum - 100) < 0.5;
+
+  // Check tick alignment
+  const tickSpacing = 60;
+  const ticksToCheck = [v.tripLower, v.tripUpper, v.distLower, v.distUpper, v.steadyLower, v.steadyUpper];
+  const unalignedTicks = ticksToCheck.filter(t => t % tickSpacing !== 0);
+  const ticksAligned = unalignedTicks.length === 0;
+
+  const el = document.getElementById('shareSum');
+  if (!ticksAligned) {
+    el.textContent = `⚠️ Tick alignment error: ${unalignedTicks.join(', ')} not divisible by ${tickSpacing}`;
+    el.className = 'share-sum bad';
+  } else if (!ok) {
+    el.textContent = `Total: ${sum}% — adjust to 100%`;
+    el.className = 'share-sum bad';
+  } else {
+    el.textContent = `Total: ${sum}% ✓`;
+    el.className = 'share-sum ok';
+  }
+
+  // Helper functions used throughout
+  const tickToPrice = (tick) => Math.pow(1.0001, tick);
+  const fmtPrice = (price) => {
+    if (price >= 1) return price.toFixed(4);
+    if (price >= 0.001) return price.toFixed(6);
+    return price.toExponential(4);
+  };
+  const fmtFDV = (rarePerToken) => {
+    const fdv = 1_000_000 * rarePerToken * 0.02; // 1M tokens * price in RARE * $0.02 per RARE
+    if (fdv >= 1_000_000) return `$${(fdv/1_000_000).toFixed(2)}M`;
+    if (fdv >= 1_000) return `$${(fdv/1_000).toFixed(1)}K`;
+    return `$${fdv.toFixed(0)}`;
+  };
+
+  // Stacked bar
+  const t = sum || 1;
+  document.getElementById('stackedBar').innerHTML = `
+    <div class="trip" style="width:${(v.tripPct/t*100).toFixed(1)}%">${v.tripPct}%</div>
+    <div class="dist" style="width:${(v.distPct/t*100).toFixed(1)}%">${v.distPct}%</div>
+    <div class="steady" style="width:${(v.steadyPct/t*100).toFixed(1)}%">${v.steadyPct}%</div>
+  `;
+
+  // Tick range viz
+  const tickMin = Math.min(v.tripLower, v.distLower, v.steadyLower);
+  const tickMax = Math.max(v.tripUpper, v.distUpper, v.steadyUpper);
+  const range = tickMax - tickMin || 1;
+  const pct = (tick) => ((tick - tickMin) / range * 100);
+
+  const segments = [
+    { cls: 'trip', l: v.tripLower, u: v.tripUpper, label: 'Trip' },
+    { cls: 'dist', l: v.distLower, u: v.distUpper, label: 'Dist' },
+    { cls: 'steady', l: v.steadyLower, u: v.steadyUpper, label: 'Steady' },
+  ];
+  const ticks = [...new Set([v.tripLower, v.tripUpper, v.distLower, v.distUpper, v.steadyLower, v.steadyUpper])].sort((a,b)=>a-b);
+
+  let vizHTML = '<div class="tick-track"></div>';
+  segments.forEach(s => {
+    const left = pct(s.l);
+    const width = pct(s.u) - left;
+    vizHTML += `<div class="tick-segment ${s.cls}" style="left:${left}%;width:${width}%">${s.label}</div>`;
+  });
+
+  // Add draggable handles at zone boundaries
+  vizHTML += `<div class="tick-handle" data-handle="tripUpper" style="left:${pct(v.tripUpper)}%"></div>`;
+  vizHTML += `<div class="tick-handle" data-handle="distUpper" style="left:${pct(v.distUpper)}%"></div>`;
+
+  vizHTML += '<div class="tick-label-row">';
+  ticks.forEach(tick => {
+    const price = tickToPrice(tick);
+    vizHTML += `<span style="left:${pct(tick)}%">${tick.toLocaleString()}<br><span style="font-size:0.65rem;color:#64748b">${fmtPrice(price)} RARE</span></span>`;
+  });
+  vizHTML += '</div>';
+  document.getElementById('tickRangeViz').innerHTML = vizHTML;
+
+  // Attach drag handlers
+  attachDragHandlers(tickMin, tickMax);
+
+  // Positions viz
+  const totalPos = v.tripPos + v.distPos + v.steadyPos;
+  let posHTML = '<div class="pos-viz">';
+  for (let i = 0; i < v.tripPos; i++) posHTML += `<div class="pos-dot trip" style="flex:${v.tripPct/v.tripPos}"></div>`;
+  for (let i = 0; i < v.distPos; i++) posHTML += `<div class="pos-dot dist" style="flex:${v.distPct/v.distPos}"></div>`;
+  for (let i = 0; i < v.steadyPos; i++) posHTML += `<div class="pos-dot steady" style="flex:${v.steadyPct/v.steadyPos}"></div>`;
+  posHTML += '</div>';
+  posHTML += `<div class="pos-label">${v.tripPos} trip + ${v.distPos} dist + ${v.steadyPos} steady = ${totalPos} total positions</div>`;
+  document.getElementById('posViz').innerHTML = posHTML;
+
+  // Simulation
+  const simAmount = +document.getElementById('simAmountSlider').value;
+  const zones = [
+    { share: v.tripPct / 100, width: v.tripUpper - v.tripLower, pos: v.tripPos, name: 'Trip', cls: 'trip' },
+    { share: v.distPct / 100, width: v.distUpper - v.distLower, pos: v.distPos, name: 'Dist', cls: 'dist' },
+    { share: v.steadyPct / 100, width: v.steadyUpper - v.steadyLower, pos: v.steadyPos, name: 'Steady', cls: 'steady' },
+  ];
+  const poolSupply = 900000;
+  const poolRare = 2000;
+  let remaining = simAmount;
+  let totalTokens = 0;
+  let simHTML = '';
+
+  zones.forEach(z => {
+    if (remaining <= 0) {
+      simHTML += `<div class="sim-card"><div class="label">${z.name} zone</div><div class="value" style="color:var(--muted)">0</div><div class="sub">not reached</div></div>`;
+      return;
+    }
+    // zone liquidity: proportional to share * poolRare. Density = liquidity / width.
+    const zoneLiq = z.share * poolRare;
+    const zoneTokens = z.share * poolSupply;
+    // Simplified: tokens = rareIn * zoneTokens / (zoneLiq + rareIn)
+    const rareUsed = Math.min(remaining, zoneLiq * 3); // cap at ~3x zone liquidity
+    const tokens = (rareUsed * zoneTokens) / (zoneLiq + rareUsed);
+    remaining -= rareUsed;
+    totalTokens += tokens;
+    const pricePer = tokens > 0 ? (rareUsed / tokens).toFixed(6) : '~';
+    simHTML += `<div class="sim-card"><div class="label">${z.name} zone</div><div class="value">${Math.round(tokens).toLocaleString()}</div><div class="sub">${Math.round(rareUsed)} RARE @ ${pricePer}/tok</div></div>`;
+  });
+
+  const totalPrice = totalTokens > 0 ? (simAmount / totalTokens).toFixed(6) : '~';
+  const supplyPct = (totalTokens / poolSupply * 100).toFixed(1);
+  simHTML += `<div class="sim-card" style="border-color:var(--accent)"><div class="label">Total</div><div class="value" style="color:var(--accent)">${Math.round(totalTokens).toLocaleString()}</div><div class="sub">${supplyPct}% of supply @ ${totalPrice}/tok</div></div>`;
+
+  document.getElementById('simGrid').innerHTML = simHTML;
+
+  // Price table
+  const priceTableHTML = `
+    <div class="price-table">
+      <div class="price-table-header">Zone</div>
+      <div class="price-table-header">Start Price</div>
+      <div class="price-table-header">End Price</div>
+      <div class="price-table-header">FDV Range</div>
+
+      <div class="price-table-cell price-table-zone"><div class="zone-dot trip"></div> Trip Wire</div>
+      <div class="price-table-cell price-mono">${fmtPrice(tickToPrice(v.tripLower))}</div>
+      <div class="price-table-cell price-mono">${fmtPrice(tickToPrice(v.tripUpper))}</div>
+      <div class="price-table-cell price-mono">${fmtFDV(tickToPrice(v.tripLower))} → ${fmtFDV(tickToPrice(v.tripUpper))}</div>
+
+      <div class="price-table-cell price-table-zone"><div class="zone-dot dist"></div> Distribution</div>
+      <div class="price-table-cell price-mono">${fmtPrice(tickToPrice(v.distLower))}</div>
+      <div class="price-table-cell price-mono">${fmtPrice(tickToPrice(v.distUpper))}</div>
+      <div class="price-table-cell price-mono">${fmtFDV(tickToPrice(v.distLower))} → ${fmtFDV(tickToPrice(v.distUpper))}</div>
+
+      <div class="price-table-cell price-table-zone"><div class="zone-dot steady"></div> Steady State</div>
+      <div class="price-table-cell price-mono">${fmtPrice(tickToPrice(v.steadyLower))}</div>
+      <div class="price-table-cell price-mono">${fmtPrice(tickToPrice(v.steadyUpper))}</div>
+      <div class="price-table-cell price-mono">${fmtFDV(tickToPrice(v.steadyLower))} → ${fmtFDV(tickToPrice(v.steadyUpper))}</div>
+    </div>
+  `;
+  document.getElementById('priceTable').innerHTML = priceTableHTML;
+
+  // Solidity
+  const norm = (sum || 100) / 100;
+  const tripS = (v.tripPct / norm / 100);
+  const distS = (v.distPct / norm / 100);
+  const steadyS = (v.steadyPct / norm / 100);
+  const fmtS = (n) => {
+    const s = n.toFixed(2);
+    if (s === '1.00') return '1e18';
+    if (s === '0.50') return '0.50e18';
+    return s.replace(/0+$/, '').replace(/\.$/, '') + 'e18';
+  };
+  document.getElementById('solidityOut').textContent =
+`MultiCurveConfig({
+    tripWireTickLower: ${v.tripLower},
+    tripWireTickUpper: ${v.tripUpper},
+    tripWirePositions: ${v.tripPos},
+    tripWireShares: ${fmtS(tripS)},
+    distributionTickLower: ${v.distLower},
+    distributionTickUpper: ${v.distUpper},
+    distributionPositions: ${v.distPos},
+    distributionShares: ${fmtS(distS)},
+    steadyStateTickLower: ${v.steadyLower},
+    steadyStateTickUpper: ${v.steadyUpper},
+    steadyStatePositions: ${v.steadyPos},
+    steadyStateShares: ${fmtS(steadyS)}
+})`;
+}
+
+function applyPreset(name, btn) {
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+
+  const presets = {
+    default: { trip: 10, dist: 40, steady: 50, tripP: 2, distP: 3, steadyP: 5, tl: -27000, tu: -18720, dl: -18720, du: -9000, sl: -9000, su: 60000 },
+    aggressive: { trip: 30, dist: 35, steady: 35, tripP: 4, distP: 4, steadyP: 4, tl: -27000, tu: -18720, dl: -18720, du: -9000, sl: -9000, su: 60000 },
+    mild: { trip: 5, dist: 40, steady: 55, tripP: 1, distP: 3, steadyP: 6, tl: -27000, tu: -18720, dl: -18720, du: -9000, sl: -9000, su: 60000 },
+  };
+  const p = presets[name];
+  const set = (id, slider, val) => { document.getElementById(id).value = val; document.getElementById(slider).value = val; };
+  set('tripShares', 'tripSharesSlider', p.trip);
+  set('distShares', 'distSharesSlider', p.dist);
+  set('steadyShares', 'steadySharesSlider', p.steady);
+  set('tripPos', 'tripPosSlider', p.tripP);
+  set('distPos', 'distPosSlider', p.distP);
+  set('steadyPos', 'steadyPosSlider', p.steadyP);
+  document.getElementById('tripLower').value = p.tl;
+  document.getElementById('tripUpper').value = p.tu;
+  document.getElementById('distLower').value = p.dl;
+  document.getElementById('distUpper').value = p.du;
+  document.getElementById('steadyLower').value = p.sl;
+  document.getElementById('steadyUpper').value = p.su;
+  update();
+}
+
+function copySolidity() {
+  navigator.clipboard.writeText(document.getElementById('solidityOut').textContent);
+  const btn = document.querySelector('.copy-btn');
+  btn.textContent = 'Copied!';
+  setTimeout(() => btn.textContent = 'Copy to Clipboard', 1500);
+}
+
+function attachDragHandlers(tickMin, tickMax) {
+  const tickSpacing = 60;
+  const range = tickMax - tickMin || 1;
+  const vizEl = document.getElementById('tickRangeViz');
+  const vizRect = vizEl.getBoundingClientRect();
+
+  document.querySelectorAll('.tick-handle').forEach(handle => {
+    let isDragging = false;
+    let startX = 0;
+
+    handle.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      startX = e.clientX;
+      handle.classList.add('dragging');
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+
+      const vizRect = vizEl.getBoundingClientRect();
+      const relativeX = e.clientX - vizRect.left;
+      const pct = Math.max(0, Math.min(1, relativeX / vizRect.width));
+      const newTick = Math.round((tickMin + pct * range) / tickSpacing) * tickSpacing;
+
+      const handleType = handle.getAttribute('data-handle');
+
+      if (handleType === 'tripUpper') {
+        // tripUpper is also distLower
+        document.getElementById('tripUpper').value = newTick;
+        document.getElementById('distLower').value = newTick;
+      } else if (handleType === 'distUpper') {
+        // distUpper is also steadyLower
+        document.getElementById('distUpper').value = newTick;
+        document.getElementById('steadyLower').value = newTick;
+      }
+
+      update();
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isDragging) {
+        isDragging = false;
+        handle.classList.remove('dragging');
+      }
+    });
+  });
+}
+
+update();
+</script>
+</body>
+</html>

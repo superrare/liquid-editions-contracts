@@ -6,15 +6,8 @@
 -include .env.test
 export
 
-# Use environment variables for RPC URLs (fallback to public endpoints if not set)
-# Prefer BASE_RPC_URL from .env if available (paid Alchemy endpoint)
-# Note: If BASE_RPC_URL is empty, FORK_URL will be empty and tests will use hardcoded fallback
-FORK_URL ?= $(BASE_RPC_URL)
-SEPOLIA_FORK_URL ?= $(BASE_SEPOLIA_RPC_URL)
-
-# Export FORK_URL so forge test can use it (when running via make)
+# FORK_URL comes from .env (required for make test)
 export FORK_URL
-export SEPOLIA_FORK_URL
 
 # Test commands
 .PHONY: test test-factory test-liquid test-mainnet test-bonding test-bonding-explorer test-unit test-rare test-burner test-invariants test-mev coverage coverage-report help
@@ -36,59 +29,59 @@ help:
 	@echo "  coverage-report   - Generate HTML coverage report (requires lcov)"
 	@echo ""
 	@echo "ℹ️  Mainnet fork tests create their own forks automatically in setUp()"
-	@echo "   FORK_URL env var can override default: $(FORK_URL)"
-	@echo "   Tests run with --jobs 2 to avoid RPC rate limits"
+	@echo "   Set FORK_URL in .env (required for make test)"
+	@echo "   Tests run with --jobs 1 to avoid RPC rate limits"
 
 # Run all tests (mainnet tests create forks in setUp)
-# --jobs 1 limits parallelism to avoid RPC rate limits  
-# Skip invariant and bonding tests
-# Export FORK_URL with expanded BASE_RPC_URL so tests use paid Alchemy endpoint
+# --jobs 1 limits parallelism to avoid RPC rate limits
+# FORK_URL must be set in .env (no fallbacks)
 test:
-	@if [ -z "$$BASE_RPC_URL" ]; then \
-		echo "⚠️  BASE_RPC_URL not set. Tests will use public RPC (may hit rate limits)"; \
-		echo "   Set BASE_RPC_URL in .env or run: export BASE_RPC_URL=your_url"; \
-	fi
-	FORK_URL=$${BASE_RPC_URL:-https://mainnet.base.org} forge test --jobs 1 -v
+	@[ -f .env ] && set -a && . ./.env && set +a || true; \
+	if [ -z "$${FORK_URL}" ]; then \
+		echo "Error: FORK_URL is required. Set FORK_URL in .env"; \
+		exit 1; \
+	fi; \
+	FORK_URL="$$FORK_URL" forge test --jobs 1 -v
 
-# Run factory tests (creates fork in setUp)
+# Run factory tests (unit: no fork; fork: creates fork in setUp)
 test-factory:
-	forge test test/LiquidFactory.mainnet.t.sol --jobs 2 -v
+	forge test test/unit/LiquidFactory.unit.t.sol test/e2e/LiquidFactory.fork.t.sol --jobs 2 -v
 
 # Run basic liquid tests (creates fork in setUp)
 test-liquid:
-	forge test test/Liquid.mainnet.basic.t.sol --jobs 2 -v
+	forge test test/e2e/Liquid.mainnet.basic.t.sol --jobs 2 -v
 
 # Run Base mainnet integration tests (creates fork in setUp)
 test-mainnet:
-	forge test test/Liquid.mainnet.t.sol --jobs 2 -v
+	forge test test/e2e/Liquid.mainnet.t.sol --jobs 2 -v
 
 # Run bonding curve analysis (creates fork in setUp)
 test-bonding:
-	forge test test/Liquid.mainnet.bonding.t.sol --jobs 2 -vv
+	forge test test/scenarios/Liquid.mainnet.bonding.t.sol --jobs 2 -vv
 
 # Run bonding curve explorer tests (interactive exploration)
 test-bonding-explorer:
-	forge test test/Liquid.mainnet.bonding.explorer.t.sol --jobs 2 -vv
+	forge test test/scenarios/Liquid.mainnet.bonding.explorer.t.sol --jobs 2 -vv
 
 # Run burner integration tests (creates fork in setUp)
 test-burner:
-	forge test test/Liquid.mainnet.burner.t.sol --jobs 2 -v
+	forge test test/e2e/RAREBurner.mainnet.t.sol --jobs 2 -v
 
 # Run invariant tests (creates fork in setUp)
 test-invariants:
-	forge test test/Liquid.mainnet.invariants.t.sol --jobs 2 -v
+	forge test test/invariants/Liquid.mainnet.invariants.t.sol --jobs 2 -v
 
 # Run MEV protection tests (creates fork in setUp)
 test-mev:
-	forge test test/Liquid.mainnet.mev.t.sol --jobs 2 -v
+	forge test test/scenarios/Liquid.mainnet.mev.t.sol --jobs 2 -v
 
 # Run mainnet unit tests (creates fork in setUp)
 test-unit:
-	forge test test/Liquid.mainnet.unit.t.sol --jobs 2 -v
+	forge test test/e2e/Liquid.mainnet.unit.t.sol --jobs 2 -v
 
 # Run RARE burn tests (no fork needed)
 test-rare:
-	forge test test/RAREBurn.t.sol --jobs 2 -v
+	forge test test/integration/RAREBurner.t.sol -v && forge test test/unit/RAREBurner.unit.t.sol -v
 
 # Coverage commands
 coverage:

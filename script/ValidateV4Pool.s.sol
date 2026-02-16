@@ -29,7 +29,7 @@ contract ValidateV4Pool is Script {
     using PoolIdLibrary for PoolKey;
     using StateLibrary for IPoolManager;
 
-    function run() external {
+    function run() external view {
         // Get chain ID from environment or use block.chainid
         uint256 chainId;
         try vm.envUint("CHAIN_ID") returns (uint256 _chainId) {

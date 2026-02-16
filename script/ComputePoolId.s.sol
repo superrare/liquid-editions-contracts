@@ -53,6 +53,7 @@ contract ComputePoolId is Script {
         // Get pool parameters
         uint24 fee;
         try vm.envUint("POOL_FEE") returns (uint256 _fee) {
+            // forge-lint: disable-next-line(unsafe-typecast) -- safe: fee from env fits uint24
             fee = uint24(_fee);
         } catch {
             fee = 3000; // Default 0.3%
@@ -60,6 +61,7 @@ contract ComputePoolId is Script {
 
         int24 tickSpacing;
         try vm.envInt("TICK_SPACING") returns (int256 _spacing) {
+            // forge-lint: disable-next-line(unsafe-typecast) -- safe: tick spacing from env fits int24
             tickSpacing = int24(_spacing);
         } catch {
             tickSpacing = 60; // Default for 0.3% fee tier
@@ -86,6 +88,7 @@ contract ComputePoolId is Script {
         console.log("-----------------");
         console.log("RARE Token:", rareToken);
         console.log("Fee (BPS):", fee);
+        // forge-lint: disable-next-line(unsafe-typecast) -- safe: tickSpacing is int24
         console.log("Tick Spacing:", uint24(tickSpacing));
         console.log("Hooks:", hooks);
         console.log("");

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {console} from "forge-std/console.sol";
-import {RAREBurner} from "../../src/RAREBurner.sol";
+import {RAREBurner} from "liquid-editions/RAREBurner.sol";
 import {DeployConfig} from "../config/DeployConfig.sol";
 import {NetworkConfig} from "../config/NetworkConfig.sol";
 
@@ -12,6 +12,13 @@ import {NetworkConfig} from "../config/NetworkConfig.sol";
  * @dev This is a library-style deployer that can be used standalone or composed
  */
 library DeployRAREBurner {
+    /// @notice Minimal network addresses needed for RAREBurner deployment
+    struct NetworkAddresses {
+        address rareToken;
+        address uniswapV4PoolManager;
+        address uniswapV4Quoter;
+    }
+
     /**
      * @notice Deploy RAREBurner contract
      * @param owner Owner/admin address for the burner
@@ -23,6 +30,29 @@ library DeployRAREBurner {
         address owner,
         DeployConfig.BurnerConfig memory config,
         NetworkConfig.Config memory network
+    ) internal returns (address burner) {
+        return deploy(
+            owner,
+            config,
+            NetworkAddresses({
+                rareToken: network.rareToken,
+                uniswapV4PoolManager: network.uniswapV4PoolManager,
+                uniswapV4Quoter: network.uniswapV4Quoter
+            })
+        );
+    }
+
+    /**
+     * @notice Deploy RAREBurner contract (minimal signature to avoid stack depth issues)
+     * @param owner Owner/admin address for the burner
+     * @param config Burner configuration from DeployConfig
+     * @param network Minimal network addresses
+     * @return burner Address of the deployed RAREBurner
+     */
+    function deploy(
+        address owner,
+        DeployConfig.BurnerConfig memory config,
+        NetworkAddresses memory network
     ) internal returns (address burner) {
         console.log("=== Deploying RAREBurner ===");
 

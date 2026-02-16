@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import {LiquidFactory} from "../src/LiquidFactory.sol";
+import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {NetworkConfig} from "./config/NetworkConfig.sol";
 import {console} from "forge-std/console.sol";
 import {Script} from "forge-std/Script.sol";
@@ -38,7 +38,7 @@ contract TestCreateTokenGas is Script {
         try vm.envAddress("FACTORY_ADDRESS") returns (address _factory) {
             factoryAddress = _factory;
         } catch {
-            factoryAddress = config.liquidFactory;
+            factoryAddress = config.liquid.factory;
         }
 
         address deployerAddress = vm.addr(deployerPrivateKey);

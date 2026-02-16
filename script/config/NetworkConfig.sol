@@ -2,6 +2,16 @@
 pragma solidity ^0.8.0;
 
 library NetworkConfig {
+    /// @notice Liquid system contract addresses (grouped to reduce struct size for stack depth)
+    struct LiquidAddresses {
+        address factory;
+        address router;
+        /// @notice LiquidAuctioneer for CCA bid/exit/claim/triggerGraduation; address(0) if not deployed
+        address auctioneer;
+        /// @notice LiquidSwapGuard hook for Instant/MultiCurve/Graduated pools; restricts swaps to LiquidRouter
+        address swapGuard;
+    }
+
     struct Config {
         address rareToken;
         address rareBurner;
@@ -11,8 +21,16 @@ library NetworkConfig {
         address uniswapV4PositionManager;
         address uniswapV4Quoter;
         address uniswapUniversalRouter;
-        address liquidFactory;
-        address liquidRouter;
+        /// @notice CCA factory (Continuous Clearing Auction); address(0) if not deployed on chain
+        address ccaFactory;
+        /// @notice FullRangeLBPStrategyFactory address. Use Uniswap's official deployment per chain
+        ///         (https://docs.uniswap.org/contracts/liquidity-launchpad/Deployments) or deploy own for Base Sepolia.
+        ///         Required for CCA path.
+        address lbpStrategyFactory;
+        /// @notice Protocol fee recipient (LP position recipient at migration)
+        address protocolFeeRecipient;
+        /// @notice Liquid system contracts (factory, router, auctioneer, swapGuard)
+        LiquidAddresses liquid;
     }
 
     function getConfig(uint256 chainId) internal pure returns (Config memory) {
@@ -21,15 +39,22 @@ library NetworkConfig {
             return
                 Config({
                     rareToken: 0xba5BDe662c17e2aDFF1075610382B9B691296350,
-                    rareBurner: 0x0000000000000000000000000000000000000000,
+                    rareBurner: 0x0000000000000000000000000000000000000000, // not yet deployed
                     weth: 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2,
                     rareEthPoolId: 0xc5e82ff54924a7232a3e91ca252d505f4e4417afa2b6a8507dfb691182cd0b16,
                     uniswapV4PoolManager: 0x000000000004444c5dc75cB358380D2e3dE08A90,
                     uniswapV4PositionManager: 0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e,
                     uniswapV4Quoter: 0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203,
                     uniswapUniversalRouter: 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af,
-                    liquidFactory: 0x0000000000000000000000000000000000000000,
-                    liquidRouter: 0x0000000000000000000000000000000000000000
+                    ccaFactory: 0xCCccCcCAE7503Cac057829BF2811De42E16e0bD5,
+                    lbpStrategyFactory: 0x65aF3B62EE79763c704f04238080fBADD005B332,
+                    protocolFeeRecipient: 0xBa68422A154e459f7b4992a95Ad358d412b6bd1d, // change this before actual mainnet deployment
+                    liquid: LiquidAddresses({
+                        factory: address(0), // not yet deployed
+                        router: address(0), // not yet deployed
+                        auctioneer: address(0), // not yet deployed
+                        swapGuard: address(0) // not yet deployed
+                    })
                 });
         } else if (chainId == 8453) {
             // Base
@@ -43,8 +68,15 @@ library NetworkConfig {
                     uniswapV4PositionManager: 0x7C5f5A4bBd8fD63184577525326123B519429bDc,
                     uniswapV4Quoter: 0x0d5e0F971ED27FBfF6c2837bf31316121532048D,
                     uniswapUniversalRouter: 0x6fF5693b99212Da76ad316178A184AB56D299b43,
-                    liquidFactory: 0x0000000000000000000000000000000000000000,
-                    liquidRouter: 0x0000000000000000000000000000000000000000
+                    ccaFactory: 0x0000000000000000000000000000000000000000,
+                    lbpStrategyFactory: 0x39E5eB34dD2c8082Ee1e556351ae660F33B04252,
+                    protocolFeeRecipient: 0x0000000000000000000000000000000000000000,
+                    liquid: LiquidAddresses({
+                        factory: address(0),
+                        router: address(0),
+                        auctioneer: address(0),
+                        swapGuard: address(0)
+                    })
                 });
         } else if (chainId == 84532) {
             // Base-Sepolia
@@ -58,8 +90,15 @@ library NetworkConfig {
                     uniswapV4PositionManager: 0x4B2C77d209D3405F41a037Ec6c77F7F5b8e2ca80,
                     uniswapV4Quoter: 0x4A6513c898fe1B2d0E78d3b0e0A4a151589B1cBa,
                     uniswapUniversalRouter: 0x95273d871c8156636e114b63797d78D7E1720d81,
-                    liquidFactory: 0xc265a84Dc7EeC0fc15f5F91B61C6C094e7De7116,
-                    liquidRouter: 0x137A81F1C8cC11B69179F8Bf6ACb7e53D7DBC50F
+                    ccaFactory: 0x0000000000000000000000000000000000000000,
+                    lbpStrategyFactory: 0x0000000000000000000000000000000000000000,
+                    protocolFeeRecipient: 0xBa68422A154e459f7b4992a95Ad358d412b6bd1d,
+                    liquid: LiquidAddresses({
+                        factory: 0xc265a84Dc7EeC0fc15f5F91B61C6C094e7De7116,
+                        router: 0x137A81F1C8cC11B69179F8Bf6ACb7e53D7DBC50F,
+                        auctioneer: address(0),
+                        swapGuard: address(0)
+                    })
                 });
         } else if (chainId == 11155111) {
             // Ethereum Sepolia
@@ -73,8 +112,15 @@ library NetworkConfig {
                     uniswapV4PositionManager: 0x429ba70129df741B2Ca2a85BC3A2a3328e5c09b4,
                     uniswapV4Quoter: 0x61B3f2011A92d183C7dbaDBdA940a7555Ccf9227,
                     uniswapUniversalRouter: 0x3A9D48AB9751398BbFa63ad67599Bb04e4BdF98b,
-                    liquidFactory: 0x94115c7215B238aA1aec1b62e154b29BBC511142,
-                    liquidRouter: 0x11D7eC6dAaf538aDd8b0AE3a8c37455508629F56
+                    ccaFactory: 0xCCccCcCAE7503Cac057829BF2811De42E16e0bD5,
+                    lbpStrategyFactory: 0x89Dd5691e53Ea95d19ED2AbdEdCf4cBbE50da1ff,
+                    protocolFeeRecipient: 0xBa68422A154e459f7b4992a95Ad358d412b6bd1d,
+                    liquid: LiquidAddresses({
+                        factory: 0x522eADA54e18289c98798dc9b6286A794ddDf003,
+                        router: 0x6Ac1182EdC9A35c0f956b18A9d9F95Dc0171E7F0,
+                        auctioneer: 0xd39Ed6DC7368fbA7c050E7C5a057571320Fa51E4,
+                        swapGuard: 0xc5016af242Ffa74b2C243Ee0346475280e6d8080
+                    })
                 });
         }
         revert("NetworkConfig: Unsupported chain ID");

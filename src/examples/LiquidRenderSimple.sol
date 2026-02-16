@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import {ILiquid} from "../interfaces/ILiquid.sol";
-import {IRender} from "../interfaces/IRender.sol";
-import {Liquid} from "../Liquid.sol";
+// forge-lint: disable-start(unsafe-typecast) -- safe: rendering code uses bounded values (randVal % N, etc).
+
+import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
+import {IRender} from "liquid-editions/interfaces/IRender.sol";
+import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
 
 /// @title LiquidRenderSimple
 /// @notice Simple render contract that provides dynamic tokenURI() for Liquid Edition contracts.
@@ -13,7 +15,7 @@ import {Liquid} from "../Liquid.sol";
 ///      All rendering uses strokes only (no fills) - plotter/pen-friendly SVG output.
 contract LiquidRenderSimple is IRender {
     /// @notice The linked Liquid Edition contract
-    address public immutable liquidEdition;
+    address public immutable LIQUID_EDITION;
 
     /// @notice Collection name for metadata
     string public collectionName;
@@ -29,7 +31,7 @@ contract LiquidRenderSimple is IRender {
         string memory _collectionDescription
     ) {
         if (_liquidEdition == address(0)) revert InvalidLiquidEdition();
-        liquidEdition = _liquidEdition;
+        LIQUID_EDITION = _liquidEdition;
         collectionName = _collectionName;
         collectionDescription = _collectionDescription;
     }
@@ -45,9 +47,10 @@ contract LiquidRenderSimple is IRender {
             int24 currentTick,
             uint128 liquidity,
             uint256 currentSupply
-        ) = ILiquid(liquidEdition).getMarketState();
+        ) = ILiquid(LIQUID_EDITION).getMarketState();
 
-        uint256 maxTotalSupply = Liquid(liquidEdition).MAX_TOTAL_SUPPLY();
+        uint256 maxTotalSupply = LiquidInstant(LIQUID_EDITION)
+            .MAX_TOTAL_SUPPLY();
 
         DerivedMetrics memory metrics = _calculateDerivedMetrics(
             rarePerToken,
@@ -87,7 +90,9 @@ contract LiquidRenderSimple is IRender {
     /// @dev For compatibility with IRender interface - just calls tokenURI() without params.
     ///      The parameter is ignored but kept for interface compatibility.
     /// @return The token URI string
-    function tokenURI(uint256 /* tokenId */) external view override returns (string memory) {
+    function tokenURI(
+        uint256 /* tokenId */
+    ) external view override returns (string memory) {
         // Ignore tokenId and just return the main tokenURI()
         return this.tokenURI();
     }
@@ -110,7 +115,7 @@ contract LiquidRenderSimple is IRender {
         uint256 currentSupply,
         uint256 maxTotalSupply,
         int24 currentTick,
-        uint128 liquidity,
+        uint128 /* liquidity */,
         uint160 /* sqrtPriceX96 */
     ) internal pure returns (DerivedMetrics memory metrics) {
         uint256 burned = maxTotalSupply - currentSupply;
@@ -118,6 +123,7 @@ contract LiquidRenderSimple is IRender {
 
         int256 tick256 = int256(int24(currentTick));
         int256 shiftedTick = tick256 + 887272;
+        // forge-lint: disable-next-line(unsafe-typecast) -- safe: shiftedTick >= 0 guards non-negative
         uint256 normalizedTick = shiftedTick >= 0 ? uint256(shiftedTick) : 0;
         metrics.bondingProgress = normalizedTick % 101;
 
@@ -232,6 +238,7 @@ contract LiquidRenderSimple is IRender {
         bytes memory buffer = new bytes(digits);
         while (value != 0) {
             digits -= 1;
+            // forge-lint: disable-next-line(unsafe-typecast) -- safe: value % 10 is 0-9, 48+9=57 fits uint8
             buffer[digits] = bytes1(uint8(48 + uint256(value % 10)));
             value /= 10;
         }
@@ -239,7 +246,11 @@ contract LiquidRenderSimple is IRender {
     }
 
     function _intToString(int256 value) internal pure returns (string memory) {
-        if (value >= 0) return _uintToString(uint256(value));
+        if (value >= 0) {
+            // forge-lint: disable-next-line(unsafe-typecast) -- safe: value >= 0
+            return _uintToString(uint256(value));
+        }
+        // forge-lint: disable-next-line(unsafe-typecast) -- safe: -value is positive when value < 0
         return string(abi.encodePacked("-", _uintToString(uint256(-value))));
     }
 
@@ -992,3 +1003,4 @@ contract LiquidRenderSimple is IRender {
         return string(result);
     }
 }
+// forge-lint: disable-end(unsafe-typecast)

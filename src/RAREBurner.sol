@@ -14,7 +14,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {IRAREBurner} from "./interfaces/IRAREBurner.sol";
+import {IRAREBurner} from "liquid-editions/interfaces/IRAREBurner.sol";
 
 import {IV4Quoter} from "@uniswap/v4-periphery/interfaces/IV4Quoter.sol";
 import {QuoterRevert} from "@uniswap/v4-periphery/libraries/QuoterRevert.sol";
@@ -248,16 +248,17 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
     /// @param to Recipient address
     /// @param amount Amount to sweep (0 = all pendingEth)
     function sweep(address to, uint256 amount) external onlyOwner {
+        // amount 0 = sweep all pendingEth
         uint256 toSweep = amount == 0 ? pendingEth : amount;
         if (toSweep > pendingEth)
             revert IRAREBurner.InsufficientPendingEth(toSweep, pendingEth);
 
+        // Guard: never send more than actual balance (handles forced-send edge case)
         if (address(this).balance < toSweep) {
             revert InsufficientBalance();
         }
 
         pendingEth -= toSweep;
-        // Note: No event emitted for sweep - admin action, state change is on-chain
 
         (bool success, ) = to.call{value: toSweep}("");
         if (!success) revert IRAREBurner.EthTransferFailed();
@@ -268,6 +269,7 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
     ///      Only sends `address(this).balance - pendingEth`, ensuring pendingEth tracking remains intact.
     /// @param to Recipient address
     function sweepExcess(address to) external onlyOwner {
+        // Excess = ETH from selfdestruct/forced sends that bypassed pendingEth accounting
         uint256 excess = address(this).balance > pendingEth
             ? address(this).balance - pendingEth
             : 0;
@@ -299,6 +301,7 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
     function validatePoolConfig() external view returns (bool ok) {
         if (V4_POOL_ID == bytes32(0) || RARE_TOKEN == address(0)) return false;
 
+        // Recompute PoolKey from stored params and verify PoolId matches
         Currency ethC = Currency.wrap(address(0));
         Currency rareC = Currency.wrap(RARE_TOKEN);
         PoolKey memory key = PoolKey({
@@ -554,8 +557,10 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
         // Validate expected signs: ETH should be negative (paid), RARE should be positive (received)
         if (ethDelta >= 0 || rareDelta <= 0) revert UnexpectedSwapDirection();
 
-        // Cast amounts
+        // Cast amounts (safe: int128 delta values fit in uint128 for swap settlement)
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 ethToPay = uint256(uint128(-ethDelta));
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 rareOut = uint256(uint128(rareDelta));
 
         // Verify slippage protection

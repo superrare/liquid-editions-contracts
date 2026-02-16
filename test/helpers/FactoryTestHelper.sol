@@ -2,9 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {Test} from "forge-std/Test.sol";
-import {LiquidFactory} from "../../src/LiquidFactory.sol";
-import {MockRARE} from "./MockRARE.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 
 /// @title FactoryTestHelper
 /// @notice Shared helper for deploying LiquidFactory with valid hook address in tests

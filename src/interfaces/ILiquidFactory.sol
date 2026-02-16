@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
+import {Curve} from "doppler/libraries/Multicurve.sol";
+
 /// @title ILiquidFactory
 /// @notice Interface for the LiquidFactory contract
 interface ILiquidFactory {
@@ -88,8 +90,10 @@ interface ILiquidFactory {
     // FUNCTIONS
     // ============================================
 
-    // Implementation address
+    // Implementation addresses
     function liquidImplementation() external view returns (address);
+
+    function liquidMultiCurveImplementation() external view returns (address);
 
     // Protocol addresses (all public)
     function weth() external view returns (address);
@@ -127,5 +131,22 @@ interface ILiquidFactory {
         string memory _name,
         string memory _symbol,
         uint256 _initialRareLiquidity
+    ) external returns (address token);
+
+    /// @notice Creates a new Liquid token with multicurve liquidity (anti-sniping launch)
+    /// @param _creator The address of the token creator (receives fees and launch reward)
+    /// @param _tokenUri The ERC20z token URI (metadata link)
+    /// @param _name The token name
+    /// @param _symbol The token symbol
+    /// @param _initialRareLiquidity The amount of RARE tokens to provide as initial liquidity
+    /// @param _curves Curve configuration for multicurve deployment
+    /// @return token The address of the created token
+    function createLiquidTokenMultiCurve(
+        address _creator,
+        string memory _tokenUri,
+        string memory _name,
+        string memory _symbol,
+        uint256 _initialRareLiquidity,
+        Curve[] calldata _curves
     ) external returns (address token);
 }

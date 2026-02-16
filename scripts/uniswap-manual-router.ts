@@ -77,6 +77,82 @@ const V4_QUOTER_ABI = [
   'function quoteExactInputSingle(tuple(tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bool zeroForOne, uint128 exactAmount, bytes hookData) params) external returns (uint256 amountOut, uint256 gasEstimate)',
 ];
 
+// ABI to read poolKey and use quote functions on a Liquid token contract
+const LIQUID_TOKEN_ABI = [
+  'function poolKey() external view returns (address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)',
+  'function quoteBuy(uint256 rareIn) external returns (uint256 liquidOut, uint160 sqrtPriceX96After)',
+  'function quoteSell(uint256 liquidIn) external returns (uint256 rareOut, uint160 sqrtPriceX96After)',
+  'function getCurrentPrice() external view returns (uint256 rarePerToken, uint256 tokenPerRare)',
+];
+
+// QuoteResult(uint256,uint160) selector - Liquid tokens use revert-as-return for quotes
+const QUOTE_RESULT_SELECTOR = '0x' + ethers.utils.id('QuoteResult(uint256,uint160)').slice(2, 10);
+
+/**
+ * Call quoteBuy and parse the revert-as-return result.
+ * Liquid tokens' quoteBuy() reverts with QuoteResult(amountOut, sqrtPriceX96After).
+ */
+async function parseQuoteBuyRevert(
+  provider: ethers.providers.Provider,
+  tokenAddress: string,
+  rareIn: ethers.BigNumber
+): Promise<ethers.BigNumber | null> {
+  return parseQuoteRevert(provider, tokenAddress, 'quoteBuy', [rareIn]);
+}
+
+/**
+ * Call quoteSell and parse the revert-as-return result.
+ * Liquid tokens' quoteSell() reverts with QuoteResult(amountOut, sqrtPriceX96After).
+ */
+async function parseQuoteSellRevert(
+  provider: ethers.providers.Provider,
+  tokenAddress: string,
+  liquidIn: ethers.BigNumber
+): Promise<ethers.BigNumber | null> {
+  return parseQuoteRevert(provider, tokenAddress, 'quoteSell', [liquidIn]);
+}
+
+/**
+ * Generic parser for Liquid token quote revert-as-return.
+ * Both quoteBuy and quoteSell revert with QuoteResult(uint256, uint160).
+ */
+async function parseQuoteRevert(
+  provider: ethers.providers.Provider,
+  tokenAddress: string,
+  fn: 'quoteBuy' | 'quoteSell',
+  args: ethers.BigNumber[]
+): Promise<ethers.BigNumber | null> {
+  const contract = new ethers.Contract(tokenAddress, LIQUID_TOKEN_ABI, provider);
+  const calldata = contract.interface.encodeFunctionData(fn, args);
+
+  try {
+    const result = await provider.call({ to: tokenAddress, data: calldata });
+    return null; // Should not reach - quote functions always revert
+  } catch (e: any) {
+    // Extract revert data - ethers wraps it; try common locations
+    let hex: string | undefined;
+    for (const err of [e, e.error, e.error?.error]) {
+      if (!err) continue;
+      const d = err.data ?? err.result;
+      if (d && typeof d === 'string' && d.startsWith('0x') && d.length > 10) {
+        hex = d;
+        break;
+      }
+    }
+    if (!hex) {
+      throw e;
+    }
+    if (!hex.startsWith(QUOTE_RESULT_SELECTOR)) {
+      throw e;
+    }
+    const decoded = ethers.utils.defaultAbiCoder.decode(
+      ['uint256', 'uint160'],
+      '0x' + hex.slice(10)
+    );
+    return ethers.BigNumber.from(decoded[0]);
+  }
+}
+
 // V4 contract addresses by chain
 const V4_CONTRACTS: Record<number, { quoter: string; poolManager: string }> = {
   // Ethereum Mainnet
@@ -116,12 +192,15 @@ interface V4QuoteResult {
   amountOut: ethers.BigNumber;
   fee: number;
   tickSpacing: number;
+  hooks: string; // hooks contract address (AddressZero for vanilla pools)
   poolId: string;
   gasEstimate: number;
 }
 
 /**
  * Get a direct V4 quote by querying the V4 Quoter
+ * @param hooksOverride - If provided, only query pools with this hooks address (skip fee tier scan)
+ * @param tickSpacingOverride - If provided, use this tick spacing instead of default for fee tier
  */
 async function getV4DirectQuote(
   provider: ethers.providers.Provider,
@@ -129,7 +208,9 @@ async function getV4DirectQuote(
   currencyIn: string, // Use address(0) for native ETH
   currencyOut: string,
   amountIn: ethers.BigNumber,
-  isExactIn: boolean = true
+  isExactIn: boolean = true,
+  hooksOverride?: string,
+  tickSpacingOverride?: number
 ): Promise<V4QuoteResult | null> {
   const v4Contracts = V4_CONTRACTS[chainId];
   if (!v4Contracts) {
@@ -151,17 +232,21 @@ async function getV4DirectQuote(
 
   let bestQuote: V4QuoteResult | null = null;
 
+  // If hooks override is provided, only try the specific pool configuration
+  const feeTiersToTry = hooksOverride ? [0] : V4_FEE_TIERS;
+  const hooksAddress = hooksOverride || ethers.constants.AddressZero;
+
   // Try all fee tiers to find the best quote
-  for (const fee of V4_FEE_TIERS) {
-    const tickSpacing = V4_TICK_SPACINGS[fee] || 60;
-    
+  for (const fee of feeTiersToTry) {
+    const tickSpacing = tickSpacingOverride || V4_TICK_SPACINGS[fee] || 60;
+
     const quoteParams = {
       poolKey: {
         currency0,
         currency1,
         fee,
         tickSpacing,
-        hooks: ethers.constants.AddressZero,
+        hooks: hooksAddress,
       },
       zeroForOne,
       exactAmount: amountIn,
@@ -171,12 +256,12 @@ async function getV4DirectQuote(
     try {
       const result = await quoter.callStatic.quoteExactInputSingle(quoteParams);
       const amountOut = ethers.BigNumber.from(result.amountOut);
-      
+
       // Compute pool ID for reference
       const poolId = ethers.utils.keccak256(
         ethers.utils.defaultAbiCoder.encode(
           ['address', 'address', 'uint24', 'int24', 'address'],
-          [currency0, currency1, fee, tickSpacing, ethers.constants.AddressZero]
+          [currency0, currency1, fee, tickSpacing, hooksAddress]
         )
       );
 
@@ -186,6 +271,7 @@ async function getV4DirectQuote(
           amountOut,
           fee,
           tickSpacing,
+          hooks: hooksAddress,
           poolId,
           gasEstimate: result.gasEstimate?.toNumber() || 100000,
         };
@@ -207,13 +293,14 @@ function encodeDirectV4Swap(
   fee: number,
   tickSpacing: number,
   amountIn: ethers.BigNumber,
-  amountOutMin: ethers.BigNumber
+  amountOutMin: ethers.BigNumber,
+  hooks: string = ethers.constants.AddressZero
 ): { commands: string; inputs: string[]; description: string } {
   // Sort currencies
   let currency0 = currencyIn;
   let currency1 = currencyOut;
   let zeroForOne = true;
-  
+
   if (currencyIn.toLowerCase() > currencyOut.toLowerCase()) {
     currency0 = currencyOut;
     currency1 = currencyIn;
@@ -226,11 +313,11 @@ function encodeDirectV4Swap(
   );
 
   const params: string[] = [];
-  
+
   params.push(ethers.utils.defaultAbiCoder.encode(
     ['tuple(tuple(address,address,uint24,int24,address),bool,uint128,uint128,bytes)'],
     [[
-      [currency0, currency1, fee, tickSpacing, ethers.constants.AddressZero],
+      [currency0, currency1, fee, tickSpacing, hooks],
       zeroForOne,
       amountIn,
       amountOutMin,
@@ -530,24 +617,94 @@ async function getMultiHopLiquidQuote(
   }
   
   // Step 2: Quote RARE → Liquid token via V4
+  // Read the pool key from the Liquid token to get the correct hooks address and tick spacing
+  const liquidTokenContract = new ethers.Contract(liquidTokenAddress, LIQUID_TOKEN_ABI, provider);
+  let liquidPoolHooks = ethers.constants.AddressZero;
+  let liquidPoolTickSpacing: number | undefined;
+  try {
+    const poolKeyResult = await liquidTokenContract.poolKey();
+    liquidPoolHooks = poolKeyResult.hooks;
+    liquidPoolTickSpacing = poolKeyResult.tickSpacing;
+    console.log(`    Pool hooks: ${liquidPoolHooks}`);
+    console.log(`    Pool tick spacing: ${liquidPoolTickSpacing}`);
+  } catch (e: any) {
+    console.log(`    ⚠ Could not read poolKey from token (${e.message?.slice(0, 40)}), trying without hooks`);
+  }
+
   // Apply slippage to RARE amount for the next hop
   const rareForSwap = rareAmount.mul(10000 - Math.floor(slippageBps / 2)).div(10000);
-  
-  const rareToLiquidV4 = await getV4DirectQuote(
+
+  let rareToLiquidV4 = await getV4DirectQuote(
     provider,
     chainId,
     baseTokenAddress, // RARE
     liquidTokenAddress,
-    rareForSwap
+    rareForSwap,
+    true, // isExactIn
+    liquidPoolHooks !== ethers.constants.AddressZero ? liquidPoolHooks : undefined,
+    liquidPoolTickSpacing
   );
-  
+
+  // If V4 Quoter fails (common with hooked pools), try the token's own quoteBuy()
+  // Note: quoteBuy uses revert-as-return (reverts with QuoteResult) - we must parse the revert data
+  // LiquidSwapGuard blocks quoteBuy (swap simulation) - fall back to getCurrentPrice() spot estimate
+  if (!rareToLiquidV4) {
+    console.log(`    V4 Quoter failed, trying token's quoteBuy()...`);
+    try {
+      const liquidOut = await parseQuoteBuyRevert(provider, liquidTokenAddress, rareForSwap);
+      if (liquidOut && liquidOut.gt(0)) {
+        rareToLiquidV4 = {
+          amountOut: liquidOut,
+          fee: 0,
+          tickSpacing: liquidPoolTickSpacing || 60,
+          hooks: liquidPoolHooks,
+          poolId: '', // Not needed for encoding (we use hooks/fee/tickSpacing)
+          gasEstimate: 200000,
+        };
+        console.log(`    RARE → Liquid: ${ethers.utils.formatEther(liquidOut)} tokens via token quoteBuy()`);
+      }
+    } catch (e: any) {
+      console.log(`    ✗ token quoteBuy() also failed: ${e.message?.slice(0, 60)}`);
+    }
+  }
+
+  // Fallback: LiquidSwapGuard blocks quoteBuy - use getCurrentPrice() for spot estimate
+  if (!rareToLiquidV4) {
+    console.log(`    Trying getCurrentPrice() spot estimate (LiquidSwapGuard blocks quoteBuy)...`);
+    try {
+      const priceResult = await liquidTokenContract.getCurrentPrice();
+      const tokenPerRare = ethers.BigNumber.from(priceResult.tokenPerRare);
+      if (tokenPerRare.gt(0)) {
+        // liquidOut = rareIn * tokenPerRare / 1e18 (spot price, 1e18 scale)
+        const liquidOut = rareForSwap.mul(tokenPerRare).div(ethers.constants.WeiPerEther);
+        // Apply 5% conservative buffer - spot price underestimates for buys (price moves up)
+        const conservativeOut = liquidOut.mul(95).div(100);
+        if (conservativeOut.gt(0)) {
+          rareToLiquidV4 = {
+            amountOut: conservativeOut,
+            fee: 0,
+            tickSpacing: liquidPoolTickSpacing || 60,
+            hooks: liquidPoolHooks,
+            poolId: '',
+            gasEstimate: 200000,
+          };
+          console.log(`    RARE → Liquid: ~${ethers.utils.formatEther(conservativeOut)} tokens (spot estimate, 5% buffer)`);
+        }
+      }
+    } catch (e: any) {
+      console.log(`    ✗ getCurrentPrice() failed: ${e.message?.slice(0, 50)}`);
+    }
+  }
+
   if (!rareToLiquidV4) {
     console.log(`    ✗ No RARE → Liquid V4 pool found`);
     return null;
   }
-  
-  console.log(`    RARE → Liquid: ${ethers.utils.formatEther(rareToLiquidV4.amountOut)} tokens via V4(${rareToLiquidV4.fee / 10000}%)`);
-  
+
+  if (rareToLiquidV4.poolId !== '') {
+    console.log(`    RARE → Liquid: ${ethers.utils.formatEther(rareToLiquidV4.amountOut)} tokens via V4(${rareToLiquidV4.fee / 10000}%)`);
+  }
+
   return {
     amountOut: rareToLiquidV4.amountOut,
     rareAmount,
@@ -634,21 +791,21 @@ function encodeMultiHopV4Swap(
     params.push(ethers.utils.defaultAbiCoder.encode(
       ['tuple(tuple(address,address,uint24,int24,address),bool,uint128,uint128,bytes)'],
       [[
-        [currency0_1, currency1_1, v4Quote.fee, v4Quote.tickSpacing, ethers.constants.AddressZero],
+        [currency0_1, currency1_1, v4Quote.fee, v4Quote.tickSpacing, v4Quote.hooks],
         zeroForOne1,
         ethAmount,
         0, // No min for intermediate (we check final output)
         '0x'
       ]]
     ));
-    
+
     // Second swap params (RARE → Liquid)
     // Use 0 as amountIn to signal "use delta from previous swap"
     // Actually, we need to use the expected rareAmount
     params.push(ethers.utils.defaultAbiCoder.encode(
       ['tuple(tuple(address,address,uint24,int24,address),bool,uint128,uint128,bytes)'],
       [[
-        [currency0_2, currency1_2, v4RareToLiquid.fee, v4RareToLiquid.tickSpacing, ethers.constants.AddressZero],
+        [currency0_2, currency1_2, v4RareToLiquid.fee, v4RareToLiquid.tickSpacing, v4RareToLiquid.hooks],
         zeroForOne2,
         rareAmount,
         liquidTokenAmountMin,
@@ -924,7 +1081,8 @@ export async function getManualBuyQuote(
       v4.fee,
       v4.tickSpacing,
       ethForSwap,
-      ethers.BigNumber.from(minAmountOut)
+      ethers.BigNumber.from(minAmountOut),
+      v4.hooks
     );
   } else {
     const alpha = bestQuote.data as SwapRoute;
@@ -1039,16 +1197,84 @@ async function getMultiHopSellQuote(
   };
 } | null> {
   console.log(`  Checking multi-hop: Liquid → RARE → ETH...`);
-  
+
+  // Read pool key from the Liquid token to get hooks address and tick spacing
+  const liquidTokenContract = new ethers.Contract(liquidTokenAddress, LIQUID_TOKEN_ABI, provider);
+  let liquidPoolHooks = ethers.constants.AddressZero;
+  let liquidPoolTickSpacing: number | undefined;
+  try {
+    const poolKeyResult = await liquidTokenContract.poolKey();
+    liquidPoolHooks = poolKeyResult.hooks;
+    liquidPoolTickSpacing = poolKeyResult.tickSpacing;
+    console.log(`    Pool hooks: ${liquidPoolHooks}`);
+    console.log(`    Pool tick spacing: ${liquidPoolTickSpacing}`);
+  } catch (e: any) {
+    console.log(`    ⚠ Could not read poolKey from token (${e.message?.slice(0, 40)}), trying without hooks`);
+  }
+
   // Step 1: Quote Liquid → RARE via V4
-  const liquidToRareV4 = await getV4DirectQuote(
+  let liquidToRareV4 = await getV4DirectQuote(
     provider,
     chainId,
     liquidTokenAddress,
     baseTokenAddress, // RARE
-    tokenAmount
+    tokenAmount,
+    true, // isExactIn
+    liquidPoolHooks !== ethers.constants.AddressZero ? liquidPoolHooks : undefined,
+    liquidPoolTickSpacing
   );
-  
+
+  // If V4 Quoter fails (common with hooked pools), try the token's own quoteSell()
+  // Note: quoteSell uses revert-as-return (reverts with QuoteResult) - we must parse the revert data
+  // LiquidSwapGuard blocks quoteSell - fall back to getCurrentPrice() spot estimate
+  if (!liquidToRareV4) {
+    console.log(`    V4 Quoter failed, trying token's quoteSell()...`);
+    try {
+      const rareOut = await parseQuoteSellRevert(provider, liquidTokenAddress, tokenAmount);
+      if (rareOut && rareOut.gt(0)) {
+        liquidToRareV4 = {
+          amountOut: rareOut,
+          fee: 0,
+          tickSpacing: liquidPoolTickSpacing || 60,
+          hooks: liquidPoolHooks,
+          poolId: '',
+          gasEstimate: 200000,
+        };
+        console.log(`    Liquid → RARE: ${ethers.utils.formatEther(rareOut)} RARE via token quoteSell()`);
+      }
+    } catch (e: any) {
+      console.log(`    ✗ token quoteSell() also failed: ${e.message?.slice(0, 60)}`);
+    }
+  }
+
+  // Fallback: LiquidSwapGuard blocks quoteSell - use getCurrentPrice() for spot estimate
+  if (!liquidToRareV4) {
+    console.log(`    Trying getCurrentPrice() spot estimate (LiquidSwapGuard blocks quoteSell)...`);
+    try {
+      const priceResult = await liquidTokenContract.getCurrentPrice();
+      const rarePerToken = ethers.BigNumber.from(priceResult.rarePerToken);
+      if (rarePerToken.gt(0)) {
+        // rareOut = liquidIn * rarePerToken / 1e18 (spot price, 1e18 scale)
+        const rareOut = tokenAmount.mul(rarePerToken).div(ethers.constants.WeiPerEther);
+        // Apply 5% conservative buffer - spot price overestimates for sells (price moves down)
+        const conservativeOut = rareOut.mul(95).div(100);
+        if (conservativeOut.gt(0)) {
+          liquidToRareV4 = {
+            amountOut: conservativeOut,
+            fee: 0,
+            tickSpacing: liquidPoolTickSpacing || 60,
+            hooks: liquidPoolHooks,
+            poolId: '',
+            gasEstimate: 200000,
+          };
+          console.log(`    Liquid → RARE: ~${ethers.utils.formatEther(conservativeOut)} RARE (spot estimate, 5% buffer)`);
+        }
+      }
+    } catch (e: any) {
+      console.log(`    ✗ getCurrentPrice() failed: ${e.message?.slice(0, 50)}`);
+    }
+  }
+
   if (!liquidToRareV4) {
     console.log(`    ✗ No Liquid → RARE V4 pool found`);
     return null;
@@ -1226,19 +1452,19 @@ function encodeMultiHopV4SellSwap(
     params.push(ethers.utils.defaultAbiCoder.encode(
       ['tuple(tuple(address,address,uint24,int24,address),bool,uint128,uint128,bytes)'],
       [[
-        [currency0_1, currency1_1, v4LiquidToRare.fee, v4LiquidToRare.tickSpacing, ethers.constants.AddressZero],
+        [currency0_1, currency1_1, v4LiquidToRare.fee, v4LiquidToRare.tickSpacing, v4LiquidToRare.hooks],
         zeroForOne1,
         tokenAmount,
         0, // No min for intermediate (we check final output)
         '0x'
       ]]
     ));
-    
+
     // Second swap params (RARE → ETH)
     params.push(ethers.utils.defaultAbiCoder.encode(
       ['tuple(tuple(address,address,uint24,int24,address),bool,uint128,uint128,bytes)'],
       [[
-        [currency0_2, currency1_2, v4Quote.fee, v4Quote.tickSpacing, ethers.constants.AddressZero],
+        [currency0_2, currency1_2, v4Quote.fee, v4Quote.tickSpacing, v4Quote.hooks],
         zeroForOne2,
         rareAmount,
         ethAmountMin,
@@ -1464,7 +1690,8 @@ export async function getManualSellQuote(
       v4Quote.fee,
       v4Quote.tickSpacing,
       tokenAmountBN,
-      ethers.BigNumber.from(minAmountOut)
+      ethers.BigNumber.from(minAmountOut),
+      v4Quote.hooks
     );
   } else if (alphaRoute) {
     console.log(`\n✓ Best route: ${alphaRoute.route.map((r: any) => r.protocol).join('+')}`);

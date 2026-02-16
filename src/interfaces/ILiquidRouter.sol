@@ -52,6 +52,12 @@ interface ILiquidRouter {
     /// @notice Thrown when TIER 3 fee distribution is invalid (must sum to exactly 10000 BPS / 100%)
     error InvalidFeeDistribution();
 
+    /// @notice Thrown when both leg1 and leg2 are empty in swap()
+    error BothLegsEmpty();
+
+    /// @notice Thrown when msg.value is sent but tokenIn is ERC20 (not ETH)
+    error UnexpectedMsgValue();
+
     // ============================================
     // EVENTS
     // ============================================
@@ -190,28 +196,37 @@ interface ILiquidRouter {
     /// @param amount The amount rescued
     event EthRescued(address indexed to, uint256 amount);
 
-    /// @notice Emitted when the Universal Router address is updated
-    /// @param oldRouter The previous router address
-    /// @param newRouter The new router address
-    event UniversalRouterUpdated(
-        address indexed oldRouter,
-        address indexed newRouter
+    /// @notice Emitted when tokens are swapped via the router (two-leg swap)
+    /// @param tokenIn The input token (address(0) for ETH)
+    /// @param tokenOut The output token (address(0) for ETH)
+    /// @param sender The address initiating the swap
+    /// @param recipient The address receiving the output
+    /// @param orderReferrer The address of the order referrer
+    /// @param amountIn The input amount (ETH or tokens)
+    /// @param ethAtMidpoint The gross ETH at the midpoint (before fee)
+    /// @param fee The total ETH fee collected
+    /// @param amountOut The output amount (ETH or tokens)
+    /// @param protocolFee Protocol fee amount
+    /// @param referrerFee Referrer fee amount
+    /// @param beneficiaryFeeA Beneficiary fee amount for tokenIn
+    /// @param beneficiaryFeeB Beneficiary fee amount for tokenOut
+    /// @param burnFee RARE burn fee amount
+    event RouterSwap(
+        address indexed tokenIn,
+        address indexed tokenOut,
+        address indexed sender,
+        address recipient,
+        address orderReferrer,
+        uint256 amountIn,
+        uint256 ethAtMidpoint,
+        uint256 fee,
+        uint256 amountOut,
+        uint256 protocolFee,
+        uint256 referrerFee,
+        uint256 beneficiaryFeeA,
+        uint256 beneficiaryFeeB,
+        uint256 burnFee
     );
-
-    /// @notice Emitted when RARE burn fee BPS is updated
-    event RareBurnFeeBPSUpdated(uint256 rareBurnFeeBPS);
-
-    /// @notice Emitted when protocol fee BPS is updated
-    event ProtocolFeeBPSUpdated(uint256 protocolFeeBPS);
-
-    /// @notice Emitted when referrer fee BPS is updated
-    event ReferrerFeeBPSUpdated(uint256 referrerFeeBPS);
-
-    /// @notice Emitted when protocol fee recipient address is updated
-    event ProtocolFeeRecipientUpdated(address protocolFeeRecipient);
-
-    /// @notice Emitted when RARE burner address is updated
-    event RareBurnerUpdated(address rareBurner);
 
     // ============================================
     // TRADING FUNCTIONS
@@ -254,6 +269,32 @@ interface ILiquidRouter {
         bytes calldata routeData,
         uint256 deadline
     ) external returns (uint256 ethReceived);
+
+    /// @notice Swap between any two assets, always collecting fees in ETH
+    /// @dev Executes two route legs with ETH fee harvest at the midpoint.
+    ///      Supports: ERC20->ERC20, ERC20->ETH, ETH->ERC20.
+    ///      For ETH-only trades, use buy() or sell() for lower gas.
+    /// @param tokenIn Input token (address(0) for ETH)
+    /// @param amountIn Input amount (ignored if ETH — uses msg.value)
+    /// @param tokenOut Output token (address(0) for ETH)
+    /// @param recipient Address to receive output
+    /// @param orderReferrer Address of the order referrer (receives referrer fee)
+    /// @param minAmountOut Minimum final output after fees
+    /// @param leg1 Route: tokenIn -> ETH (empty if input is ETH)
+    /// @param leg2 Route: ETH -> tokenOut (empty if output is ETH)
+    /// @param deadline Transaction deadline timestamp
+    /// @return amountOut The amount of output received
+    function swap(
+        address tokenIn,
+        uint256 amountIn,
+        address tokenOut,
+        address recipient,
+        address orderReferrer,
+        uint256 minAmountOut,
+        bytes calldata leg1,
+        bytes calldata leg2,
+        uint256 deadline
+    ) external payable returns (uint256 amountOut);
 
     // ============================================
     // QUOTE FUNCTIONS
@@ -302,11 +343,11 @@ interface ILiquidRouter {
     function setAllowlistEnabled(bool enabled) external;
 
     /// @notice Pause the contract (emergency stop)
-    /// @dev Only callable by owner. Prevents buy() and sell() operations.
+    /// @dev Only callable by owner. Prevents buy(), sell(), and swap() operations.
     function pause() external;
 
     /// @notice Unpause the contract
-    /// @dev Only callable by owner. Re-enables buy() and sell() operations.
+    /// @dev Only callable by owner. Re-enables buy(), sell(), and swap() operations.
     function unpause() external;
 
     /// @notice Rescue stuck ERC20 tokens (emergency recovery)
@@ -321,32 +362,6 @@ interface ILiquidRouter {
     /// @param to The recipient address
     /// @param amount The amount to rescue
     function rescueETH(address to, uint256 amount) external;
-
-    /// @notice Update the Universal Router address
-    /// @dev Only callable by owner. Use for router upgrades.
-    /// @param _universalRouter The new Universal Router address
-    function setUniversalRouter(address _universalRouter) external;
-
-    /// @notice Sets all TIER 3 fee splits atomically
-    /// @dev Only callable by owner. Validates that fee splits sum to exactly 10000 BPS (100%)
-    /// @param _rareBurnFeeBPS RARE burn fee in basis points
-    /// @param _protocolFeeBPS Protocol fee in basis points
-    /// @param _referrerFeeBPS Referrer fee in basis points
-    function setTier3FeeSplits(
-        uint256 _rareBurnFeeBPS,
-        uint256 _protocolFeeBPS,
-        uint256 _referrerFeeBPS
-    ) external;
-
-    /// @notice Sets the protocol fee recipient address
-    /// @dev Only callable by owner
-    /// @param _protocolFeeRecipient The new protocol fee recipient address
-    function setProtocolFeeRecipient(address _protocolFeeRecipient) external;
-
-    /// @notice Sets the RARE burner address
-    /// @dev Only callable by owner
-    /// @param _rareBurner The new RARE burner address
-    function setRareBurner(address _rareBurner) external;
 
     // ============================================
     // VIEW FUNCTIONS

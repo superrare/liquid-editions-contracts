@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import {LiquidLensDemoV1} from "../src/examples/LiquidLensDemoV1.sol";
-import {ILiquid} from "../src/interfaces/ILiquid.sol";
+import {LiquidLensDemoV1} from "liquid-editions/examples/LiquidLensDemoV1.sol";
+import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {console} from "forge-std/console.sol";
 import {Script} from "forge-std/Script.sol";
 

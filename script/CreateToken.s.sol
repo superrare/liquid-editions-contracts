@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import {LiquidFactory} from "../src/LiquidFactory.sol";
-import {ILiquidRouter} from "../src/interfaces/ILiquidRouter.sol";
-import {ILiquid} from "../src/interfaces/ILiquid.sol";
+import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
+import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
 import {NetworkConfig} from "./config/NetworkConfig.sol";
 import {console} from "forge-std/console.sol";
 import {Script} from "forge-std/Script.sol";
@@ -86,7 +85,7 @@ contract CreateToken is Script {
         try vm.envAddress("FACTORY_ADDRESS") returns (address _factory) {
             factoryAddress = _factory;
         } catch {
-            factoryAddress = config.liquidFactory;
+            factoryAddress = config.liquid.factory;
         }
 
         require(
@@ -99,7 +98,7 @@ contract CreateToken is Script {
         try vm.envAddress("ROUTER_ADDRESS") returns (address _router) {
             routerAddress = _router;
         } catch {
-            routerAddress = config.liquidRouter;
+            routerAddress = config.liquid.router;
         }
 
         console.log("Creating Liquid token...");
@@ -140,7 +139,10 @@ contract CreateToken is Script {
         // The deployer calls createLiquidToken, and the function does transferFrom(msg.sender, ...)
         // So deployer must have RARE tokens and approve the factory
         // NOTE: If tokenCreator is different from deployer, ensure deployer has RARE tokens
-        uint256 currentAllowance = IERC20(baseToken).allowance(deployerAddress, factoryAddress);
+        uint256 currentAllowance = IERC20(baseToken).allowance(
+            deployerAddress,
+            factoryAddress
+        );
         if (currentAllowance < initialRareLiquidity) {
             console.log(
                 "Approving factory to transfer RARE tokens from deployer..."
@@ -213,7 +215,9 @@ contract CreateToken is Script {
         // This is done in a separate transaction after stopBroadcast() to avoid gas estimation issues
         if (routerAddress != address(0)) {
             console.log("Registering token with LiquidRouter...");
-            console.log("Note: Router registration requires deployer to be router owner");
+            console.log(
+                "Note: Router registration requires deployer to be router owner"
+            );
             console.log("Router address:");
             console.logAddress(routerAddress);
             console.log("Token address:");
@@ -240,33 +244,39 @@ contract CreateToken is Script {
                 console.log("Failed to register token:");
                 console.log(reason);
                 console.log("You can register manually later using:");
-                string memory castCmd = string(abi.encodePacked(
-                    "  cast send ",
-                    vm.toString(routerAddress),
-                    " 'registerToken(address,address)' ",
-                    vm.toString(newToken),
-                    " ",
-                    vm.toString(tokenCreator)
-                ));
+                string memory castCmd = string(
+                    abi.encodePacked(
+                        "  cast send ",
+                        vm.toString(routerAddress),
+                        " 'registerToken(address,address)' ",
+                        vm.toString(newToken),
+                        " ",
+                        vm.toString(tokenCreator)
+                    )
+                );
                 console.log(castCmd);
             } catch {
                 console.log("Failed to register token (unknown error)");
                 console.log("You can register manually later using:");
-                string memory castCmd2 = string(abi.encodePacked(
-                    "  cast send ",
-                    vm.toString(routerAddress),
-                    " 'registerToken(address,address)' ",
-                    vm.toString(newToken),
-                    " ",
-                    vm.toString(tokenCreator)
-                ));
+                string memory castCmd2 = string(
+                    abi.encodePacked(
+                        "  cast send ",
+                        vm.toString(routerAddress),
+                        " 'registerToken(address,address)' ",
+                        vm.toString(newToken),
+                        " ",
+                        vm.toString(tokenCreator)
+                    )
+                );
                 console.log(castCmd2);
             }
 
             vm.stopBroadcast();
             console.log("");
         } else {
-            console.log("Router address not configured - skipping registration");
+            console.log(
+                "Router address not configured - skipping registration"
+            );
             console.log("");
         }
 
@@ -287,8 +297,12 @@ contract CreateToken is Script {
         console.log("1. Verify the token contract on Etherscan");
         console.log("2. The token is now ready for trading on Uniswap V4");
         if (routerAddress != address(0)) {
-            console.log("3. Register token with router to enable creator fees:");
-            console.log("   Use script/RegisterToken.s.sol or cast send command shown above");
+            console.log(
+                "3. Register token with router to enable creator fees:"
+            );
+            console.log(
+                "   Use script/RegisterToken.s.sol or cast send command shown above"
+            );
         }
         console.log(
             "4. Users can trade the token using LiquidRouter for multi-hop swaps"

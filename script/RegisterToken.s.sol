@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import {ILiquidRouter} from "../src/interfaces/ILiquidRouter.sol";
-import {ILiquid} from "../src/interfaces/ILiquid.sol";
+import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
+import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {NetworkConfig} from "./config/NetworkConfig.sol";
 import {console} from "forge-std/console.sol";
 import {Script} from "forge-std/Script.sol";
@@ -50,7 +50,7 @@ contract RegisterToken is Script {
         try vm.envAddress("ROUTER_ADDRESS") returns (address _router) {
             routerAddress = _router;
         } catch {
-            routerAddress = config.liquidRouter;
+            routerAddress = config.liquid.router;
         }
 
         require(routerAddress != address(0), "Router address not configured");

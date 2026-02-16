@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.0;
 
-import "forge-std/Test.sol";
-import {LiquidLensDemoV1 as LiquidLensDemo} from "../../src/examples/LiquidLensDemoV1.sol";
-import {ILiquid} from "../../src/interfaces/ILiquid.sol";
+import {Test} from "forge-std/Test.sol";
+import {LiquidLensDemoV1 as LiquidLensDemo} from "liquid-editions/examples/LiquidLensDemoV1.sol";
+import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 
 /// @notice Mock Liquid Edition contract for testing render contract
 contract MockLiquid is ILiquid {
@@ -64,28 +64,18 @@ contract MockLiquid is ILiquid {
     }
 
     function quoteBuy(
-        uint256 rareIn
-    )
-        external
-        pure
-        override
-        returns (uint256 liquidOut, uint160 sqrtPriceX96After)
-    {
+        uint256 /* rareIn */
+    ) external pure override returns (uint256, uint160) {
         revert("Not implemented in mock");
     }
 
     function quoteSell(
-        uint256 liquidIn
-    )
-        external
-        pure
-        override
-        returns (uint256 rareOut, uint160 sqrtPriceX96After)
-    {
+        uint256 /* liquidIn */
+    ) external pure override returns (uint256, uint160) {
         revert("Not implemented in mock");
     }
 
-    function burn(uint256 amount) external pure override {
+    function burn(uint256 /* amount */) external pure override {
         revert("Not implemented in mock");
     }
 
@@ -155,8 +145,8 @@ contract LiquidLensDemoTest is Test {
         vm.stopPrank();
     }
 
-    function test_Deployment() public {
-        assertEq(address(lens.liquidEdition()), address(mockLiquid));
+    function test_Deployment() public view {
+        assertEq(address(lens.LIQUID_EDITION()), address(mockLiquid));
         assertEq(lens.nextTokenId(), 1);
         assertEq(lens.MAX_SUPPLY(), 10);
     }
@@ -203,7 +193,7 @@ contract LiquidLensDemoTest is Test {
         vm.stopPrank();
     }
 
-    function test_TokenURI_ERC20Passthrough() public {
+    function test_TokenURI_ERC20Passthrough() public view {
         // Token ID 0 should work for ERC20 metadata passthrough
         string memory uri = lens.tokenURI(0);
 
@@ -279,7 +269,7 @@ contract LiquidLensDemoTest is Test {
         }
     }
 
-    function test_TokenURI_ERC20Compatible() public {
+    function test_TokenURI_ERC20Compatible() public view {
         // Test the ERC20-compatible tokenURI() function
         string memory uri1 = lens.tokenURI();
         string memory uri2 = lens.tokenURI(0);

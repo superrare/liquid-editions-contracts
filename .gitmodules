@@ -5,3 +5,6 @@
 	path = lib/v4-periphery
 	url = https://github.com/Uniswap/v4-periphery
 	branch = main
+[submodule "lib/doppler"]
+	path = lib/doppler
+	url = https://github.com/whetstoneresearch/doppler

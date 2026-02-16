@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import {LiquidFactory} from "../src/LiquidFactory.sol";
-import {ILiquid} from "../src/interfaces/ILiquid.sol";
+import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
+import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {NetworkConfig} from "./config/NetworkConfig.sol";
 import {console} from "forge-std/console.sol";
 import {Script} from "forge-std/Script.sol";
@@ -19,7 +19,7 @@ contract DebugTokenCreation is Script {
         string memory tokenURI = vm.envString("TOKEN_URI");
         string memory tokenName = vm.envString("TOKEN_NAME");
         string memory tokenSymbol = vm.envString("TOKEN_SYMBOL");
-        
+
         uint256 initialRareLiquidity;
         try vm.envUint("INITIAL_RARE_LIQUIDITY") returns (uint256 rare) {
             initialRareLiquidity = rare;
@@ -29,7 +29,7 @@ contract DebugTokenCreation is Script {
 
         uint256 chainId = block.chainid;
         NetworkConfig.Config memory config = NetworkConfig.getConfig(chainId);
-        address factoryAddress = config.liquidFactory;
+        address factoryAddress = config.liquid.factory;
 
         require(factoryAddress != address(0), "Factory address not configured");
 
@@ -51,12 +51,12 @@ contract DebugTokenCreation is Script {
         address factoryBaseToken = factory.baseToken();
         address factoryPoolManager = factory.poolManager();
         uint256 minRareLiquidityWei = factory.minRareLiquidityWei();
-        
+
         console.log("   Implementation:", factoryImpl);
         console.log("   Base Token:", factoryBaseToken);
         console.log("   Pool Manager:", factoryPoolManager);
         console.log("   Min RARE Liquidity Wei:", minRareLiquidityWei);
-        
+
         if (factoryImpl == address(0)) {
             console.log("   ERROR: Implementation not set!");
             return;
@@ -70,7 +70,12 @@ contract DebugTokenCreation is Script {
             return;
         }
         if (initialRareLiquidity < minRareLiquidityWei) {
-            console.log("   ERROR: Initial liquidity", initialRareLiquidity, "is less than minimum", minRareLiquidityWei);
+            console.log(
+                "   ERROR: Initial liquidity",
+                initialRareLiquidity,
+                "is less than minimum",
+                minRareLiquidityWei
+            );
             return;
         }
         console.log("   [OK] Factory configuration OK");
@@ -81,7 +86,7 @@ contract DebugTokenCreation is Script {
         uint256 deployerBalance = IERC20(baseToken).balanceOf(deployerAddress);
         console.log("   Deployer Balance:", deployerBalance);
         console.log("   Required:", initialRareLiquidity);
-        
+
         if (deployerBalance < initialRareLiquidity) {
             console.log("   ERROR: Insufficient RARE balance!");
             return;
@@ -91,9 +96,12 @@ contract DebugTokenCreation is Script {
 
         // Check 3: Approval
         console.log("3. Checking approval...");
-        uint256 allowance = IERC20(baseToken).allowance(deployerAddress, factoryAddress);
+        uint256 allowance = IERC20(baseToken).allowance(
+            deployerAddress,
+            factoryAddress
+        );
         console.log("   Current Allowance:", allowance);
-        
+
         if (allowance < initialRareLiquidity) {
             console.log("   WARNING: Approval insufficient, will approve...");
         } else {
@@ -118,12 +126,12 @@ contract DebugTokenCreation is Script {
         int24 tickUpper = factory.lpTickUpper();
         int24 tickSpacing = factory.poolTickSpacing();
         address hooks = factory.poolHooks();
-        
+
         console.log("   Tick Lower:", tickLower);
         console.log("   Tick Upper:", tickUpper);
         console.log("   Tick Spacing:", tickSpacing);
         console.log("   Hooks:", hooks);
-        
+
         if (tickLower >= tickUpper) {
             console.log("   ERROR: Invalid tick range (lower >= upper)!");
             return;
@@ -138,25 +146,30 @@ contract DebugTokenCreation is Script {
         // Check 6: Try to simulate the call (dry run)
         console.log("6. Simulating token creation (dry run)...");
         vm.startBroadcast(deployerPrivateKey);
-        
+
         // Approve if needed
         if (allowance < initialRareLiquidity) {
             IERC20(baseToken).approve(factoryAddress, type(uint256).max);
         }
-        
+
         // Try to call createLiquidToken (this will revert but we can catch it)
-        try factory.createLiquidToken(
-            tokenCreator,
-            tokenURI,
-            tokenName,
-            tokenSymbol,
-            initialRareLiquidity
-        ) returns (address newToken) {
+        try
+            factory.createLiquidToken(
+                tokenCreator,
+                tokenURI,
+                tokenName,
+                tokenSymbol,
+                initialRareLiquidity
+            )
+        returns (address newToken) {
             console.log("   [OK] Token created successfully at:", newToken);
-            
+
             // Check if pool was initialized by trying to get price
             ILiquid liquid = ILiquid(newToken);
-            try liquid.getCurrentPrice() returns (uint256 rarePerToken, uint256 tokenPerRare) {
+            try liquid.getCurrentPrice() returns (
+                uint256 rarePerToken,
+                uint256 tokenPerRare
+            ) {
                 console.log("   [OK] Pool initialized successfully");
                 console.log("   Price - RARE per token:", rarePerToken);
                 console.log("   Price - Token per RARE:", tokenPerRare);
@@ -171,11 +184,12 @@ contract DebugTokenCreation is Script {
             console.log("   ERROR: Low-level revert");
             console.log("   Data length:", lowLevelData.length);
             if (lowLevelData.length >= 4) {
+                // forge-lint: disable-next-line(unsafe-typecast) -- safe: taking first 4 bytes for selector
                 bytes4 selector = bytes4(lowLevelData);
                 console.log("   Error selector:", vm.toString(selector));
             }
         }
-        
+
         vm.stopBroadcast();
         console.log("");
         console.log("=== DEBUG COMPLETE ===");

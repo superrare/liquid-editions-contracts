@@ -34,11 +34,13 @@ contract AddV4ViaHelper is Script {
         uint24 fee = 3000;
         try vm.envUint("POOL_FEE") returns (uint256 _fee) {
             require(_fee <= type(uint24).max, "fee");
+            // forge-lint: disable-next-line(unsafe-typecast) -- safe: require validates bounds
             fee = uint24(_fee);
         } catch {}
         int24 tickSpacing = 60;
         try vm.envInt("TICK_SPACING") returns (int256 _ts) {
             require(_ts >= type(int24).min && _ts <= type(int24).max, "ts");
+            // forge-lint: disable-next-line(unsafe-typecast) -- safe: require validates bounds
             tickSpacing = int24(_ts);
         } catch {}
 
@@ -69,6 +71,7 @@ contract AddV4ViaHelper is Script {
         uint160 sqrtPriceX96 = 79228162514264337593543950336;
         try vm.envUint("SQRT_PRICE_X96") returns (uint256 sp) {
             require(sp <= type(uint160).max, "sqrtPriceX96 too big");
+            // forge-lint: disable-next-line(unsafe-typecast) -- safe: require validates bounds
             sqrtPriceX96 = uint160(sp);
         } catch {}
         uint160 sqrtPriceLowerX96 = TickMath.getSqrtPriceAtTick(tickLower);
@@ -118,6 +121,7 @@ contract AddV4ViaHelper is Script {
             key: key,
             tickLower: tickLower,
             tickUpper: tickUpper,
+            // forge-lint: disable-next-line(unsafe-typecast) -- safe: liquidity from calc fits int128
             liquidityDelta: int128(int256(uint256(liquidity))),
             owner: vm.addr(pk),
             token: token,
@@ -150,6 +154,7 @@ contract AddV4ViaHelper is Script {
             sqrtPriceBX96 - sqrtPriceAX96
         );
         require(liquidity <= type(uint128).max, "liq0 max");
+        // forge-lint: disable-next-line(unsafe-typecast) -- safe: liquidity calc result fits uint128
         return uint128(liquidity);
     }
 
@@ -167,6 +172,7 @@ contract AddV4ViaHelper is Script {
             sqrtPriceBX96 - sqrtPriceAX96
         );
         require(liquidity <= type(uint128).max, "liq1 max");
+        // forge-lint: disable-next-line(unsafe-typecast) -- safe: liquidity calc result fits uint128
         return uint128(liquidity);
     }
 

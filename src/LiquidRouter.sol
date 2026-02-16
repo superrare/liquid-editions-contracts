@@ -1,31 +1,30 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import {ReentrancyGuardUpgradeable} from "@openzeppelin-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
-import {OwnableUpgradeable} from "@openzeppelin-upgradeable/contracts/access/OwnableUpgradeable.sol";
-import {PausableUpgradeable} from "@openzeppelin-upgradeable/contracts/utils/PausableUpgradeable.sol";
-import {UUPSUpgradeable} from "@openzeppelin-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import {ILiquidRouter} from "./interfaces/ILiquidRouter.sol";
-import {IRAREBurner} from "./interfaces/IRAREBurner.sol";
-import {IPermit2} from "./interfaces/IPermit2.sol";
+import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
+import {IPermit2} from "liquid-editions/interfaces/IPermit2.sol";
+import {LiquidFeeLib} from "liquid-editions/LiquidFeeLib.sol";
 
 /// @title LiquidRouter
 /// @author SuperRare Labs
 /// @notice A router contract that enables Liquid-style trading (buy/sell with fees) for any existing ERC20 token
 /// @dev Routes swaps through Uniswap's Universal Router while collecting and distributing fees.
-///      Fee configuration is stored locally in the router contract.
+///      Fee configuration is immutable and set at deployment.
 ///
 /// ## Architecture Overview
 /// LiquidRouter enables fee collection and distribution for any ERC20 token:
 /// - Routes swaps through Uniswap's Universal Router (supports V2/V3/V4 and multi-hop routes)
 /// - Collects trading fees (4% TOTAL_FEE_BPS) and distributes them to beneficiary/protocol/referrer/RARE burn
-/// - Minimal on-chain state: token-to-beneficiary mapping, optional allowlist, fee configuration
-/// - Fee configuration is stored locally and can be updated by owner
+/// - Minimal on-chain state: token-to-beneficiary mapping, optional allowlist
+/// - Fee configuration is immutable (set in constructor)
 /// - Uses Permit2 for secure token approvals during sell operations
-/// - Supports both buy (ETH → token) and sell (token → ETH) operations
+/// - Supports buy (ETH → token), sell (token → ETH), and swap (any → any via ETH midpoint)
 ///
 /// ## Fee Flow
 /// 1. TIER 1: Total fee (TOTAL_FEE_BPS) is collected from the trade (ETH side)
@@ -37,7 +36,7 @@ import {IPermit2} from "./interfaces/IPermit2.sol";
 /// Clients must:
 /// 1. Use Universal Router's Quoter to determine expected output off-chain
 /// 2. Encode the swap route using Universal Router's command format
-/// 3. Pass the encoded routeData to buy()/sell()
+/// 3. Pass the encoded routeData to buy()/sell()/swap()
 /// 4. The routeData MUST use EXACT_INPUT for buys (no partial fills / ETH refunds)
 ///
 /// ## Security Model
@@ -46,14 +45,7 @@ import {IPermit2} from "./interfaces/IPermit2.sol";
 /// - Failed fee transfers to beneficiary/referrer are absorbed (not reverted)
 /// - Protocol fee transfer failure DOES revert (ensures fees aren't lost)
 /// - Gas-limited external calls prevent griefing attacks
-/// - UUPS upgradeable pattern for future upgrades
-contract LiquidRouter is
-    ILiquidRouter,
-    ReentrancyGuardUpgradeable,
-    OwnableUpgradeable,
-    PausableUpgradeable,
-    UUPSUpgradeable
-{
+contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     using SafeERC20 for IERC20;
 
     // ============================================
@@ -67,20 +59,6 @@ contract LiquidRouter is
     ///      For sells, fee is deducted from ETH output AFTER the swap.
     uint256 public constant TOTAL_FEE_BPS = 400;
 
-    /// @notice Beneficiary's share of total fees in basis points
-    /// @dev This is the "TIER 2" fee - beneficiary gets their cut first from the total fee.
-    ///      Can be any address. Can be updated by owner via updateBeneficiary().
-    ///      The beneficiary is typically a project treasury or token deployer.
-    ///      After beneficiary cut, the remainder goes to TIER 3 (protocol/referrer/burn split).
-    uint256 public constant BENEFICIARY_FEE_BPS = 2500;
-
-    /// @notice Gas limit for external fee transfers to prevent griefing
-    /// @dev SECURITY: Prevents malicious recipients from consuming excessive gas.
-    ///      50k gas is enough for simple ETH receives but prevents complex callbacks.
-    ///      If a recipient's receive() uses more gas, the transfer fails silently
-    ///      and the fee is redirected to the protocol instead.
-    uint256 internal constant GAS_LIMIT_TRANSFER = 50000;
-
     /// @notice Uniswap Permit2 contract address
     /// @dev Universal Router pulls tokens via Permit2, not directly.
     ///      This is the canonical Permit2 address (same on all EVM chains).
@@ -89,28 +67,39 @@ contract LiquidRouter is
         0x000000000022D473030F116dDEE9F6B43aC78BA3;
 
     // ============================================
-    // STORAGE
+    // IMMUTABLES (set in constructor)
     // ============================================
 
     /// @notice Uniswap Universal Router address
-    /// @dev This is the swap execution engine. Can be updated by owner for router upgrades.
+    /// @dev This is the swap execution engine. Immutable after deployment.
     ///      Universal Router supports multiple DEX protocols and complex multi-hop routes.
     ///      Different networks have different router addresses.
-    address public universalRouter;
+    // forge-lint: disable-next-line(screaming-snake-case-immutable) -- camelCase used for public API consistency
+    address public immutable universalRouter;
 
     /// @notice TIER 3 fee splits (must sum to 10000 BPS)
     /// @dev These fees are applied to the remainder after beneficiary takes their cut
-    uint256 public rareBurnFeeBPS;
-    uint256 public protocolFeeBPS;
-    uint256 public referrerFeeBPS;
+    ///      Immutable after deployment - set in constructor.
+    // forge-lint: disable-next-line(screaming-snake-case-immutable) -- camelCase used for public API consistency
+    uint256 public immutable rareBurnFeeBPS;
+    // forge-lint: disable-next-line(screaming-snake-case-immutable) -- camelCase used for public API consistency
+    uint256 public immutable protocolFeeBPS;
+    // forge-lint: disable-next-line(screaming-snake-case-immutable) -- camelCase used for public API consistency
+    uint256 public immutable referrerFeeBPS;
 
     /// @notice Protocol fee recipient address
-    /// @dev Receives protocol fees from trades. Can be updated by owner.
-    address public protocolFeeRecipient;
+    /// @dev Receives protocol fees from trades. Immutable after deployment.
+    // forge-lint: disable-next-line(screaming-snake-case-immutable) -- camelCase used for public API consistency
+    address public immutable protocolFeeRecipient;
 
     /// @notice RARE burner contract address
-    /// @dev Receives burn fees from trades. Can be updated by owner.
-    address public rareBurner;
+    /// @dev Receives burn fees from trades. Immutable after deployment.
+    // forge-lint: disable-next-line(screaming-snake-case-immutable) -- camelCase used for public API consistency
+    address public immutable rareBurner;
+
+    // ============================================
+    // STORAGE (mutable)
+    // ============================================
 
     /// @notice Mapping of token address to beneficiary (receives "creator" fees)
     /// @dev Beneficiary is optional - if not set, beneficiary fee goes to protocol.
@@ -130,33 +119,30 @@ contract LiquidRouter is
     ///      GOTCHA: A token can be in allowedTokens but have no beneficiary set.
     bool public allowlistEnabled;
 
-    /// @dev Storage gap for future upgrades
-    /// @notice This gap allows adding new storage variables in future upgrades without storage collision
-    uint256[50] private __gap;
-
     // ============================================
-    // INITIALIZER
+    // CONSTRUCTOR
     // ============================================
 
-    /// @notice Initializes the LiquidRouter contract
+    /// @notice Constructs a new LiquidRouter contract
+    /// @param _owner Owner address (can transfer ownership via Ownable)
     /// @param _universalRouter Address of Uniswap's Universal Router
     /// @param _protocolFeeRecipient Address that receives protocol fees
     /// @param _rareBurner Address of RARE burner contract
     /// @param _rareBurnFeeBPS RARE burn fee in basis points (must sum with other TIER 3 fees to 10000)
     /// @param _protocolFeeBPS Protocol fee in basis points (must sum with other TIER 3 fees to 10000)
     /// @param _referrerFeeBPS Referrer fee in basis points (must sum with other TIER 3 fees to 10000)
-    /// @dev Owner is set to msg.sender and can be transferred via Ownable.
-    ///      Contract starts in unpaused state with allowlist disabled.
-    ///      This function replaces the constructor for upgradeable contracts.
-    function initialize(
+    /// @dev Contract starts in unpaused state with allowlist disabled.
+    constructor(
+        address _owner,
         address _universalRouter,
         address _protocolFeeRecipient,
         address _rareBurner,
         uint256 _rareBurnFeeBPS,
         uint256 _protocolFeeBPS,
         uint256 _referrerFeeBPS
-    ) public initializer {
+    ) Ownable(_owner) {
         // Validate addresses
+        if (_owner == address(0)) revert AddressZero();
         if (_universalRouter == address(0)) revert AddressZero();
         if (_protocolFeeRecipient == address(0)) revert AddressZero();
         if (_rareBurner == address(0)) revert AddressZero();
@@ -169,12 +155,7 @@ contract LiquidRouter is
             revert InvalidFeeDistribution();
         }
 
-        // Initialize upgradeable contracts
-        __ReentrancyGuard_init();
-        __Ownable_init(msg.sender);
-        __Pausable_init();
-        __UUPSUpgradeable_init();
-
+        // Set immutables
         universalRouter = _universalRouter;
         protocolFeeRecipient = _protocolFeeRecipient;
         rareBurner = _rareBurner;
@@ -184,6 +165,12 @@ contract LiquidRouter is
 
         // Note: allowlistEnabled defaults to false (permissionless mode)
         // Note: contract starts unpaused
+    }
+
+    /// @notice Beneficiary's share of total fees in basis points (TIER 2)
+    /// @dev Matches LiquidFeeLib.BENEFICIARY_FEE_BPS for fee distribution
+    function BENEFICIARY_FEE_BPS() external pure returns (uint256) {
+        return LiquidFeeLib.BENEFICIARY_FEE_BPS;
     }
 
     // ============================================
@@ -244,7 +231,7 @@ contract LiquidRouter is
 
         // Fee is taken BEFORE the swap from the ETH input
         // This means user pays fee on their full ETH amount
-        uint256 fee = _calculateFee(msg.value, TOTAL_FEE_BPS);
+        uint256 fee = LiquidFeeLib.calculateFee(msg.value, TOTAL_FEE_BPS);
         uint256 ethForSwap = msg.value - fee;
 
         // Record balances before swap to calculate received amounts
@@ -256,7 +243,12 @@ contract LiquidRouter is
 
         // Client provides pre-encoded Universal Router calldata
         // Route: ETH → token (potentially multi-hop via WETH → intermediate → token)
-        _executeSwap(ethForSwap, routeData, deadline);
+        LiquidFeeLib.executeSwap(
+            universalRouter,
+            ethForSwap,
+            routeData,
+            deadline
+        );
 
         // SECURITY: Ensure no ETH was returned by the router
         // If router returned ETH, it means EXACT_OUTPUT was used which breaks accounting:
@@ -277,17 +269,8 @@ contract LiquidRouter is
         // Revert if output is below user's minimum acceptable amount
         if (tokensReceived < minTokensOut) revert SlippageExceeded();
 
-        // Reject fee-on-transfer tokens on outbound transfer to recipient
-        // Measure recipient balance before/after to detect any transfer fees
-        uint256 recipientBalanceBefore = IERC20(token).balanceOf(recipient);
-        IERC20(token).safeTransfer(recipient, tokensReceived);
-        uint256 recipientBalanceAfter = IERC20(token).balanceOf(recipient);
-
-        uint256 recipientReceived = recipientBalanceAfter -
-            recipientBalanceBefore;
-        if (recipientReceived != tokensReceived) {
-            revert FeeOnTransferDetected(tokensReceived, recipientReceived);
-        }
+        // Send tokens to recipient (with fee-on-transfer check)
+        _sendTokens(token, recipient, tokensReceived);
 
         // Fee distribution happens AFTER successful swap and token transfer
         address beneficiary = tokenBeneficiaries[token];
@@ -372,56 +355,24 @@ contract LiquidRouter is
             revert TokenNotAllowed(token);
         }
 
-        // User must have called token.approve(router, amount) first
-        // SafeERC20 handles tokens that don't return bool on transfer
-        uint256 tokenBalanceBefore = IERC20(token).balanceOf(address(this));
-        IERC20(token).safeTransferFrom(msg.sender, address(this), tokenAmount);
-        uint256 tokenBalanceAfter = IERC20(token).balanceOf(address(this));
+        // Pull tokens from user (with fee-on-transfer check)
+        uint256 tokenBalanceBefore = _pullTokens(token, tokenAmount);
 
-        // Reject fee-on-transfer/deflationary tokens to keep swap amounts exact
-        uint256 tokensReceived = tokenBalanceAfter - tokenBalanceBefore;
-        if (tokensReceived != tokenAmount) {
-            revert FeeOnTransferDetected(tokenAmount, tokensReceived);
-        }
-
-        // Grant Permit2 permission to pull tokens during swap
-        // Universal Router pulls tokens via Permit2, which requires two approvals:
-        // 1. ERC20 approve: Allow Permit2 to pull tokens from this contract
-        // 2. Permit2 approve: Allow Universal Router to use Permit2 to pull tokens
-        IERC20(token).forceApprove(PERMIT2, tokensReceived);
-
-        // Set Permit2 allowance for Universal Router with a short expiration
-        // Using uint48 max for amount since we control the exact tokenAmount via ERC20 approve
-        // Expiration is block.timestamp + 1 hour (deadline is validated separately in _executeSwap)
-        // Using block.timestamp instead of deadline prevents overflow when deadline = type(uint256).max
-        IPermit2(PERMIT2).approve(
-            token,
-            universalRouter,
-            uint160(tokensReceived),
-            uint48(block.timestamp + 1 hours)
-        );
+        // Set up Permit2 approvals
+        _approvePermit2(token, tokenAmount);
 
         uint256 ethBalanceBefore = address(this).balance;
 
         // Client provides pre-encoded Universal Router calldata
         // Route: token → ETH (via token → WETH → unwrap, potentially multi-hop)
         // Pass 0 ETH value since we're selling tokens, not buying
-        _executeSwap(0, routeData, deadline);
+        LiquidFeeLib.executeSwap(universalRouter, 0, routeData, deadline);
 
-        // SECURITY: Remove leftover approvals to prevent further token pulls
-        // Clear both ERC20 approval to Permit2 and Permit2 allowance to Universal Router
-        IERC20(token).forceApprove(PERMIT2, 0);
-        IPermit2(PERMIT2).approve(token, universalRouter, 0, 0);
+        // Clear Permit2 approvals
+        _clearPermit2(token);
 
-        // SECURITY: Ensure all tokens taken from the user were consumed by the Universal Router
-        // Mis-encoded routes (e.g., EXACT_OUTPUT or smaller input) would leave leftovers in the router
-        uint256 finalTokenBalance = IERC20(token).balanceOf(address(this));
-        if (finalTokenBalance != tokenBalanceBefore) {
-            uint256 leftover = finalTokenBalance > tokenBalanceBefore
-                ? finalTokenBalance - tokenBalanceBefore
-                : tokenBalanceBefore - finalTokenBalance;
-            revert UnexpectedTokenRefund(tokensReceived, leftover);
-        }
+        // Verify all tokens were consumed
+        _verifyTokensConsumed(token, tokenBalanceBefore, tokenAmount);
 
         // Measure how much ETH the swap produced
         uint256 ethBalanceAfter = address(this).balance;
@@ -429,14 +380,17 @@ contract LiquidRouter is
 
         // Fee is taken AFTER the swap from the ETH output
         // This means fee is based on actual swap proceeds
-        uint256 fee = _calculateFee(grossEthReceived, TOTAL_FEE_BPS);
+        uint256 fee = LiquidFeeLib.calculateFee(
+            grossEthReceived,
+            TOTAL_FEE_BPS
+        );
         ethReceived = grossEthReceived - fee;
 
         // Slippage check: minEthOut is the expected GROSS output from the swap.
         // We internally calculate what the minimum NET should be after fees.
         // This simplifies client integration - they just pass quoted gross with slippage.
         uint256 minNetEthExpected = minEthOut -
-            _calculateFee(minEthOut, TOTAL_FEE_BPS);
+            LiquidFeeLib.calculateFee(minEthOut, TOTAL_FEE_BPS);
         if (ethReceived < minNetEthExpected) revert SlippageExceeded();
 
         // Using low-level call to support smart contract recipients
@@ -470,6 +424,178 @@ contract LiquidRouter is
         return ethReceived;
     }
 
+    /// @notice Swap between any two assets, always collecting fees in ETH
+    /// @dev Executes two route legs with ETH fee harvest at the midpoint.
+    ///      Supports: ERC20->ERC20, ERC20->ETH, ETH->ERC20.
+    ///      For ETH-only trades, use buy() or sell() for lower gas.
+    ///
+    /// ## Swap Flow
+    /// 1. LEG 1 (tokenIn -> ETH): Pull tokens, Permit2 setup, execute leg1
+    /// 2. FEE HARVEST: Calculate fee from ETH midpoint amount
+    /// 3. LEG 2 (ETH -> tokenOut): Execute leg2 with post-fee ETH
+    /// 4. DISTRIBUTE: Split beneficiary fee between both tokens' beneficiaries
+    ///
+    /// ## Slippage Protection
+    /// Only the final output is checked against minAmountOut.
+    /// If leg1 gets a bad price, the final output will be low and fail the check.
+    /// No midpoint slippage check — it would waste gas with no added safety.
+    ///
+    /// ## Client Integration
+    /// 1. Quote leg1 off-chain to estimate ETH midpoint
+    /// 2. Subtract 4% fee: ethForLeg2 = ethMidpoint * 9600 / 10000
+    /// 3. Quote leg2 off-chain with ethForLeg2
+    /// 4. Set minAmountOut from leg2 quote with slippage tolerance
+    /// 5. Encode leg1 and leg2 as Universal Router execute() calldata
+    /// 6. Both legs MUST use EXACT_INPUT routes
+    ///
+    /// @param tokenIn Input token (address(0) for ETH)
+    /// @param amountIn Input amount (ignored if ETH — uses msg.value)
+    /// @param tokenOut Output token (address(0) for ETH)
+    /// @param recipient Address to receive output
+    /// @param orderReferrer Address of the order referrer (receives referrer fee)
+    /// @param minAmountOut Minimum final output after fees
+    /// @param leg1 Route: tokenIn -> ETH (empty if input is ETH)
+    /// @param leg2 Route: ETH -> tokenOut (empty if output is ETH)
+    /// @param deadline Transaction deadline timestamp
+    /// @return amountOut The amount of output received
+    function swap(
+        address tokenIn,
+        uint256 amountIn,
+        address tokenOut,
+        address recipient,
+        address orderReferrer,
+        uint256 minAmountOut,
+        bytes calldata leg1,
+        bytes calldata leg2,
+        uint256 deadline
+    ) external payable nonReentrant whenNotPaused returns (uint256 amountOut) {
+        // --- VALIDATION ---
+        if (recipient == address(0)) revert AddressZero();
+        if (minAmountOut == 0) revert InvalidAmount();
+        if (leg1.length == 0 && leg2.length == 0) revert BothLegsEmpty();
+
+        // --- LEG 1: tokenIn -> ETH ---
+        uint256 grossEth;
+
+        if (leg1.length == 0) {
+            // Input is ETH
+            if (tokenIn != address(0)) revert InvalidRouteData();
+            grossEth = msg.value;
+        } else {
+            // Input is ERC20
+            if (tokenIn == address(0)) revert InvalidRouteData();
+            if (amountIn == 0) revert InvalidAmount();
+            if (msg.value != 0) revert UnexpectedMsgValue();
+
+            // Allowlist check for input token
+            if (allowlistEnabled && !allowedTokens[tokenIn]) {
+                revert TokenNotAllowed(tokenIn);
+            }
+
+            // Pull tokens, approve, swap, cleanup
+            uint256 tokenBalanceBefore = _pullTokens(tokenIn, amountIn);
+            _approvePermit2(tokenIn, amountIn);
+
+            uint256 ethBefore = address(this).balance;
+            LiquidFeeLib.executeSwap(universalRouter, 0, leg1, deadline);
+
+            _clearPermit2(tokenIn);
+            _verifyTokensConsumed(tokenIn, tokenBalanceBefore, amountIn);
+
+            grossEth = address(this).balance - ethBefore;
+        }
+
+        // --- FEE HARVEST (always ETH) ---
+        uint256 fee = LiquidFeeLib.calculateFee(grossEth, TOTAL_FEE_BPS);
+        uint256 ethForLeg2 = grossEth - fee;
+
+        // --- LEG 2: ETH -> tokenOut ---
+        if (leg2.length == 0) {
+            // Output is ETH
+            if (tokenOut != address(0)) revert InvalidRouteData();
+            amountOut = ethForLeg2;
+
+            if (amountOut < minAmountOut) revert SlippageExceeded();
+
+            (bool success, ) = recipient.call{value: amountOut}("");
+            if (!success) revert EthTransferFailed();
+        } else {
+            // Output is ERC20
+            if (tokenOut == address(0)) revert InvalidRouteData();
+
+            // Allowlist check for output token
+            if (allowlistEnabled && !allowedTokens[tokenOut]) {
+                revert TokenNotAllowed(tokenOut);
+            }
+
+            uint256 tokenBefore = IERC20(tokenOut).balanceOf(address(this));
+
+            // Capture expected balance: current balance minus the ETH we're about to spend
+            uint256 expectedEthAfterLeg2 = address(this).balance - ethForLeg2;
+
+            LiquidFeeLib.executeSwap(
+                universalRouter,
+                ethForLeg2,
+                leg2,
+                deadline
+            );
+
+            // SECURITY: Ensure no ETH was refunded by Universal Router
+            // Expected balance = pre-existing ETH + fee (ethForLeg2 was consumed)
+            // If balance exceeds expected, router returned ETH which breaks accounting
+            if (address(this).balance > expectedEthAfterLeg2) {
+                revert UnexpectedEthRefund();
+            }
+
+            uint256 tokenAfter = IERC20(tokenOut).balanceOf(address(this));
+            amountOut = tokenAfter - tokenBefore;
+
+            if (amountOut < minAmountOut) revert SlippageExceeded();
+
+            _sendTokens(tokenOut, recipient, amountOut);
+        }
+
+        // --- FEE DISTRIBUTION ---
+        address beneficiaryIn = (tokenIn != address(0))
+            ? tokenBeneficiaries[tokenIn]
+            : address(0);
+        address beneficiaryOut = (tokenOut != address(0))
+            ? tokenBeneficiaries[tokenOut]
+            : address(0);
+
+        (
+            uint256 protocolFee,
+            uint256 referrerFee,
+            uint256 beneficiaryFeeA,
+            uint256 beneficiaryFeeB,
+            uint256 burnFee
+        ) = _disperseFeesSwap(
+                fee,
+                orderReferrer,
+                beneficiaryIn,
+                beneficiaryOut
+            );
+
+        emit RouterSwap(
+            tokenIn,
+            tokenOut,
+            msg.sender,
+            recipient,
+            orderReferrer,
+            leg1.length == 0 ? msg.value : amountIn,
+            grossEth,
+            fee,
+            amountOut,
+            protocolFee,
+            referrerFee,
+            beneficiaryFeeA,
+            beneficiaryFeeB,
+            burnFee
+        );
+
+        return amountOut;
+    }
+
     // ============================================
     // QUOTE FUNCTIONS
     // ============================================
@@ -485,10 +611,10 @@ contract LiquidRouter is
     // 1. Calculate fee: ethForSwap = ethAmount × 9600 / 10000 (or grossEth for sell)
     // 2. Quote swap via Universal Router Quoter off-chain
     // 3. Apply slippage tolerance to quoted amount
-    // 4. Execute buy()/sell()
+    // 4. Execute buy()/sell()/swap()
 
     /// @notice Quote the fee breakdown for a given total fee
-    /// @dev Fee percentages are read from router storage
+    /// @dev Fee percentages are read from router immutables
     /// @param totalFee The total fee amount
     /// @return beneficiaryFee Fee to beneficiary
     /// @return protocolFee Fee to protocol
@@ -517,14 +643,17 @@ contract LiquidRouter is
         )
     {
         // TIER 2: Beneficiary gets their fixed share first
-        beneficiaryFee = _calculateFee(totalFee, BENEFICIARY_FEE_BPS);
+        beneficiaryFee = LiquidFeeLib.calculateFee(
+            totalFee,
+            LiquidFeeLib.BENEFICIARY_FEE_BPS
+        );
         uint256 remainingFee = totalFee - beneficiaryFee;
 
         // TIER 3: Split remainder among burn/protocol/referrer
         // Each percentage is applied to remainingFee (not totalFee)
-        burnFee = _calculateFee(remainingFee, rareBurnFeeBPS);
-        referrerFee = _calculateFee(remainingFee, referrerFeeBPS);
-        protocolFee = _calculateFee(remainingFee, protocolFeeBPS);
+        burnFee = LiquidFeeLib.calculateFee(remainingFee, rareBurnFeeBPS);
+        referrerFee = LiquidFeeLib.calculateFee(remainingFee, referrerFeeBPS);
+        protocolFee = LiquidFeeLib.calculateFee(remainingFee, protocolFeeBPS);
 
         // Handle rounding dust - send to protocol to ensure exact accounting
         // This can happen because BPS calculations truncate
@@ -612,61 +741,8 @@ contract LiquidRouter is
         emit AllowlistEnabledUpdated(enabled);
     }
 
-    /// @notice Update the Universal Router address
-    /// @param _universalRouter The new Universal Router address
-    /// @dev Use this when Uniswap deploys a new router version.
-    ///      CAUTION: Verify the new router is legitimate before updating.
-    function setUniversalRouter(address _universalRouter) external onlyOwner {
-        if (_universalRouter == address(0)) revert AddressZero();
-        address oldRouter = universalRouter;
-        universalRouter = _universalRouter;
-        emit UniversalRouterUpdated(oldRouter, _universalRouter);
-    }
-
-    /// @notice Sets all TIER 3 fee splits atomically
-    /// @dev Validates that fee splits sum to exactly 10000 BPS (100%)
-    /// @param _rareBurnFeeBPS RARE burn fee in basis points
-    /// @param _protocolFeeBPS Protocol fee in basis points
-    /// @param _referrerFeeBPS Referrer fee in basis points
-    function setTier3FeeSplits(
-        uint256 _rareBurnFeeBPS,
-        uint256 _protocolFeeBPS,
-        uint256 _referrerFeeBPS
-    ) external onlyOwner {
-        uint256 tier3Total = _rareBurnFeeBPS +
-            _protocolFeeBPS +
-            _referrerFeeBPS;
-        if (tier3Total != 10000) revert InvalidFeeDistribution();
-
-        rareBurnFeeBPS = _rareBurnFeeBPS;
-        protocolFeeBPS = _protocolFeeBPS;
-        referrerFeeBPS = _referrerFeeBPS;
-
-        emit RareBurnFeeBPSUpdated(_rareBurnFeeBPS);
-        emit ProtocolFeeBPSUpdated(_protocolFeeBPS);
-        emit ReferrerFeeBPSUpdated(_referrerFeeBPS);
-    }
-
-    /// @notice Sets the protocol fee recipient address
-    /// @param _protocolFeeRecipient The new protocol fee recipient address
-    function setProtocolFeeRecipient(
-        address _protocolFeeRecipient
-    ) external onlyOwner {
-        if (_protocolFeeRecipient == address(0)) revert AddressZero();
-        protocolFeeRecipient = _protocolFeeRecipient;
-        emit ProtocolFeeRecipientUpdated(_protocolFeeRecipient);
-    }
-
-    /// @notice Sets the RARE burner address
-    /// @param _rareBurner The new RARE burner address
-    function setRareBurner(address _rareBurner) external onlyOwner {
-        if (_rareBurner == address(0)) revert AddressZero();
-        rareBurner = _rareBurner;
-        emit RareBurnerUpdated(_rareBurner);
-    }
-
     /// @notice Pause the contract (emergency stop)
-    /// @dev Only callable by owner. Prevents buy() and sell() operations.
+    /// @dev Only callable by owner. Prevents buy(), sell(), and swap() operations.
     ///      Admin functions remain callable while paused.
     ///      Use for: security incidents, critical bugs, or planned maintenance.
     function pause() external onlyOwner {
@@ -674,7 +750,7 @@ contract LiquidRouter is
     }
 
     /// @notice Unpause the contract
-    /// @dev Only callable by owner. Re-enables buy() and sell() operations.
+    /// @dev Only callable by owner. Re-enables buy(), sell(), and swap() operations.
     function unpause() external onlyOwner {
         _unpause();
     }
@@ -728,110 +804,148 @@ contract LiquidRouter is
         emit EthRescued(to, amount);
     }
 
-    /// @notice Authorizes an upgrade to a new implementation
-    /// @dev Only callable by owner. This is required by UUPSUpgradeable.
-    ///      Override this function to add additional authorization checks if needed.
-    /// @param newImplementation The address of the new implementation contract
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal override onlyOwner {
-        // Additional validation can be added here if needed
-        // For example, checking that newImplementation is a contract
-        if (newImplementation == address(0)) revert AddressZero();
-        // Note: This function is called during upgradeTo() which is not view
-        // The linter warning is a false positive - we need to revert on invalid input
-    }
-
     // ============================================
     // INTERNAL FUNCTIONS
     // ============================================
 
-    /// @notice Executes a swap via Universal Router
-    /// @dev Validates deadline and routeData before executing
-    /// @param ethValue ETH value to send with the call (0 for sell)
-    /// @param routeData Encoded Universal Router commands and inputs
-    /// @param deadline Transaction deadline timestamp
-    ///
-    /// ## routeData Format
-    /// The routeData is the FULL calldata for Universal Router's execute() function:
-    /// `execute(bytes commands, bytes[] inputs, uint256 deadline)`
-    ///
-    /// Commands are single bytes that specify operations (e.g., V3_SWAP_EXACT_IN, UNWRAP_WETH).
-    /// Inputs are ABI-encoded parameters for each command.
-    ///
-    /// ## Example for Buy (ETH → Token):
-    /// Commands: WRAP_ETH | V3_SWAP_EXACT_IN
-    /// - WRAP_ETH: wraps ETH to WETH
-    /// - V3_SWAP_EXACT_IN: swaps WETH for token via Uniswap V3
-    ///
-    /// ## Example for Sell (Token → ETH):
-    /// Commands: V3_SWAP_EXACT_IN | UNWRAP_WETH
-    /// - V3_SWAP_EXACT_IN: swaps token for WETH via Uniswap V3
-    /// - UNWRAP_WETH: unwraps WETH to ETH (sent to this contract)
-    ///
-    /// ## Error Handling
-    /// If the router reverts, we bubble up the original error message.
-    /// This helps clients debug swap failures (e.g., "Too little received").
-    function _executeSwap(
-        uint256 ethValue,
-        bytes calldata routeData,
-        uint256 deadline
-    ) internal {
-        // Check deadline first to fail fast
-        if (block.timestamp > deadline) revert DeadlineExpired();
+    /// @notice Pull ERC20 tokens from user with fee-on-transfer check
+    /// @dev Reused by sell() and swap()
+    /// @param token The token to pull
+    /// @param amount The amount to pull
+    /// @return balanceBefore The token balance before pulling
+    function _pullTokens(
+        address token,
+        uint256 amount
+    ) internal returns (uint256 balanceBefore) {
+        balanceBefore = IERC20(token).balanceOf(address(this));
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        uint256 balanceAfter = IERC20(token).balanceOf(address(this));
 
-        // Sanity check - empty routeData means client error
-        if (routeData.length == 0) revert InvalidRouteData();
-
-        // Execute the swap - routeData is passed directly as calldata
-        // For buys: ethValue > 0 (ETH for swap)
-        // For sells: ethValue = 0 (no ETH needed, swapping tokens)
-        (bool success, bytes memory result) = universalRouter.call{
-            value: ethValue
-        }(routeData);
-
-        if (!success) {
-            // Bubble up the revert reason from Universal Router
-            // This preserves error messages like "Too little received" or "Invalid path"
-            if (result.length > 0) {
-                // Assembly is needed to forward the revert reason
-                // result is ABI-encoded: first 32 bytes = length, then data
-                assembly {
-                    // revert(pointer to data, length of data)
-                    revert(add(result, 32), mload(result))
-                }
-            }
-            // Fallback if no revert reason provided
-            revert SwapFailed();
+        // Reject fee-on-transfer/deflationary tokens (balance delta must equal amount)
+        uint256 tokensReceived = balanceAfter - balanceBefore;
+        if (tokensReceived != amount) {
+            revert FeeOnTransferDetected(amount, tokensReceived);
         }
     }
 
-    /// @notice Calculates fee amount based on basis points
-    /// @param amount The amount to calculate fee from
-    /// @param bps The fee in basis points (1 BPS = 0.01%, 100 BPS = 1%)
-    /// @return The calculated fee amount (rounds down due to integer division)
-    ///
-    /// ## Math
-    /// fee = amount * bps / 10000
-    /// Example: 1 ETH at 400 BPS = 1e18 * 400 / 10000 = 0.04 ETH
-    ///
-    /// ## Rounding
-    /// Integer division truncates (rounds down), so fee is slightly less.
-    /// Dust is handled separately and added to protocol fee.
-    function _calculateFee(
-        uint256 amount,
-        uint256 bps
-    ) internal pure returns (uint256) {
-        return (amount * bps) / 10_000;
+    /// @notice Set up Permit2 approvals for Universal Router
+    /// @dev Reused by sell() and swap()
+    /// @param token The token to approve
+    /// @param amount The amount to approve
+    function _approvePermit2(address token, uint256 amount) internal {
+        // ERC20 approve Permit2, then Permit2 approves Universal Router (two-step for sells)
+        IERC20(token).forceApprove(PERMIT2, amount);
+        IPermit2(PERMIT2).approve(
+            token,
+            universalRouter,
+            // forge-lint: disable-next-line(unsafe-typecast) -- amount fits uint160 (token amounts)
+            uint160(amount),
+            uint48(block.timestamp + 1 hours)
+        );
+    }
+
+    /// @notice Clear Permit2 approvals after swap
+    /// @dev Reused by sell() and swap()
+    /// @param token The token to clear approvals for
+    function _clearPermit2(address token) internal {
+        IERC20(token).forceApprove(PERMIT2, 0);
+        IPermit2(PERMIT2).approve(token, universalRouter, 0, 0);
+    }
+
+    /// @notice Verify all pulled tokens were consumed by the swap
+    /// @dev Reused by sell() and swap()
+    /// @param token The token to check
+    /// @param balanceBefore The balance before pulling tokens
+    /// @param amountPulled The amount that was pulled
+    function _verifyTokensConsumed(
+        address token,
+        uint256 balanceBefore,
+        uint256 amountPulled
+    ) internal view {
+        // After swap, balance should be balanceBefore (all pulled tokens consumed)
+        // Mismatch indicates EXACT_OUTPUT or partial fill - would break accounting
+        uint256 finalTokenBalance = IERC20(token).balanceOf(address(this));
+        if (finalTokenBalance != balanceBefore) {
+            uint256 leftover = finalTokenBalance > balanceBefore
+                ? finalTokenBalance - balanceBefore
+                : balanceBefore - finalTokenBalance;
+            revert UnexpectedTokenRefund(amountPulled, leftover);
+        }
+    }
+
+    /// @notice Transfer ERC20 tokens to recipient with fee-on-transfer check
+    /// @dev Reused by buy() and swap()
+    /// @param token The token to transfer
+    /// @param recipient The recipient address
+    /// @param amount The amount to transfer
+    function _sendTokens(
+        address token,
+        address recipient,
+        uint256 amount
+    ) internal {
+        uint256 recipientBalanceBefore = IERC20(token).balanceOf(recipient);
+        IERC20(token).safeTransfer(recipient, amount);
+        uint256 recipientBalanceAfter = IERC20(token).balanceOf(recipient);
+
+        uint256 recipientReceived = recipientBalanceAfter -
+            recipientBalanceBefore;
+        if (recipientReceived != amount) {
+            revert FeeOnTransferDetected(amount, recipientReceived);
+        }
     }
 
     /// @notice Distributes collected fees to beneficiary, protocol, referrer, and RARE burn
+    /// @dev Wrapper around LiquidFeeLib.disperseFees for single beneficiary (used by buy/sell)
     /// @param _fee The total fee amount to distribute
     /// @param _orderReferrer The address of the order referrer
     /// @param _beneficiary The address of the token beneficiary
     /// @return protocolFee Actual protocol fee transferred
     /// @return referrerFee Actual referrer fee transferred
-    /// @return beneficiaryFee Actual beneficiary fee transferred
+    /// @return beneficiaryFee Actual beneficiary fee transferred (sum of A and B)
+    /// @return rareBurnFee Actual RARE burn fee deposited
+    function _disperseFees(
+        uint256 _fee,
+        address _orderReferrer,
+        address _beneficiary
+    )
+        internal
+        returns (
+            uint256 protocolFee,
+            uint256 referrerFee,
+            uint256 beneficiaryFee,
+            uint256 rareBurnFee
+        )
+    {
+        (
+            uint256 p,
+            uint256 r,
+            uint256 bA,
+            uint256 bB,
+            uint256 burn
+        ) = LiquidFeeLib.disperseFees(
+                _fee,
+                _orderReferrer,
+                _beneficiary,
+                _beneficiary,
+                protocolFeeRecipient,
+                rareBurner,
+                rareBurnFeeBPS,
+                protocolFeeBPS,
+                referrerFeeBPS
+            );
+        return (p, r, bA + bB, burn);
+    }
+
+    /// @notice Distributes fees with split beneficiary for swap()
+    /// @dev Core implementation that handles two beneficiaries (used by swap)
+    /// @param _fee The total fee amount to distribute
+    /// @param _orderReferrer The address of the order referrer
+    /// @param _beneficiaryA The first beneficiary address (tokenIn's beneficiary)
+    /// @param _beneficiaryB The second beneficiary address (tokenOut's beneficiary)
+    /// @return protocolFee Actual protocol fee transferred
+    /// @return referrerFee Actual referrer fee transferred
+    /// @return beneficiaryFeeA Actual beneficiary fee transferred to beneficiaryA
+    /// @return beneficiaryFeeB Actual beneficiary fee transferred to beneficiaryB
     /// @return rareBurnFee Actual RARE burn fee deposited
     ///
     /// ## Fee Distribution Architecture (Tiered)
@@ -840,12 +954,14 @@ contract LiquidRouter is
     ///
     /// TIER 2: Beneficiary's fixed share (BENEFICIARY_FEE_BPS)
     /// - Beneficiary gets their cut first from total fee
-    /// - See BENEFICIARY_FEE_BPS constant for current value
+    /// - For swap(): split 50/50 between beneficiaryA and beneficiaryB
+    /// - If both are the same address, send full amount to that address
+    /// - If only one is set, that one gets the full beneficiary share
     ///
     /// TIER 3: Remainder split per router config
-    /// - Protocol: base protocol fee (configurable)
-    /// - Referrer: incentive for order sourcing (configurable)
-    /// - RARE Burn: deflationary mechanism (configurable)
+    /// - Protocol: base protocol fee (immutable)
+    /// - Referrer: incentive for order sourcing (immutable)
+    /// - RARE Burn: deflationary mechanism (immutable)
     /// - Dust: any rounding remainder goes to protocol
     ///
     /// ## Non-Reverting Pattern (IMPORTANT)
@@ -863,176 +979,41 @@ contract LiquidRouter is
     /// External calls to beneficiary/referrer are gas-limited to 50k.
     /// This prevents griefing attacks where a malicious recipient consumes
     /// excessive gas to make trades expensive or fail.
-    function _disperseFees(
+    function _disperseFeesSwap(
         uint256 _fee,
         address _orderReferrer,
-        address _beneficiary
+        address _beneficiaryA,
+        address _beneficiaryB
     )
         internal
         returns (
             uint256 protocolFee,
             uint256 referrerFee,
-            uint256 beneficiaryFee,
+            uint256 beneficiaryFeeA,
+            uint256 beneficiaryFeeB,
             uint256 rareBurnFee
         )
     {
-        // =====================
-        // STEP 1: Use Local Fee Config
-        // =====================
-        // Fee config is stored locally in router and can be updated by owner
-
-        // =====================
-        // STEP 2: Check if referrer should receive separate transfer
-        // =====================
-        // If no referrer provided OR referrer is already protocol, skip separate transfer
-        // This avoids two ETH transfers to the same address (gas optimization)
-        bool skipReferrerTransfer = _orderReferrer == address(0) ||
-            _orderReferrer == protocolFeeRecipient;
-
-        // =====================
-        // STEP 3: TIER 2 - Beneficiary Share
-        // =====================
-        // Beneficiary gets their fixed percentage first
-        beneficiaryFee = _calculateFee(_fee, BENEFICIARY_FEE_BPS);
-        uint256 remainingFee = _fee - beneficiaryFee;
-
-        // =====================
-        // STEP 4: TIER 3 - Split Remainder
-        // =====================
-        // Apply each percentage to the remaining fee (after beneficiary cut)
-        rareBurnFee = _calculateFee(remainingFee, rareBurnFeeBPS);
-        referrerFee = _calculateFee(remainingFee, referrerFeeBPS);
-        protocolFee = _calculateFee(remainingFee, protocolFeeBPS);
-
-        // =====================
-        // STEP 5: Handle Dust
-        // =====================
-        // Due to integer division, sum of parts may be less than remainingFee
-        // Add dust to protocol to ensure exact accounting (no ETH stuck in contract)
-        uint256 totalRemainder = rareBurnFee + referrerFee + protocolFee;
-        uint256 dust = remainingFee - totalRemainder;
-        protocolFee += dust;
-
-        // =====================
-        // STEP 6: RARE Burn Deposit
-        // =====================
-        // Attempt to deposit to RARE burner contract
-        // Non-reverting: if deposit fails, amount goes to protocol
-        if (rareBurnFee > 0 && rareBurner != address(0)) {
-            // Call the burner's depositForBurn() function
-            (bool ok, ) = rareBurner.call{value: rareBurnFee}(
-                abi.encodeWithSelector(IRAREBurner.depositForBurn.selector)
+        return
+            LiquidFeeLib.disperseFees(
+                _fee,
+                _orderReferrer,
+                _beneficiaryA,
+                _beneficiaryB,
+                protocolFeeRecipient,
+                rareBurner,
+                rareBurnFeeBPS,
+                protocolFeeBPS,
+                referrerFeeBPS
             );
-
-            // Always emit for transparency (success or failure)
-            emit BurnerDeposit(address(this), rareBurner, rareBurnFee, ok);
-
-            if (!ok) {
-                // FALLBACK: Burner failed, redirect to protocol
-                // This ensures fees aren't lost if burner is paused/broken
-                protocolFee += rareBurnFee;
-                rareBurnFee = 0;
-            }
-        } else {
-            // No burner configured, burn share goes to protocol
-            protocolFee += rareBurnFee;
-            rareBurnFee = 0;
-        }
-
-        // =====================
-        // STEP 7: Track Running Totals
-        // =====================
-        // protocolTotal accumulates all fees that end up going to protocol
-        // (base protocol fee + any failed transfers + dust)
-        uint256 protocolTotal = protocolFee;
-
-        // Track what was actually paid to each recipient
-        uint256 beneficiaryPaid = beneficiaryFee;
-        uint256 referrerPaid = referrerFee;
-
-        // =====================
-        // STEP 8: Beneficiary Transfer (Non-Reverting)
-        // =====================
-        if (_beneficiary != address(0) && beneficiaryFee > 0) {
-            // Gas-limited call to prevent griefing
-            (bool beneficiaryOk, ) = _beneficiary.call{
-                value: beneficiaryFee,
-                gas: GAS_LIMIT_TRANSFER
-            }("");
-
-            if (!beneficiaryOk) {
-                // ABSORBED: Failed transfer goes to protocol
-                protocolTotal += beneficiaryFee;
-                beneficiaryPaid = 0;
-                emit FeeTransferFailed(
-                    _beneficiary,
-                    beneficiaryFee,
-                    "beneficiary"
-                );
-            }
-        } else {
-            // No beneficiary set, their share goes to protocol
-            protocolTotal += beneficiaryFee;
-            beneficiaryPaid = 0;
-        }
-
-        // =====================
-        // STEP 9: Referrer Transfer (Non-Reverting)
-        // =====================
-        // Skip separate transfer if referrer is zero or equals protocol (gas optimization)
-        if (skipReferrerTransfer) {
-            // Referrer fee goes to protocol - no separate transfer needed
-            protocolTotal += referrerFee;
-            referrerPaid = 0;
-        } else {
-            // Gas-limited call to prevent griefing
-            (bool referrerOk, ) = _orderReferrer.call{
-                value: referrerFee,
-                gas: GAS_LIMIT_TRANSFER
-            }("");
-
-            if (!referrerOk) {
-                // ABSORBED: Failed transfer goes to protocol
-                protocolTotal += referrerFee;
-                referrerPaid = 0;
-                emit FeeTransferFailed(_orderReferrer, referrerFee, "referrer");
-            }
-        }
-
-        // =====================
-        // STEP 10: Protocol Transfer (MUST SUCCEED)
-        // =====================
-        // This is the final catch-all transfer
-        // If this fails, the trade MUST revert to prevent stuck funds
-        (bool protocolOk, ) = protocolFeeRecipient.call{value: protocolTotal}(
-            ""
-        );
-        if (!protocolOk) revert EthTransferFailed();
-
-        // =====================
-        // STEP 11: Emit Summary Event
-        // =====================
-        // Single event captures the final distribution for indexers
-        emit RouterFees(
-            _beneficiary,
-            _orderReferrer,
-            protocolFeeRecipient,
-            rareBurnFee, // Actual amount burned (0 if failed)
-            beneficiaryPaid, // Actual amount to beneficiary (0 if failed/none)
-            referrerPaid, // Actual amount to referrer (0 if failed)
-            protocolTotal // Total to protocol (includes absorbed failures)
-        );
-
-        // Return actual amounts distributed (for event emission in caller)
-        return (protocolTotal, referrerPaid, beneficiaryPaid, rareBurnFee);
     }
 
     // ============================================
     // RECEIVE FUNCTION
     // ============================================
 
-    /// @notice Receive ETH from Universal Router during sells
-    /// @dev This is called when Universal Router unwraps WETH to ETH during sell().
+    /// @notice Receive ETH from Universal Router during sells and swaps
+    /// @dev This is called when Universal Router unwraps WETH to ETH during sell() or swap().
     ///      The UNWRAP_WETH command sends native ETH to the recipient (this contract).
     ///
     /// ## Security Note

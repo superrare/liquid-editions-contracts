@@ -2,23 +2,23 @@
 pragma solidity ^0.8.0;
 
 import {console} from "forge-std/console.sol";
-import {Liquid} from "../../src/Liquid.sol";
+import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
 
 /**
  * @title DeployLiquid
- * @notice Library for deploying Liquid implementation contract
+ * @notice Library for deploying LiquidInstant implementation contract
  * @dev This is a library-style deployer that can be used standalone or composed
  */
 library DeployLiquid {
     /**
-     * @notice Deploy Liquid implementation contract
-     * @return implementation Address of the deployed Liquid implementation
+     * @notice Deploy LiquidInstant implementation contract
+     * @return implementation Address of the deployed LiquidInstant implementation
      */
     function deploy() internal returns (address implementation) {
-        console.log("Deploying Liquid implementation...");
-        Liquid liquidImplementation = new Liquid();
+        console.log("Deploying LiquidInstant implementation...");
+        LiquidInstant liquidImplementation = new LiquidInstant();
         implementation = address(liquidImplementation);
-        console.log("Liquid implementation deployed at:");
+        console.log("LiquidInstant implementation deployed at:");
         console.logAddress(implementation);
         return implementation;
     }

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
+// forge-lint: disable-start(unsafe-typecast) -- safe: rendering code uses bounded values (randVal % N, etc).
+
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {ILiquid} from "../interfaces/ILiquid.sol";
-import {Liquid} from "../Liquid.sol";
+import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
+import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
 
 /// @title LiquidLensDemoV2
 /// @notice Plotter art-inspired generative NFTs visualizing Liquid Edition market state.
@@ -13,7 +15,7 @@ import {Liquid} from "../Liquid.sol";
 /// @dev All rendering uses strokes only (no fills) - plotter/pen-friendly SVG output.
 contract LiquidLensDemoV2 is ERC721, Ownable {
     /// @notice The linked Liquid Edition contract
-    address public immutable liquidEdition;
+    address public immutable LIQUID_EDITION;
 
     /// @notice Maximum number of NFTs that can be minted
     uint256 public constant MAX_SUPPLY = 10;
@@ -38,7 +40,7 @@ contract LiquidLensDemoV2 is ERC721, Ownable {
         string memory _collectionDescription
     ) ERC721(_name, _symbol) Ownable(msg.sender) {
         if (_liquidEdition == address(0)) revert InvalidLiquidEdition();
-        liquidEdition = _liquidEdition;
+        LIQUID_EDITION = _liquidEdition;
         collectionName = _collectionName;
         collectionDescription = _collectionDescription;
     }
@@ -66,9 +68,10 @@ contract LiquidLensDemoV2 is ERC721, Ownable {
             int24 currentTick,
             uint128 liquidity,
             uint256 currentSupply
-        ) = ILiquid(liquidEdition).getMarketState();
+        ) = ILiquid(LIQUID_EDITION).getMarketState();
 
-        uint256 maxTotalSupply = Liquid(liquidEdition).MAX_TOTAL_SUPPLY();
+        uint256 maxTotalSupply = LiquidInstant(LIQUID_EDITION)
+            .MAX_TOTAL_SUPPLY();
 
         DerivedMetrics memory metrics = _calculateDerivedMetrics(
             rarePerToken,
@@ -114,7 +117,7 @@ contract LiquidLensDemoV2 is ERC721, Ownable {
         uint256 currentSupply,
         uint256 maxTotalSupply,
         int24 currentTick,
-        uint128 liquidity,
+        uint128 /* liquidity */,
         uint160 /* sqrtPriceX96 */
     ) internal pure returns (DerivedMetrics memory metrics) {
         uint256 burned = maxTotalSupply - currentSupply;
@@ -122,6 +125,7 @@ contract LiquidLensDemoV2 is ERC721, Ownable {
 
         int256 tick256 = int256(int24(currentTick));
         int256 shiftedTick = tick256 + 887272;
+        // forge-lint: disable-next-line(unsafe-typecast) -- safe: shiftedTick >= 0 guards non-negative
         uint256 normalizedTick = shiftedTick >= 0 ? uint256(shiftedTick) : 0;
         metrics.bondingProgress = normalizedTick % 101;
 
@@ -255,6 +259,7 @@ contract LiquidLensDemoV2 is ERC721, Ownable {
         bytes memory buffer = new bytes(digits);
         while (value != 0) {
             digits -= 1;
+            // forge-lint: disable-next-line(unsafe-typecast) -- safe: value % 10 is 0-9, 48+9=57 fits uint8
             buffer[digits] = bytes1(uint8(48 + uint256(value % 10)));
             value /= 10;
         }
@@ -262,7 +267,11 @@ contract LiquidLensDemoV2 is ERC721, Ownable {
     }
 
     function _intToString(int256 value) internal pure returns (string memory) {
-        if (value >= 0) return _uintToString(uint256(value));
+        if (value >= 0) {
+            // forge-lint: disable-next-line(unsafe-typecast) -- safe: value >= 0
+            return _uintToString(uint256(value));
+        }
+        // forge-lint: disable-next-line(unsafe-typecast) -- safe: -value is positive when value < 0
         return string(abi.encodePacked("-", _uintToString(uint256(-value))));
     }
 
@@ -953,7 +962,7 @@ contract LiquidLensDemoV2 is ERC721, Ownable {
     }
 
     function _buildAttributes(
-        uint256 tokenId,
+        uint256 /* tokenId */,
         string memory paletteName,
         DerivedMetrics memory metrics
     ) internal pure returns (string memory) {
@@ -1036,3 +1045,4 @@ contract LiquidLensDemoV2 is ERC721, Ownable {
         return string(result);
     }
 }
+// forge-lint: disable-end(unsafe-typecast)

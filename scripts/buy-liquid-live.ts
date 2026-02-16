@@ -41,8 +41,8 @@ const CONFIG = {
   rpcUrl: expandRpcUrl(process.env.ETH_SEPOLIA || process.env.SEPOLIA_RPC_URL, 'https://ethereum-sepolia-rpc.publicnode.com'),
   
   // Deployed contracts (Ethereum Sepolia)
-  liquidRouter: '0x11D7eC6dAaf538aDd8b0AE3a8c37455508629F56', // Ethereum Sepolia LiquidRouter
-  liquidToken: '0x7e36DB05F9D60f153bBD9601f12A8D96Cb845C6a', // Your LiquidEdition token
+  liquidRouter: '0x6Ac1182EdC9A35c0f956b18A9d9F95Dc0171E7F0', // Ethereum Sepolia LiquidRouter
+  liquidToken: '0x23C8701Dd299E742a1e03e2AE046Cf2356f26f34', // Your LiquidEdition token
   
   // Real RARE token addresses (from NetworkConfig)
   rareToken: '0x197FaeF3f59eC80113e773Bb6206a17d183F97CB', // Ethereum Sepolia RARE

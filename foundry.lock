@@ -1,4 +1,10 @@
 {
+  "lib/doppler": {
+    "tag": {
+      "name": "v1.3.0",
+      "rev": "29e101779d8a638a6ce191de670cabb7cf96aa65"
+    }
+  },
   "lib/v4-core": {
     "rev": "e50237c43811bd9b526eff40f26772152a42daba"
   },

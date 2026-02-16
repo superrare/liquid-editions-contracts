@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import {LiquidRenderSimple} from "../src/examples/LiquidRenderSimple.sol";
-import {ILiquid} from "../src/interfaces/ILiquid.sol";
+import {LiquidRenderSimple} from "liquid-editions/examples/LiquidRenderSimple.sol";
+import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {console} from "forge-std/console.sol";
 import {Script} from "forge-std/Script.sol";
 
