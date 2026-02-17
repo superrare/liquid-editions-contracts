@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
 import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
-import {LiquidRouterUnitTestBase, MockUniversalRouterForRouter, RejectingRecipientForRouter} from "liquid-editions-test/unit/LiquidRouter.unit.base.sol";
+import {GasHogRecipientForRouter, LiquidRouterUnitTestBase, MockUniversalRouterForRouter, RejectingRecipientForRouter} from "liquid-editions-test/unit/LiquidRouter.unit.base.sol";
 import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
 
 /// @title LiquidRouter Fees Unit Tests
@@ -167,6 +167,125 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         );
 
         assertTrue(protocolFeeRecipient.balance > protocolBalBefore);
+    }
+
+    function testBeneficiaryTransferGasHogFallsBackToProtocol() public {
+        GasHogRecipientForRouter gasHog = new GasHogRecipientForRouter();
+
+        vm.prank(admin);
+        liquidRouter.updateBeneficiary(address(token), address(gasHog));
+
+        uint256 ethAmount = 1 ether;
+        uint256 totalFee = (ethAmount * liquidRouter.TOTAL_FEE_BPS()) /
+            10000;
+        (
+            uint256 beneficiaryFee,
+            uint256 protocolFee,
+            uint256 referrerFee,
+            uint256 burnFee
+        ) = liquidRouter.quoteFeeBreakdown(totalFee);
+        uint256 feeSum = beneficiaryFee + protocolFee + referrerFee + burnFee;
+
+        uint256 protocolBalBefore = protocolFeeRecipient.balance;
+        uint256 routerBalBefore = address(liquidRouter).balance;
+
+        vm.prank(user1);
+        liquidRouter.buy{value: ethAmount}(
+            address(token),
+            user1,
+            address(0),
+            1,
+            abi.encodeWithSelector(
+                router.execute.selector,
+                "",
+                new bytes[](0),
+                block.timestamp
+            ),
+            block.timestamp + 1 hours
+        );
+
+        uint256 protocolBalAfter = protocolFeeRecipient.balance;
+        uint256 expectedProtocolShare = protocolFee + beneficiaryFee + referrerFee;
+
+        assertEq(protocolBalAfter - protocolBalBefore, expectedProtocolShare);
+        assertEq(feeSum, totalFee);
+        assertEq(
+            address(liquidRouter).balance,
+            routerBalBefore,
+            "No ETH should remain in router after trade"
+        );
+    }
+
+    function testReferrerTransferGasHogFallsBackToProtocol() public {
+        GasHogRecipientForRouter gasHog = new GasHogRecipientForRouter();
+
+        MockERC20 customToken = new MockERC20();
+        MockUniversalRouterForRouter customRouter = new MockUniversalRouterForRouter(
+            address(customToken)
+        );
+        vm.deal(address(customRouter), 100 ether);
+
+        LiquidRouter referrerFallbackRouter = deployLiquidRouter(
+            address(customRouter),
+            protocolFeeRecipient,
+            address(burner),
+            5000, // all remaining fee goes to burn + referrer split
+            0, // protocol gets redirected referrer share on failure
+            5000,
+            admin
+        );
+
+        vm.prank(admin);
+        referrerFallbackRouter.registerToken(address(customToken), beneficiary);
+
+        uint256 ethAmount = 1 ether;
+        uint256 totalFee = (ethAmount * liquidRouter.TOTAL_FEE_BPS()) / 10000;
+        uint256 ignoredBeneficiary;
+        uint256 ignoredProtocol;
+        uint256 ignoredBurn;
+        uint256 expectedRedirectedReferrerFee;
+        (
+            ignoredBeneficiary,
+            ignoredProtocol,
+            expectedRedirectedReferrerFee,
+            ignoredBurn
+        ) = referrerFallbackRouter.quoteFeeBreakdown(totalFee);
+        uint256 referrerFeeComponents = ignoredBeneficiary +
+            ignoredProtocol +
+            expectedRedirectedReferrerFee +
+            ignoredBurn;
+
+        uint256 protocolBalBefore = protocolFeeRecipient.balance;
+        uint256 routerBalBefore = address(referrerFallbackRouter).balance;
+
+        vm.prank(user1);
+        referrerFallbackRouter.buy{value: ethAmount}(
+            address(customToken),
+            user1,
+            address(gasHog),
+            1,
+            abi.encodeWithSelector(
+                customRouter.execute.selector,
+                "",
+                new bytes[](0),
+                block.timestamp
+            ),
+            block.timestamp + 1 hours
+        );
+
+        uint256 protocolBalAfter = protocolFeeRecipient.balance;
+
+        assertEq(
+            protocolBalAfter - protocolBalBefore,
+            expectedRedirectedReferrerFee,
+            "protocol should receive referrer share when referrer is gas-hog"
+        );
+        assertEq(referrerFeeComponents, totalFee);
+        assertEq(
+            address(referrerFallbackRouter).balance,
+            routerBalBefore,
+            "No ETH should remain in router after trade"
+        );
     }
 
     function testReferrerTransferFailureFallsBackToProtocol() public {

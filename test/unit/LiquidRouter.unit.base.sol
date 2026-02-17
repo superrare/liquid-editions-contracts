@@ -210,6 +210,13 @@ contract RejectingRecipientForRouter {
     }
 }
 
+/// @title Gas Hog Recipient for fee transfer stress tests
+contract GasHogRecipientForRouter {
+    receive() external payable {
+        while (true) {}
+    }
+}
+
 /// @title LiquidRouter Unit Test Base
 /// @notice Shared setUp, mocks, and helpers for all LiquidRouter unit tests
 abstract contract LiquidRouterUnitTestBase is Test {

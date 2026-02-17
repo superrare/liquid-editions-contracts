@@ -304,6 +304,208 @@ contract LiquidAuctioneerSecurityTest is Test {
             );
     }
 
+    function _createAuctioneerWithProtocolRecipient(
+        address routerAddr,
+        address protocolRecipient
+    ) internal returns (LiquidAuctioneer) {
+        return
+            new LiquidAuctioneer(
+                owner,
+                routerAddr,
+                protocolRecipient,
+                address(burner),
+                address(rare),
+                2500,
+                2500,
+                5000
+            );
+    }
+
+    function _setupBidToken() internal returns (address) {
+        MockAuctionForBid bidAuction = new MockAuctionForBid();
+        return address(new MockLiquidTokenForExit(address(bidAuction)));
+    }
+
+    /// @notice Beneficiary callback that reenters bidWithETH should be contained and
+    ///         redirected as protocol share.
+    function test_BidWithETH_BeneficiaryReenters() public {
+        MockBidRouterForAuctioneer bidRouter = new MockBidRouterForAuctioneer(
+            address(rare)
+        );
+        address liquidToken = _setupBidToken();
+        bytes memory routeData = abi.encodeWithSelector(
+            bidRouter.execute.selector,
+            "",
+            new bytes[](0),
+            block.timestamp
+        );
+        ReentrantBeneficiaryForAuctioneer beneficiary = new ReentrantBeneficiaryForAuctioneer();
+        beneficiary.setBidParams(
+            liquidToken,
+            user,
+            routeData,
+            block.timestamp + 1 hours
+        );
+
+        LiquidAuctioneer bidAuctioneer = _createAuctioneerWithProtocolRecipient(
+            address(bidRouter),
+            protocolFeeRecipient
+        );
+        beneficiary.setAuctioneer(payable(address(bidAuctioneer)));
+        vm.prank(owner);
+        bidAuctioneer.setBeneficiary(liquidToken, address(beneficiary));
+        uint256 protocolBefore = protocolFeeRecipient.balance;
+
+        vm.prank(user);
+        bidAuctioneer.bidWithETH{value: 1 ether}(
+            liquidToken,
+            1,
+            user,
+            address(0),
+            0,
+            routeData,
+            block.timestamp + 1 hours
+        );
+
+        uint256 totalFee = (1 ether * bidAuctioneer.TOTAL_FEE_BPS()) / 10_000;
+        uint256 beneficiaryFee = (totalFee * 2500) / 10_000;
+        uint256 remainingFee = totalFee - beneficiaryFee;
+        uint256 protocolFee = (remainingFee * 2500) / 10_000;
+        uint256 referrerFee = (remainingFee * 5000) / 10_000;
+        uint256 expectedProtocolShare = protocolFee + referrerFee + beneficiaryFee;
+
+        assertEq(
+            protocolFeeRecipient.balance - protocolBefore,
+            expectedProtocolShare,
+            "Beneficiary reentry should redirect share to protocol"
+        );
+    }
+
+    /// @notice Protocol fee recipient reverts should hard-fail the bid path.
+    function test_BidWithETH_ProtocolFeeRecipientReverts() public {
+        MockBidRouterForAuctioneer bidRouter = new MockBidRouterForAuctioneer(
+            address(rare)
+        );
+        address liquidToken = _setupBidToken();
+
+        RejectingRecipientForAuctioneer rejectingProtocol = new RejectingRecipientForAuctioneer();
+        LiquidAuctioneer bidAuctioneer = _createAuctioneerWithProtocolRecipient(
+            address(bidRouter),
+            address(rejectingProtocol)
+        );
+
+        vm.expectRevert(ILiquidRouter.EthTransferFailed.selector);
+        vm.prank(user);
+        bidAuctioneer.bidWithETH{value: 1 ether}(
+            liquidToken,
+            1,
+            user,
+            address(0),
+            0,
+            abi.encodeWithSelector(
+                bidRouter.execute.selector,
+                "",
+                new bytes[](0),
+                block.timestamp
+            ),
+            block.timestamp + 1 hours
+        );
+    }
+
+    /// @notice Reentrant ETH payout recipient on full exit should revert via non-reentrant guard.
+    function test_ExitBidToETH_RevertsOnRecipientReentrancy() public {
+        RareConsumingRouter ethRouter = new RareConsumingRouter(
+            address(rare),
+            1 ether
+        );
+        vm.deal(address(ethRouter), 10 ether);
+        LiquidAuctioneer ethAuctioneer = _createAuctioneer(address(ethRouter));
+
+        uint256 refundAmount = 10 ether;
+        MockAuctionForExit mockAuction = new MockAuctionForExit(
+            address(rare),
+            refundAmount,
+            user
+        );
+        rare.mint(address(mockAuction), refundAmount);
+        address liquidToken = _setupMockAuctionToken(address(mockAuction));
+        bytes memory routeData = abi.encodeWithSelector(
+            ethRouter.execute.selector,
+            "",
+            new bytes[](0),
+            block.timestamp
+        );
+
+        ReentrantRecipientForAuctioneer exitRecipient = new ReentrantRecipientForAuctioneer(
+                payable(address(ethAuctioneer)),
+                liquidToken,
+                routeData,
+                block.timestamp + 1 hours,
+                true
+            );
+
+        vm.startPrank(user);
+        rare.approve(address(ethAuctioneer), type(uint256).max);
+        vm.expectRevert(ILiquidRouter.EthTransferFailed.selector);
+        ethAuctioneer.exitBidToETH(
+            liquidToken,
+            0,
+            address(exitRecipient),
+            0,
+            routeData,
+            block.timestamp + 1 hours
+        );
+        vm.stopPrank();
+    }
+
+    /// @notice Reentrant ETH payout recipient on partial exit should revert via non-reentrant guard.
+    function test_ExitPartialBidToETH_RevertsOnRecipientReentrancy() public {
+        RareConsumingRouter ethRouter = new RareConsumingRouter(
+            address(rare),
+            1 ether
+        );
+        vm.deal(address(ethRouter), 10 ether);
+        LiquidAuctioneer ethAuctioneer = _createAuctioneer(address(ethRouter));
+
+        uint256 refundAmount = 10 ether;
+        MockAuctionForExit mockAuction = new MockAuctionForExit(
+            address(rare),
+            refundAmount,
+            user
+        );
+        rare.mint(address(mockAuction), refundAmount);
+        address liquidToken = _setupMockAuctionToken(address(mockAuction));
+        bytes memory routeData = abi.encodeWithSelector(
+            ethRouter.execute.selector,
+            "",
+            new bytes[](0),
+            block.timestamp
+        );
+
+        ReentrantRecipientForAuctioneer exitRecipient = new ReentrantRecipientForAuctioneer(
+                payable(address(ethAuctioneer)),
+                liquidToken,
+                routeData,
+                block.timestamp + 1 hours,
+                false
+            );
+
+        vm.startPrank(user);
+        rare.approve(address(ethAuctioneer), type(uint256).max);
+        vm.expectRevert(ILiquidRouter.EthTransferFailed.selector);
+        ethAuctioneer.exitPartialBidToETH(
+            liquidToken,
+            0,
+            0,
+            0,
+            address(exitRecipient),
+            0,
+            routeData,
+            block.timestamp + 1 hours
+        );
+        vm.stopPrank();
+    }
+
     // ==================== Theft Test ====================
     /// @notice Malicious router does NOT consume RARE (simulating theft via routeData).
     ///         After fix: reverts with UnexpectedTokenBalance because RARE was not consumed.
@@ -598,6 +800,136 @@ contract MockAuctionForExit {
     }
 }
 
+/// @dev Mock auction implementing the bid entrypoint for bidWithETH coverage tests.
+contract MockAuctionForBid {
+    function submitBid(
+        uint256,
+        uint128,
+        address,
+        uint256,
+        bytes calldata
+    ) external pure returns (uint256 bidId) {
+        return 1;
+    }
+}
+
+contract MockBidRouterForAuctioneer {
+    address public rareToken;
+
+    constructor(address _rare) {
+        rareToken = _rare;
+    }
+
+    function execute(
+        bytes calldata,
+        bytes[] calldata,
+        uint256
+    ) external payable {
+        if (msg.value > 0) {
+            uint256 tokensOut = (msg.value * 1000e18) / 1e18;
+            MockRARE(rareToken).mint(msg.sender, tokensOut);
+        }
+    }
+
+    receive() external payable {}
+    fallback() external payable {}
+}
+
+contract RejectingRecipientForAuctioneer {
+    receive() external payable {
+        revert("I reject ETH");
+    }
+}
+
+contract ReentrantBeneficiaryForAuctioneer {
+    LiquidAuctioneer public auctioneer;
+    address public liquidToken;
+    address public bidOwner;
+    bytes public routeData;
+    uint256 public deadline;
+    bool public shouldReenter;
+
+    constructor() {}
+
+    function setAuctioneer(address payable _auctioneer) external {
+        auctioneer = LiquidAuctioneer(payable(_auctioneer));
+    }
+
+    function setBidParams(
+        address _liquidToken,
+        address _bidOwner,
+        bytes calldata _routeData,
+        uint256 _deadline
+    ) external {
+        liquidToken = _liquidToken;
+        bidOwner = _bidOwner;
+        routeData = _routeData;
+        deadline = _deadline;
+        shouldReenter = true;
+    }
+
+    receive() external payable {
+        if (!shouldReenter) {
+            return;
+        }
+        auctioneer.bidWithETH{value: 0}(
+            liquidToken,
+            1,
+            bidOwner,
+            address(0),
+            0,
+            routeData,
+            deadline
+        );
+    }
+}
+
+contract ReentrantRecipientForAuctioneer {
+    LiquidAuctioneer public auctioneer;
+    address public liquidToken;
+    bytes public routeData;
+    uint256 public deadline;
+    bool public useFullExit;
+
+    constructor(
+        address payable _auctioneer,
+        address _liquidToken,
+        bytes memory _routeData,
+        uint256 _deadline,
+        bool _useFullExit
+    ) {
+        auctioneer = LiquidAuctioneer(payable(_auctioneer));
+        liquidToken = _liquidToken;
+        routeData = _routeData;
+        deadline = _deadline;
+        useFullExit = _useFullExit;
+    }
+
+    receive() external payable {
+        if (useFullExit) {
+            auctioneer.exitBidToETH(
+                liquidToken,
+                0,
+                address(this),
+                0,
+                routeData,
+                deadline
+            );
+        } else {
+            auctioneer.exitPartialBidToETH(
+                liquidToken,
+                0,
+                0,
+                0,
+                address(this),
+                0,
+                routeData,
+                deadline
+            );
+        }
+    }
+}
+
 /// @dev Malicious no-op router: succeeds but does NOT consume any RARE and sends no ETH.
 ///      Simulates crafted routeData that doesn't actually perform the intended swap.
 contract MaliciousNoOpRouter {
@@ -621,7 +953,19 @@ contract RareConsumingRouter {
         ethToReturn = _ethToReturn;
     }
 
+    function execute(
+        bytes calldata,
+        bytes[] calldata,
+        uint256
+    ) external payable {
+        _swap();
+    }
+
     fallback() external payable {
+        _swap();
+    }
+
+    function _swap() internal {
         // Pull all permitted RARE from the caller (auctioneer) through MockPermit2
         (uint160 allowed, , ) = FunctionalMockPermit2(PERMIT2_ADDR).allowance(
             msg.sender,

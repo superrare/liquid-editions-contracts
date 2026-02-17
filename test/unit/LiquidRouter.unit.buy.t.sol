@@ -386,4 +386,85 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             block.timestamp + 1 hours
         );
     }
+
+    function test_Buy_SucceedsWithPreexistingETH() public {
+        uint256 forcedEth = 1;
+        vm.deal(user2, 100 ether);
+        vm.prank(user2);
+        (bool sent, ) = address(liquidRouter).call{value: forcedEth}("");
+        assertTrue(sent);
+        assertEq(address(liquidRouter).balance, forcedEth);
+
+        uint256 ethAmount = 1 ether;
+        uint256 expectedFee = (ethAmount * TOTAL_FEE_BPS) / 10000;
+        uint256 expectedTokens = ((ethAmount - expectedFee) * router.tokenPerEth()) /
+            1e18;
+
+        vm.prank(user1);
+        uint256 tokensReceived = liquidRouter.buy{value: ethAmount}(
+            address(token),
+            user1,
+            referrer,
+            1, // minTokensOut
+            abi.encodeWithSelector(
+                router.execute.selector,
+                "",
+                new bytes[](0),
+                block.timestamp
+            ),
+            block.timestamp + 1 hours
+        );
+
+        assertEq(tokensReceived, expectedTokens);
+        assertEq(token.balanceOf(user1), 10000e18 + expectedTokens);
+        assertEq(address(liquidRouter).balance, forcedEth);
+    }
+
+    function test_Buy_RevertsWhen_RouterReturnsETH_WithPreexistingETH() public {
+        MockUniversalRouterWithRefundForRouter refundRouter = new MockUniversalRouterWithRefundForRouter(
+                address(token)
+            );
+        vm.deal(address(refundRouter), 1000 ether);
+
+        LiquidRouter refundRouterInstance = deployLiquidRouter(
+            address(refundRouter),
+            protocolFeeRecipient,
+            address(burner),
+            RARE_BURN_FEE_BPS,
+            PROTOCOL_FEE_BPS,
+            REFERRER_FEE_BPS,
+            admin
+        );
+
+        vm.prank(admin);
+        refundRouterInstance.registerToken(address(token), beneficiary);
+
+        uint256 forcedEth = 1;
+        vm.deal(user2, 100 ether);
+        vm.prank(user2);
+        (bool sent, ) = address(refundRouterInstance).call{value: forcedEth}("");
+        assertTrue(sent);
+        assertEq(address(refundRouterInstance).balance, forcedEth);
+
+        refundRouter.setShouldRefund(true);
+        refundRouter.setRefundAmount(1 wei); // Refund 1 wei
+
+        vm.expectRevert(ILiquidRouter.UnexpectedEthRefund.selector);
+        vm.prank(user1);
+        refundRouterInstance.buy{value: 1 ether}(
+            address(token),
+            user1,
+            referrer,
+            1, // minTokensOut
+            abi.encodeWithSelector(
+                refundRouter.execute.selector,
+                "",
+                new bytes[](0),
+                block.timestamp
+            ),
+            block.timestamp + 1 hours
+        );
+
+        assertEq(address(refundRouterInstance).balance, forcedEth);
+    }
 }

@@ -169,6 +169,7 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
         );
 
         assertGt(amountOut, 0, "swap should succeed and return tokens");
+        assertEq(address(liquidRouter).balance, 1);
     }
 
     function test_Swap_RevertsOnRefundEvenWithPreexistingETH() public {
@@ -229,5 +230,7 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
             leg2,
             block.timestamp + 1 hours
         );
+
+        assertEq(address(refundRouterInstance).balance, 1);
     }
 }

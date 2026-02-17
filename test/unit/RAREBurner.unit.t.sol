@@ -385,7 +385,7 @@ contract MockPoolManagerForced {
     event UnlockStarted(address caller);
     event UnlockCallbackReturned();
     
-    function unlock(bytes calldata data) external returns (bytes memory) {
+    function unlock(bytes calldata data) external virtual returns (bytes memory) {
         emit UnlockStarted(msg.sender);
         if (shouldFail) {
             revert("MockPoolManager: swap failed");
@@ -470,6 +470,36 @@ contract MockPoolManagerWithRARE is MockPoolManagerForced {
             "MockPoolManagerWithRARE: wrong currency"
         );
         IERC20(rareToken).transfer(to, amount);
+    }
+}
+
+/// @title Mock PoolManager that records unlock context for lifecycle assertions
+contract MockPoolManagerWithRAREStateful is MockPoolManagerWithRARE {
+    bytes public lastUnlockData;
+    uint256 public unlockCallCount;
+
+    constructor(address _rareToken) MockPoolManagerWithRARE(_rareToken) {}
+
+    function unlock(
+        bytes calldata data
+    ) external override returns (bytes memory) {
+        unlockCallCount += 1;
+        lastUnlockData = data;
+
+        emit UnlockStarted(msg.sender);
+        if (shouldFail) {
+            revert("MockPoolManager: swap failed");
+        }
+        (bool success, bytes memory result) = msg.sender.call(
+            abi.encodeWithSelector(IUnlockCallback.unlockCallback.selector, data)
+        );
+        if (!success) {
+            assembly {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        emit UnlockCallbackReturned();
+        return result;
     }
 }
 
@@ -854,6 +884,60 @@ contract RAREBurnerUnitTestContinued is RAREBurnerUnitTest {
             burnAddrBalBefore + 1 ether,
             "Burn address should receive RARE"
         );
+    }
+
+    /// @notice Verify unlock callback lifecycle:
+    /// - invalid callback caller reverts with OnlyPoolManager
+    /// - context is one-shot and cleared after successful unlockCallback
+    function test_UnlockCallback_ContextLifecycle_OneShotAndCallerGuard() public {
+        MockERC20 mockRARE = new MockERC20();
+        mockRARE.mint(address(this), 1000 ether);
+
+        MockPoolManagerWithRAREStateful mockPoolManager = new MockPoolManagerWithRAREStateful(
+                address(mockRARE)
+            );
+        mockRARE.transfer(address(mockPoolManager), 100 ether);
+
+        address burnAddr = 0x000000000000000000000000000000000000dEaD;
+
+        vm.prank(admin);
+        burner = new RAREBurner(
+            admin,
+            false,
+            address(mockRARE),
+            address(mockPoolManager),
+            3000,
+            60,
+            address(0),
+            burnAddr,
+            address(0),
+            0,
+            true
+        );
+
+        vm.deal(user1, 1 ether);
+        vm.prank(user1);
+        burner.depositForBurn{value: 1 ether}();
+
+        burner.flush();
+
+        assertEq(
+            mockPoolManager.unlockCallCount(),
+            1,
+            "valid unlock callback should run once"
+        );
+        assertEq(mockPoolManager.lastUnlockData().length > 0, true);
+        assertEq(burner.pendingEth(), 0, "successful burn should clear pendingEth");
+
+        bytes memory callbackData = mockPoolManager.lastUnlockData();
+
+        vm.prank(user1);
+        vm.expectRevert(RAREBurner.OnlyPoolManager.selector);
+        burner.unlockCallback(callbackData);
+
+        vm.prank(address(mockPoolManager));
+        vm.expectRevert(RAREBurner.UnexpectedUnlock.selector);
+        burner.unlockCallback(callbackData);
     }
 
     /// @notice Test unlockCallback reverts when context hash mismatch

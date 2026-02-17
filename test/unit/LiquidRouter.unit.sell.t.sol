@@ -6,6 +6,55 @@ import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
 import {LiquidRouterUnitTestBase, MockUniversalRouterForRouter, MockPermit2ForRouter} from "liquid-editions-test/unit/LiquidRouter.unit.base.sol";
 import {MockFeeOnTransferToken} from "liquid-editions-test/helpers/MockERC20.sol";
 
+/// @title Mock Universal Router with token-sell ETH refund capability
+contract MockUniversalRouterWithSellETHRefundForRouter is
+    MockUniversalRouterForRouter
+{
+    bool public shouldRefund;
+    uint256 public refundAmount;
+
+    constructor(address _token) MockUniversalRouterForRouter(_token) {}
+
+    function setShouldRefund(bool _should) external {
+        shouldRefund = _should;
+    }
+
+    function setRefundAmount(uint256 _amount) external {
+        refundAmount = _amount;
+    }
+
+    function execute(
+        bytes calldata,
+        bytes[] calldata,
+        uint256
+    ) external payable override {
+        if (shouldFail) revert("Router: swap failed");
+
+        if (msg.value > 0) {
+            uint256 tokensOut = (msg.value * tokenPerEth) / 1e18;
+            token.mint(msg.sender, tokensOut);
+        } else {
+            uint256 approved = token.allowance(msg.sender, PERMIT2);
+            if (approved > 0) {
+                uint256 amountToPull = pullAmountOverride > 0
+                    ? pullAmountOverride
+                    : approved;
+                if (amountToPull > approved) amountToPull = approved;
+
+                token.transferFrom(msg.sender, address(this), amountToPull);
+                uint256 ethOut = (amountToPull * 1e18) / tokenPerEth;
+                (bool success, ) = msg.sender.call{value: ethOut}("");
+                require(success, "ETH transfer failed");
+            }
+        }
+
+        if (shouldRefund && refundAmount > 0) {
+            (bool success, ) = msg.sender.call{value: refundAmount}("");
+            require(success, "Refund failed");
+        }
+    }
+}
+
 /// @title LiquidRouter Sell Unit Tests
 /// @notice Sell flow, Permit2, fee-on-transfer
 contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
@@ -463,5 +512,102 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             approvalBefore - tokenAmount,
             "Approval should be reduced"
         );
+    }
+
+    function test_Sell_SucceedsWithPreexistingETH() public {
+        uint256 forcedEth = 1;
+        vm.deal(user2, 100 ether);
+        vm.prank(user2);
+        (bool sent, ) = address(liquidRouter).call{value: forcedEth}("");
+        assertTrue(sent);
+        assertEq(address(liquidRouter).balance, forcedEth);
+
+        uint256 tokenAmount = 1000e18;
+        uint256 grossEthOut = (tokenAmount * 1e18) / router.tokenPerEth();
+        uint256 expectedFee = (grossEthOut * TOTAL_FEE_BPS) / 10000;
+        uint256 expectedEthOut = grossEthOut - expectedFee;
+
+        vm.prank(user1);
+        token.approve(address(liquidRouter), tokenAmount);
+
+        uint256 user1EthBefore = user1.balance;
+        vm.prank(user1);
+        uint256 ethReceived = liquidRouter.sell(
+            address(token),
+            tokenAmount,
+            user1,
+            referrer,
+            grossEthOut,
+            abi.encodeWithSelector(
+                router.execute.selector,
+                "",
+                new bytes[](0),
+                block.timestamp
+            ),
+            block.timestamp + 1 hours
+        );
+
+        assertEq(ethReceived, expectedEthOut);
+        assertEq(user1.balance - user1EthBefore, expectedEthOut);
+        assertEq(address(liquidRouter).balance, forcedEth);
+    }
+
+    function test_Sell_ReceivesUnexpectedETHFromRouterWithoutRevert() public {
+        MockUniversalRouterWithSellETHRefundForRouter refundRouter = new MockUniversalRouterWithSellETHRefundForRouter(
+                address(token)
+            );
+        vm.deal(address(refundRouter), 1000 ether);
+
+        LiquidRouter refundRouterInstance = deployLiquidRouter(
+            address(refundRouter),
+            protocolFeeRecipient,
+            address(burner),
+            RARE_BURN_FEE_BPS,
+            PROTOCOL_FEE_BPS,
+            REFERRER_FEE_BPS,
+            admin
+        );
+
+        vm.prank(admin);
+        refundRouterInstance.registerToken(address(token), beneficiary);
+
+        uint256 forcedEth = 1;
+        vm.deal(user2, 100 ether);
+        vm.prank(user2);
+        (bool sent, ) = address(refundRouterInstance).call{value: forcedEth}("");
+        assertTrue(sent);
+        assertEq(address(refundRouterInstance).balance, forcedEth);
+
+        uint256 tokenAmount = 1000e18;
+        uint256 grossEthOut = (tokenAmount * 1e18) / refundRouter.tokenPerEth();
+        uint256 unexpectedEthRefund = 1 wei;
+        uint256 expectedGross = grossEthOut + unexpectedEthRefund;
+        uint256 expectedFee = (expectedGross * TOTAL_FEE_BPS) / 10000;
+        uint256 expectedEthOut = expectedGross - expectedFee;
+
+        refundRouter.setShouldRefund(true);
+        refundRouter.setRefundAmount(unexpectedEthRefund);
+
+        vm.prank(user1);
+        token.approve(address(refundRouterInstance), tokenAmount);
+
+        vm.prank(user1);
+        uint256 ethReceived = refundRouterInstance.sell(
+            address(token),
+            tokenAmount,
+            user1,
+            referrer,
+            expectedGross,
+            abi.encodeWithSelector(
+                refundRouter.execute.selector,
+                "",
+                new bytes[](0),
+                block.timestamp
+            ),
+            block.timestamp + 1 hours
+        );
+
+        assertEq(ethReceived, expectedEthOut);
+        assertEq(address(refundRouterInstance).balance, forcedEth);
     }
 }

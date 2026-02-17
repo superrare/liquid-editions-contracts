@@ -5,13 +5,11 @@ import "forge-std/Test.sol";
 import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
-import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {FullMath} from "v4-core/libraries/FullMath.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
-import {MockRAREDeployer} from "liquid-editions-test/helpers/MockRAREDeployer.sol";
 import {LiquidPoolSwapHelper} from "liquid-editions-test/helpers/LiquidPoolSwapHelper.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -36,7 +34,6 @@ contract LiquidInstantQuoteTradeTest is Test {
     LiquidInstant public token;
     RAREBurner public burner;
     MockRARE public mockRARE;
-    MockRAREDeployer public rareDeployer;
     LiquidPoolSwapHelper public swapHelper;
 
     // LP tick range - production configuration
@@ -45,6 +42,12 @@ contract LiquidInstantQuoteTradeTest is Test {
     int24 constant LP_TICK_LOWER = -180; // Max expensive (after price rises) - multiple of 60
     int24 constant LP_TICK_UPPER = 120000; // Starting point - cheap tokens - multiple of 60
     uint256 constant INITIAL_LIQUIDITY_RARE = 0.001 ether;
+    uint256 constant ORDERING_SWAP_RARE_IN = 1 ether;
+    address internal constant ORDERING_BASE_TOKEN_LOW =
+        address(0x0000000000000000000000000000000000000100);
+    address internal constant ORDERING_BASE_TOKEN_HIGH = address(
+        uint160(type(uint160).max)
+    );
 
     function setUp() public {
         // Fork Base mainnet for realistic testing
@@ -109,8 +112,6 @@ contract LiquidInstantQuoteTradeTest is Test {
         // Set base token to MockRARE
         factory.setBaseToken(address(mockRARE));
 
-        rareDeployer = new MockRAREDeployer();
-
         swapHelper = new LiquidPoolSwapHelper(
             IPoolManager(config.uniswapV4PoolManager)
         );
@@ -162,29 +163,20 @@ contract LiquidInstantQuoteTradeTest is Test {
         console.log("Pool initialized with initial RARE liquidity");
     }
 
-    function _predictCreate2Address(
-        address deployer,
-        bytes32 bytecodeHash,
-        bytes32 salt
-    ) internal pure returns (address predictedAddress) {
-        assembly {
-            let ptr := mload(0x40)
-            mstore(ptr, 0xff)
-            mstore(add(ptr, 0x20), deployer)
-            mstore(add(ptr, 0x40), salt)
-            mstore(add(ptr, 0x60), bytecodeHash)
-            let hash := keccak256(ptr, 0x80)
-            predictedAddress := and(
-                hash,
-                0xffffffffffffffffffffffffffffffffffffffff
-            )
+    function _prepareMockBase(address baseAddress) internal returns (MockRARE baseToken) {
+        if (baseAddress.code.length == 0) {
+            vm.etch(baseAddress, address(mockRARE).code);
         }
+        baseToken = MockRARE(baseAddress);
     }
 
     function _createTokenWithBase(
         MockRARE baseTokenToUse
     ) internal returns (LiquidInstant createdToken) {
-        baseTokenToUse.mint(tokenCreator, INITIAL_LIQUIDITY_RARE);
+        baseTokenToUse.mint(
+            tokenCreator,
+            INITIAL_LIQUIDITY_RARE + (ORDERING_SWAP_RARE_IN * 2)
+        );
 
         vm.startPrank(admin);
         factory.setBaseToken(address(baseTokenToUse));
@@ -211,42 +203,24 @@ contract LiquidInstantQuoteTradeTest is Test {
     function _createTokenWithOrdering(
         bool wantBaseTokenIsCurrency0
     ) internal returns (LiquidInstant createdToken, MockRARE baseToken) {
-        bytes memory bytecode = type(MockRARE).creationCode;
-        bytes32 bytecodeHash = keccak256(bytecode);
-        bytes32 seed = keccak256(
-            abi.encode("testQuoteOrdering", wantBaseTokenIsCurrency0, address(this))
-        );
+        address baseAddress = wantBaseTokenIsCurrency0
+            ? ORDERING_BASE_TOKEN_LOW
+            : ORDERING_BASE_TOKEN_HIGH;
 
-        // Try multiple CREATE2 salts until desired ordering is produced.
-        for (uint256 i = 0; i < 500; i++) {
-            bytes32 salt = keccak256(abi.encodePacked(seed, i));
-            address computedBase = _predictCreate2Address(
-                address(rareDeployer),
-                bytecodeHash,
-                salt
-            );
+        baseToken = _prepareMockBase(baseAddress);
+        createdToken = _createTokenWithBase(baseToken);
 
-            // Continue if salt is already used.
-            if (computedBase.code.length > 0) {
-                continue;
-            }
-
-            address deployedBase = rareDeployer.deployMockRARE(salt);
-            MockRARE candidateBase = MockRARE(deployedBase);
-
-            createdToken = _createTokenWithBase(candidateBase);
-            baseToken = candidateBase;
-
-            if ((address(baseToken) < address(createdToken)) == wantBaseTokenIsCurrency0) {
-                return (createdToken, baseToken);
-            }
+        if ((address(baseToken) < address(createdToken)) == wantBaseTokenIsCurrency0) {
+            return (createdToken, baseToken);
         }
 
         revert("FailedToForceOrdering");
     }
 
-    function _assertMarketInversionCorrect(LiquidInstant token) internal {
-        (uint256 rarePerTokenPrice, uint256 tokenPerRarePrice) = token
+    function _assertMarketInversionCorrect(
+        LiquidInstant testedToken
+    ) internal view {
+        (uint256 rarePerTokenPrice, uint256 tokenPerRarePrice) = testedToken
             .getCurrentPrice();
         (
             uint256 rarePerTokenMarket,
@@ -255,7 +229,7 @@ contract LiquidInstantQuoteTradeTest is Test {
             ,
             ,
             uint256 currentSupply
-        ) = token.getMarketState();
+        ) = testedToken.getMarketState();
 
         assertEq(
             rarePerTokenPrice,
@@ -269,7 +243,7 @@ contract LiquidInstantQuoteTradeTest is Test {
         );
         assertEq(
             currentSupply,
-            token.MAX_TOTAL_SUPPLY(),
+            testedToken.MAX_TOTAL_SUPPLY(),
             "market state should report max supply"
         );
 
@@ -282,7 +256,8 @@ contract LiquidInstantQuoteTradeTest is Test {
         );
         uint256 denominatorQ128 = 1 << 128;
 
-        bool baseTokenIsCurrency0 = token.baseToken() < address(token);
+        bool baseTokenIsCurrency0 = testedToken.baseToken() <
+            address(testedToken);
         uint256 expectedRarePerToken;
         uint256 expectedTokenPerRare;
 
@@ -323,7 +298,13 @@ contract LiquidInstantQuoteTradeTest is Test {
     }
 
     function _assertQuoteMatchesActualForToken(LiquidInstant testedToken) internal {
-        uint256 rareIn = 1 ether;
+        uint256 rareIn = ORDERING_SWAP_RARE_IN;
+        MockRARE baseToken = MockRARE(testedToken.baseToken());
+
+        uint256 availableBase = baseToken.balanceOf(tokenCreator);
+        if (availableBase < rareIn) {
+            baseToken.mint(tokenCreator, rareIn - availableBase);
+        }
 
         vm.startPrank(tokenCreator);
         (uint256 quotedOut, ) = testedToken.quoteBuy(rareIn);
