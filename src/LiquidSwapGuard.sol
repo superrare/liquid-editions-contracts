@@ -5,16 +5,21 @@ import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
+import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
 import {IMsgSender} from "v4-periphery/interfaces/IMsgSender.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /// @title LiquidSwapGuard
-/// @notice Uniswap V4 hook that restricts swaps to only those originating from whitelisted callers (e.g. LiquidRouter).
-/// @dev Uses the IMsgSender trusted-router pattern: the sender (e.g. UniversalRouter) must implement msgSender()
-///      and return a whitelisted caller address (e.g. LiquidRouter). Deploy via CREATE2 with a mined salt so the
-///      hook address has BEFORE_SWAP_FLAG (bit 7) set in its lowest 14 bits.
+/// @notice Uniswap V4 hook that restricts swaps and pool initialization to whitelisted callers.
+/// @dev Implements two security mechanisms:
+///      1. beforeInitialize: Only whitelisted initializers (Liquid token contracts) can initialize pools.
+///         This prevents pool pre-initialization DoS attacks where attackers front-run token deployment
+///         by initializing the pool first with a hostile price.
+///      2. beforeSwap: Only whitelisted routers/callers (LiquidRouter via UniversalRouter) can swap.
+///         Uses the IMsgSender trusted-router pattern.
+///      Deploy via CREATE2 with a mined salt so the hook address has both BEFORE_INITIALIZE_FLAG (bit 13)
+///      and BEFORE_SWAP_FLAG (bit 7) set in its lowest 14 bits (pattern: 0x2080).
 contract LiquidSwapGuard is IHooks, Ownable {
     using Hooks for IHooks;
 
@@ -30,14 +35,43 @@ contract LiquidSwapGuard is IHooks, Ownable {
     /// @notice Thrown when the caller is not the PoolManager
     error NotPoolManager();
 
+    /// @notice Thrown when an unauthorized address attempts to initialize a pool
+    /// @dev This prevents pool pre-initialization DoS attacks
+    /// @param sender The address that attempted to initialize the pool
+    error UnauthorizedInitializer(address sender);
+
+    /// @notice Thrown when caller is not owner or factory
+    error NotOwnerOrFactory();
+
     // forge-lint: disable-next-line(screaming-snake-case-immutable) -- matches v4 BaseHook/ImmutableState convention
     IPoolManager public immutable poolManager;
     mapping(address => bool) public verifiedRouters;
     mapping(address => bool) public allowedCallers;
 
+    /// @notice Addresses allowed to initialize pools (Liquid token contracts)
+    /// @dev These are the token contracts that call pm.initialize() during their deployment
+    mapping(address => bool) public allowedInitializers;
+
+    /// @notice Factory address that can add initializers (set by owner)
+    /// @dev Allows factory to whitelist token contracts during deployment
+    address public factory;
+
     modifier onlyPoolManager() {
         _onlyPoolManager();
         _;
+    }
+
+    modifier onlyOwnerOrFactory() {
+        _onlyOwnerOrFactory();
+        _;
+    }
+
+    /// @notice Ensures caller is owner or factory
+    /// @dev Reverts with NotOwnerOrFactory if caller is neither owner nor factory
+    function _onlyOwnerOrFactory() internal view {
+        if (msg.sender != owner() && msg.sender != factory) {
+            revert NotOwnerOrFactory();
+        }
     }
 
     /// @notice Ensures caller is the configured PoolManager
@@ -48,7 +82,7 @@ contract LiquidSwapGuard is IHooks, Ownable {
 
     /// @notice Creates a LiquidSwapGuard hook for the given PoolManager
     /// @param _poolManager The Uniswap V4 PoolManager
-    /// @param _owner The owner (for add/remove router and caller)
+    /// @param _owner The owner (for add/remove router, caller, and initializer)
     /// @param _skipValidation If true, skip hook address validation (for testing only)
     constructor(
         IPoolManager _poolManager,
@@ -63,13 +97,13 @@ contract LiquidSwapGuard is IHooks, Ownable {
         if (!_skipValidation) {
             IHooks(this).validateHookPermissions(
                 Hooks.Permissions({
-                    beforeInitialize: false,
+                    beforeInitialize: true, // Protects against pool pre-initialization DoS
                     afterInitialize: false,
                     beforeAddLiquidity: false,
                     afterAddLiquidity: false,
                     beforeRemoveLiquidity: false,
                     afterRemoveLiquidity: false,
-                    beforeSwap: true,
+                    beforeSwap: true, // Restricts swaps to whitelisted callers
                     afterSwap: false,
                     beforeDonate: false,
                     afterDonate: false,
@@ -112,13 +146,26 @@ contract LiquidSwapGuard is IHooks, Ownable {
         return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
 
-    // Stub implementations - never called when only beforeSwap is permissioned
-    function beforeInitialize(address, PoolKey calldata, uint160) external pure override returns (bytes4) {
-        revert("not implemented");
+    /// @notice V4 hook: restricts pool initialization to whitelisted Liquid token contracts
+    /// @dev Prevents pool pre-initialization DoS attacks where attackers front-run token deployment
+    ///      by initializing the pool first with a hostile price. Only addresses in allowedInitializers
+    ///      (the Liquid token contracts themselves) can initialize pools using this hook.
+    /// @param sender The address initiating the pool initialization (should be a Liquid token contract)
+    /// @return selector The beforeInitialize hook selector on success
+    function beforeInitialize(
+        address sender,
+        PoolKey calldata,
+        uint160
+    ) external view override onlyPoolManager returns (bytes4) {
+        // Only whitelisted Liquid token contracts can initialize pools
+        // This prevents attackers from front-running pool creation with hostile prices
+        if (!allowedInitializers[sender]) revert UnauthorizedInitializer(sender);
+
+        return IHooks.beforeInitialize.selector;
     }
 
     function afterInitialize(address, PoolKey calldata, uint160, int24) external pure override returns (bytes4) {
-        revert("not implemented");
+        return IHooks.afterInitialize.selector;
     }
 
     function beforeAddLiquidity(
@@ -127,7 +174,7 @@ contract LiquidSwapGuard is IHooks, Ownable {
         IPoolManager.ModifyLiquidityParams calldata,
         bytes calldata
     ) external pure override returns (bytes4) {
-        revert("not implemented");
+        return IHooks.beforeAddLiquidity.selector;
     }
 
     function afterAddLiquidity(
@@ -138,7 +185,7 @@ contract LiquidSwapGuard is IHooks, Ownable {
         BalanceDelta,
         bytes calldata
     ) external pure override returns (bytes4, BalanceDelta) {
-        revert("not implemented");
+        return (IHooks.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
     function beforeRemoveLiquidity(
@@ -147,7 +194,7 @@ contract LiquidSwapGuard is IHooks, Ownable {
         IPoolManager.ModifyLiquidityParams calldata,
         bytes calldata
     ) external pure override returns (bytes4) {
-        revert("not implemented");
+        return IHooks.beforeRemoveLiquidity.selector;
     }
 
     function afterRemoveLiquidity(
@@ -158,7 +205,7 @@ contract LiquidSwapGuard is IHooks, Ownable {
         BalanceDelta,
         bytes calldata
     ) external pure override returns (bytes4, BalanceDelta) {
-        revert("not implemented");
+        return (IHooks.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
     function afterSwap(
@@ -168,7 +215,7 @@ contract LiquidSwapGuard is IHooks, Ownable {
         BalanceDelta,
         bytes calldata
     ) external pure override returns (bytes4, int128) {
-        revert("not implemented");
+        return (IHooks.afterSwap.selector, 0);
     }
 
     function beforeDonate(address, PoolKey calldata, uint256, uint256, bytes calldata)
@@ -177,7 +224,7 @@ contract LiquidSwapGuard is IHooks, Ownable {
         override
         returns (bytes4)
     {
-        revert("not implemented");
+        return IHooks.beforeDonate.selector;
     }
 
     function afterDonate(address, PoolKey calldata, uint256, uint256, bytes calldata)
@@ -186,7 +233,7 @@ contract LiquidSwapGuard is IHooks, Ownable {
         override
         returns (bytes4)
     {
-        revert("not implemented");
+        return IHooks.afterDonate.selector;
     }
 
     // ============ Admin ============
@@ -215,5 +262,39 @@ contract LiquidSwapGuard is IHooks, Ownable {
     /// @param caller The caller address to remove
     function removeCaller(address caller) external onlyOwner {
         allowedCallers[caller] = false;
+    }
+
+    /// @notice Sets the factory address that can add initializers
+    /// @dev Can be called by owner, or by the factory itself during initial setup (if factory is address(0))
+    /// @param _factory The LiquidFactory contract address
+    function setFactory(address _factory) external {
+        // Owner can always set factory
+        if (msg.sender == owner()) {
+            factory = _factory;
+            return;
+        }
+        
+        // Factory can set itself if not already set (one-time initial setup)
+        if (factory == address(0) && msg.sender == _factory) {
+            factory = _factory;
+            return;
+        }
+        
+        revert NotOwnerOrFactory();
+    }
+
+    /// @notice Adds an initializer address to the allowed initializers list
+    /// @dev This should be called for each Liquid token contract after deployment.
+    ///      The token contract must be whitelisted BEFORE it attempts to initialize its pool.
+    ///      Can be called by owner or factory.
+    /// @param initializer The Liquid token contract address that will initialize a pool
+    function addInitializer(address initializer) external onlyOwnerOrFactory {
+        allowedInitializers[initializer] = true;
+    }
+
+    /// @notice Removes an initializer from the allowed initializers list
+    /// @param initializer The initializer address to remove
+    function removeInitializer(address initializer) external onlyOwner {
+        allowedInitializers[initializer] = false;
     }
 }

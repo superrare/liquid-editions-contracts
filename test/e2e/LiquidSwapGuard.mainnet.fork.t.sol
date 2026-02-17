@@ -8,6 +8,11 @@ import {LiquidRouterForkBase} from "liquid-editions-test/helpers/bases/LiquidRou
 import {DeployLiquidSwapGuard} from "script/deployers/DeployLiquidSwapGuard.s.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {Currency} from "v4-core/types/Currency.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
 
 /// @notice IUniversalRouter for direct execute call
 interface IUniversalRouter {
@@ -46,7 +51,7 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         factory.setPositionManager(config.uniswapV4PositionManager);
         factory.setProtocolFeeRecipient(protocolFeeRecipient);
 
-        address guardAddr = DeployLiquidSwapGuard.deploy(
+        address guardAddr = DeployLiquidSwapGuard.deployForTest(
             IPoolManager(config.uniswapV4PoolManager),
             admin,
             bytes32(0)
@@ -305,5 +310,60 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
             inputs,
             deadline
         );
+    }
+
+    /// @notice Fork test: attacker's direct pm.initialize() via unlock reverts (real PoolManager)
+    /// @dev Verifies pool pre-initialization DoS protection: attacker cannot front-run token deployment
+    function test_AttackerPreInitialize_RevertsViaRealPoolManager() public {
+        // Predict next clone address (Clones.clone uses CREATE; nonce determines address)
+        address predictedToken = vm.computeCreateAddress(
+            address(factory),
+            vm.getNonce(address(factory))
+        );
+
+        // Build PoolKey same as LiquidInstant would (currencies sorted by address, guard as hooks)
+        (Currency currency0, Currency currency1) = config.rareToken < predictedToken
+            ? (Currency.wrap(config.rareToken), Currency.wrap(predictedToken))
+            : (Currency.wrap(predictedToken), Currency.wrap(config.rareToken));
+
+        PoolKey memory poolKey = PoolKey({
+            currency0: currency0,
+            currency1: currency1,
+            fee: 0,
+            tickSpacing: 60,
+            hooks: IHooks(address(guard))
+        });
+
+        uint160 hostilePrice = TickMath.getSqrtPriceAtTick(10000);
+
+        // Deploy attacker contract that will call pm.initialize() from unlock callback
+        AttackerInitializer attackerContract = new AttackerInitializer(
+            IPoolManager(config.uniswapV4PoolManager)
+        );
+
+        // Attacker tries to pre-initialize - should revert (hook rejects with UnauthorizedInitializer;
+        // PoolManager may wrap the revert as WrappedError)
+        vm.expectRevert();
+        attackerContract.tryInitialize(poolKey, hostilePrice);
+    }
+}
+
+/// @notice Attacker contract: calls pm.initialize() from unlock callback (simulates front-run)
+contract AttackerInitializer is IUnlockCallback {
+    IPoolManager public immutable poolManager;
+
+    constructor(IPoolManager _poolManager) {
+        poolManager = _poolManager;
+    }
+
+    function tryInitialize(PoolKey memory poolKey, uint160 sqrtPriceX96) external {
+        poolManager.unlock(abi.encode(poolKey, sqrtPriceX96));
+    }
+
+    function unlockCallback(bytes calldata data) external override returns (bytes memory) {
+        require(msg.sender == address(poolManager), "only pool manager");
+        (PoolKey memory poolKey, uint160 sqrtPriceX96) = abi.decode(data, (PoolKey, uint160));
+        poolManager.initialize(poolKey, sqrtPriceX96);
+        return "";
     }
 }

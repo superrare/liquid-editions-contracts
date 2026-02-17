@@ -565,43 +565,11 @@ contract LiquidInstant is
             effectiveTickUpper = -tickLower;
         }
 
-        // Round ticks to nearest multiple of tick spacing (required by V4)
-        //
-        // WHY THIS IS REQUIRED:
-        // Uniswap V4 pools organize liquidity into discrete "ticks" separated by tickSpacing.
-        // Ticks must be multiples of tickSpacing to ensure efficient storage and computation.
-        // If ticks aren't properly rounded, V4's modifyLiquidity() will revert.
-        //
-        // ROUNDING LOGIC:
-        // - For negative ticks: round DOWN (toward more negative) to nearest spacing multiple
-        // - For positive ticks: round UP (toward more positive) to nearest spacing multiple
-        // This ensures the rounded range always contains or equals the original range.
-        //
-        // NOTE: Deliberately using divide-then-multiply to round tick to spacing multiple.
-        // This is required by Uniswap V4, not a precision loss bug.
-        // forge-lint: disable-start(divide-before-multiply)
-        if (effectiveTickLower < 0) {
-            // Negative ticks: round down (divide truncates toward zero, then multiply back)
-            lpTickLower = (effectiveTickLower / tickSpacing) * tickSpacing;
-        } else {
-            // Positive ticks: round up (add spacing-1 before divide to round up)
-            lpTickLower =
-                ((effectiveTickLower + tickSpacing - 1) / tickSpacing) *
-                tickSpacing;
-        }
-
-        if (effectiveTickUpper < 0) {
-            // Negative ticks: round up (subtract spacing-1 before divide to round up)
-            lpTickUpper =
-                ((effectiveTickUpper - tickSpacing + 1) / tickSpacing) *
-                tickSpacing;
-        } else {
-            // Positive ticks: round up (add spacing-1 before divide to round up)
-            lpTickUpper =
-                ((effectiveTickUpper + tickSpacing - 1) / tickSpacing) *
-                tickSpacing;
-        }
-        // forge-lint: disable-end(divide-before-multiply)
+        // Ticks are already aligned to tickSpacing by LiquidFactory validation
+        // (constructor, setLpTickLower, setLpTickUpper all enforce tick % spacing == 0).
+        // Negation preserves alignment, so no rounding is needed here.
+        lpTickLower = effectiveTickLower;
+        lpTickUpper = effectiveTickUpper;
 
         if (lpTickLower >= lpTickUpper) revert InvalidTickRange();
 

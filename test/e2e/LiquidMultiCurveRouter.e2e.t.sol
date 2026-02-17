@@ -173,7 +173,7 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
     function _configureFactory() internal override {
         super._configureFactory();
 
-        address guardAddr = DeployLiquidSwapGuard.deploy(
+        address guardAddr = DeployLiquidSwapGuard.deployForTest(
             IPoolManager(config.uniswapV4PoolManager),
             admin,
             bytes32(0)

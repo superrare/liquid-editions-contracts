@@ -14,6 +14,7 @@ import {IDistributionStrategy} from "continuous-clearing-auction/interfaces/exte
 import {AuctionParameters} from "continuous-clearing-auction/interfaces/IContinuousClearingAuction.sol";
 import {MigratorParameters} from "liquid-editions/types/MigratorParameters.sol";
 import {IDistributionContract} from "liquid-editions/interfaces/IDistributionContract.sol";
+import {ILiquidSwapGuard} from "liquid-editions/interfaces/ILiquidSwapGuard.sol";
 
 /// @title LiquidFactory
 /// @notice Factory contract for creating Liquid token instances with centralized configuration management
@@ -224,6 +225,12 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
             _initialRareLiquidity
         );
 
+        // Whitelist clone as allowed pool initializer BEFORE initialize() is called
+        // This prevents pool pre-initialization DoS attacks (see LiquidSwapGuard.beforeInitialize)
+        if (poolHooks != address(0)) {
+            ILiquidSwapGuard(poolHooks).addInitializer(clone);
+        }
+
         LiquidInstant liquid = LiquidInstant(payable(clone));
 
         // Initialize the Liquid token (RARE tokens already transferred to clone)
@@ -275,6 +282,12 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
             clone,
             _initialRareLiquidity
         );
+
+        // Whitelist clone as allowed pool initializer BEFORE initialize() is called
+        // This prevents pool pre-initialization DoS attacks (see LiquidSwapGuard.beforeInitialize)
+        if (poolHooks != address(0)) {
+            ILiquidSwapGuard(poolHooks).addInitializer(clone);
+        }
 
         LiquidMultiCurve liquid = LiquidMultiCurve(payable(clone));
         liquid.initialize(
@@ -541,10 +554,21 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     }
 
     /// @notice Sets the Uniswap V4 hooks address (optional)
+    /// @dev If the hooks contract is a LiquidSwapGuard, also sets this factory as authorized to add initializers
     function setPoolHooks(
         address _poolHooks
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         poolHooks = _poolHooks;
+        
+        // If hooks is a LiquidSwapGuard, authorize this factory to add initializers
+        if (_poolHooks != address(0)) {
+            try ILiquidSwapGuard(_poolHooks).setFactory(address(this)) {
+                // Successfully set factory on guard
+            } catch {
+                // Not a LiquidSwapGuard or doesn't implement setFactory - ignore
+            }
+        }
+        
         emit PoolHooksUpdated(_poolHooks);
     }
 

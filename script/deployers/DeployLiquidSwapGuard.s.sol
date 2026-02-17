@@ -10,9 +10,9 @@ import {NetworkConfig} from "../config/NetworkConfig.sol";
 /**
  * @title DeployLiquidSwapGuard
  * @notice Deploys LiquidSwapGuard hook via CREATE2 with a mined salt.
- * @dev The hook address must have BEFORE_SWAP_FLAG (bit 7) set. The script brute-forces
- *      salts until a valid address is found. Set LIQUID_SWAP_GUARD_SALT in env to use a
- *      pre-mined salt (e.g. from scripts/mine-liquid-swap-guard-salt.ts).
+ * @dev The hook address must have both BEFORE_SWAP_FLAG (bit 7) and BEFORE_INITIALIZE_FLAG (bit 13)
+ *      set (pattern: 0x2080). The script brute-forces salts until a valid address is found.
+ *      Set LIQUID_SWAP_GUARD_SALT in env to use a pre-mined salt.
  *
  *      CREATE2 addresses are computed against the Forge deterministic CREATE2 deployer
  *      (0x4e59b44847b379578588920cA78FbF26c0B4956C) which Forge routes `new Contract{salt}()`
@@ -20,7 +20,7 @@ import {NetworkConfig} from "../config/NetworkConfig.sol";
  *
  * Environment:
  *   DEPLOYER_PRIVATE_KEY - required for broadcast
- *   LIQUID_SWAP_GUARD_SALT - optional, pre-mined salt (bytes32 hex)
+ *   LIQUID_SWAP_GUARD_SALT - optional, pre-mined salt (bytes32 hex) with 0x2080 pattern
  *   LIQUID_SWAP_GUARD_OWNER - optional, defaults to deployer
  *
  * Usage:
@@ -29,6 +29,8 @@ import {NetworkConfig} from "../config/NetworkConfig.sol";
  */
 library DeployLiquidSwapGuard {
     uint160 constant BEFORE_SWAP_FLAG = 1 << 7;
+    uint160 constant BEFORE_INITIALIZE_FLAG = 1 << 13;
+    uint160 constant REQUIRED_FLAGS = BEFORE_SWAP_FLAG | BEFORE_INITIALIZE_FLAG; // 0x2080
     uint160 constant ALL_HOOK_MASK = (1 << 14) - 1;
 
     /// @dev Forge deterministic CREATE2 deployer. Forge routes `new Contract{salt}()` through
@@ -41,7 +43,62 @@ library DeployLiquidSwapGuard {
         address owner,
         bytes32 salt
     ) internal returns (address guard) {
-        return deploy(poolManager, owner, salt, CREATE2_DEPLOYER);
+        return deploy(poolManager, owner, salt, CREATE2_DEPLOYER, false);
+    }
+
+    /// @notice Deploy for tests (mines valid address, skips constructor validation)
+    /// @dev Uses CREATE2_DEPLOYER - same as production - so mined address is valid for PoolManager
+    function deployForTest(
+        IPoolManager poolManager,
+        address owner,
+        bytes32 salt
+    ) internal returns (address guard) {
+        return deploy(poolManager, owner, salt, CREATE2_DEPLOYER, true);
+    }
+
+    /// @notice Deploy with explicit CREATE2 factory address and skipValidation option.
+    /// @dev In tests, use skipValidation=true to bypass hook address validation.
+    ///      In production, use skipValidation=false and mine a salt with REQUIRED_FLAGS.
+    function deploy(
+        IPoolManager poolManager,
+        address owner,
+        bytes32 salt,
+        address create2Factory,
+        bool skipValidation
+    ) internal returns (address guard) {
+        bytes memory creationCode = abi.encodePacked(
+            type(LiquidSwapGuard).creationCode,
+            abi.encode(poolManager, owner, skipValidation)
+        );
+        bytes32 codeHash = keccak256(creationCode);
+
+        // Always mine for valid address when salt not provided - PoolManager requires correct hook bits
+        if (salt == bytes32(0)) {
+            salt = _mineSalt(codeHash, create2Factory);
+            if (!skipValidation) {
+                console.log("  Mined salt:");
+                console.logBytes32(salt);
+            }
+        }
+
+        // Validate address has required hook bits (PoolManager will reject otherwise)
+        address computed = _computeCreate2(salt, codeHash, create2Factory);
+        uint160 lowBits = uint160(computed) & ALL_HOOK_MASK;
+        require(
+            lowBits == REQUIRED_FLAGS,
+            "DeployLiquidSwapGuard: address must have BEFORE_SWAP_FLAG and BEFORE_INITIALIZE_FLAG in low 14 bits (0x2080)"
+        );
+
+        LiquidSwapGuard guardContract = new LiquidSwapGuard{salt: salt}(
+            poolManager,
+            owner,
+            skipValidation
+        );
+        guard = address(guardContract);
+
+        console.log("LiquidSwapGuard deployed at:");
+        console.logAddress(guard);
+        return guard;
     }
 
     /// @notice Deploy with explicit CREATE2 factory address.
@@ -59,36 +116,7 @@ library DeployLiquidSwapGuard {
         console.log("  Owner:");
         console.logAddress(owner);
 
-        bytes memory creationCode = abi.encodePacked(
-            type(LiquidSwapGuard).creationCode,
-            abi.encode(poolManager, owner, false)
-        );
-        bytes32 codeHash = keccak256(creationCode);
-
-        if (salt == bytes32(0)) {
-            salt = _mineSalt(codeHash, create2Factory);
-            console.log("  Mined salt:");
-            console.logBytes32(salt);
-        }
-
-        address computed = _computeCreate2(salt, codeHash, create2Factory);
-
-        uint160 lowBits = uint160(computed) & ALL_HOOK_MASK;
-        require(
-            lowBits == BEFORE_SWAP_FLAG,
-            "DeployLiquidSwapGuard: address must have exactly BEFORE_SWAP_FLAG in low 14 bits"
-        );
-
-        LiquidSwapGuard guardContract = new LiquidSwapGuard{salt: salt}(
-            poolManager,
-            owner,
-            false
-        );
-        guard = address(guardContract);
-
-        console.log("LiquidSwapGuard deployed at:");
-        console.logAddress(guard);
-        return guard;
+        return deploy(poolManager, owner, salt, create2Factory, false);
     }
 
     function _computeCreate2(bytes32 salt, bytes32 codeHash, address factory) private pure returns (address) {
@@ -108,7 +136,7 @@ library DeployLiquidSwapGuard {
             bytes32 s = bytes32(i);
             address computed = _computeCreate2(s, codeHash, factory);
             uint160 lowBits = uint160(computed) & ALL_HOOK_MASK;
-            if (lowBits == BEFORE_SWAP_FLAG) {
+            if (lowBits == REQUIRED_FLAGS) {
                 return s;
             }
         }

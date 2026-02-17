@@ -640,6 +640,14 @@ contract LiquidInstantMainnetBasicTest is Test {
         int24 tickLower = testLiquidInstant.lpTickLower();
         int24 tickUpper = testLiquidInstant.lpTickUpper();
 
+        // Verify negated ticks are correct and aligned to tick spacing
+        // When baseTokenIsCurrency0 == false, ticks are negated and swapped:
+        // effectiveTickLower = -lpTickUpper = -120000, effectiveTickUpper = -lpTickLower = 180
+        assertEq(tickLower, -120000, "Negated tick lower should be -lpTickUpper");
+        assertEq(tickUpper, 180, "Negated tick upper should be -lpTickLower");
+        assertEq(tickLower % 60, 0, "lpTickLower must be aligned to tick spacing");
+        assertEq(tickUpper % 60, 0, "lpTickUpper must be aligned to tick spacing");
+
         // Verify tick is within bounds (not at edges)
         assertTrue(
             currentTick > tickLower + 1,
