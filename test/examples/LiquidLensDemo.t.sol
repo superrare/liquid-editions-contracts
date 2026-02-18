@@ -79,6 +79,10 @@ contract MockLiquid is ILiquid {
         revert("Not implemented in mock");
     }
 
+    function removeLiquidity(address /* recipient */) external pure override {
+        revert("Not implemented in mock");
+    }
+
     function initialTokenUri() external pure override returns (string memory) {
         return "ipfs://mock";
     }

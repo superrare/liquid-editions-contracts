@@ -57,6 +57,9 @@ interface ILiquid {
     /// @notice Thrown when a value is positive but should be non-positive
     error PositiveValue(int128 value);
 
+    /// @notice Thrown when caller is not the protocol fee recipient
+    error OnlyProtocolFeeRecipient();
+
     /// @notice Thrown when quote simulation completes without reverting (unexpected behavior)
     /// @dev Quote simulations use a revert-as-return pattern and should always revert
     error QuoteSimulationDidNotRevert();
@@ -97,6 +100,12 @@ interface ILiquid {
         uint256 lpPositionId
     );
 
+    /// @notice Emitted when liquidity is removed from the pool
+    /// @param recipient The address that received the withdrawn tokens
+    /// @param amount0 Amount of currency0 withdrawn
+    /// @param amount1 Amount of currency1 withdrawn
+    event LiquidityRemoved(address indexed recipient, uint256 amount0, uint256 amount1);
+
     /// @notice Emitted when the render contract is set
     /// @param renderContract The address of the render contract
     event RenderContractSet(address indexed renderContract);
@@ -104,6 +113,11 @@ interface ILiquid {
     /// @notice Enables a user to burn their tokens
     /// @param amount The amount of tokens to burn
     function burn(uint256 amount) external;
+
+    /// @notice Removes all LP liquidity and sends underlying tokens to recipient
+    /// @dev Only callable by factory's protocolFeeRecipient
+    /// @param recipient Address to receive the withdrawn tokens
+    function removeLiquidity(address recipient) external;
 
     /// @notice Returns the initial URI of the token
     /// @return The initial token URI

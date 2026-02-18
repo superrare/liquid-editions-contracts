@@ -307,6 +307,11 @@ contract LiquidGraduated is
         _burn(msg.sender, amount);
     }
 
+    /// @notice Not applicable for graduated tokens (LP managed by strategy/PositionManager)
+    function removeLiquidity(address) external pure {
+        revert("Graduated: use strategy");
+    }
+
     /// @notice Overrides ERC20's _update function to emit enhanced transfer events
     /// @dev Emits the superset `LiquidTransfer` event with additional context (balances, total supply)
     /// @param from The sender address

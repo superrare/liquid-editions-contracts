@@ -118,6 +118,8 @@ interface ILiquidFactory {
 
     function baseToken() external view returns (address);
 
+    function protocolFeeRecipient() external view returns (address);
+
     /// @notice Creates a new Liquid token instance (permissionless)
     /// @param _creator The address of the token creator (receives fees and launch reward)
     /// @param _tokenUri The ERC20z token URI (metadata link)

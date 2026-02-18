@@ -78,10 +78,14 @@ contract LiquidMultiCurve is
     int24 public lpTickUpper;
     uint128 public lpLiquidity; // Always 0 for multicurve (liquidity spread across positions)
 
+    /// @notice Stored positions from initialization (needed for liquidity removal)
+    Position[] internal _storedPositions;
+
     enum UnlockAction {
         INITIALIZE_POOL,
         QUOTE_SWAP_BUY,
-        QUOTE_SWAP_SELL
+        QUOTE_SWAP_SELL,
+        REMOVE_LIQUIDITY
     }
 
     struct UnlockContext {
@@ -198,6 +202,32 @@ contract LiquidMultiCurve is
         if (msg.sender != tokenCreator) revert NotTokenCreator();
         renderContract = _renderContract;
         emit RenderContractSet(_renderContract);
+    }
+
+    /// @notice Removes all LP liquidity and sends underlying tokens to recipient
+    /// @dev Only callable by factory's protocolFeeRecipient. Enables migration to a new pool.
+    /// @param recipient Address to receive the withdrawn tokens (RARE + LIQUID)
+    function removeLiquidity(address recipient) external {
+        address pfr = ILiquidFactory(factory).protocolFeeRecipient();
+        if (msg.sender != pfr) revert OnlyProtocolFeeRecipient();
+        if (_storedPositions.length == 0) revert ZeroLiquidity();
+        if (recipient == address(0)) revert AddressZero();
+
+        _unlockExpected = true;
+        IPoolManager(poolManager).unlock(
+            abi.encode(
+                UnlockContext({
+                    action: UnlockAction.REMOVE_LIQUIDITY,
+                    data: abi.encode(recipient)
+                })
+            )
+        );
+        _unlockExpected = false;
+    }
+
+    /// @notice Returns the number of stored LP positions
+    function storedPositionsLength() external view returns (uint256) {
+        return _storedPositions.length;
     }
 
     /// @notice Returns launch type and state (multicurve is always live, no auction)
@@ -506,6 +536,8 @@ contract LiquidMultiCurve is
             return _unlockQuoteSwapBuy(ctx.data);
         } else if (ctx.action == UnlockAction.QUOTE_SWAP_SELL) {
             return _unlockQuoteSwapSell(ctx.data);
+        } else if (ctx.action == UnlockAction.REMOVE_LIQUIDITY) {
+            return _unlockRemoveLiquidity(ctx.data);
         }
 
         revert UnexpectedUnlock();
@@ -535,6 +567,9 @@ contract LiquidMultiCurve is
             if (pos.liquidity > uint128(type(int128).max)) {
                 revert LiquidityTooLarge(pos.liquidity);
             }
+
+            // Store position for future liquidity removal
+            _storedPositions.push(pos);
 
             // Add liquidity to this tick range
             (BalanceDelta delta, ) = pm.modifyLiquidity(
@@ -583,6 +618,56 @@ contract LiquidMultiCurve is
         if (remainingRare > 1) {
             IERC20(baseToken).safeTransfer(tokenCreator, remainingRare);
         }
+
+        return "";
+    }
+
+    /// @notice Remove all multicurve LP positions and send tokens to recipient
+    /// @param data Encoded recipient address
+    function _unlockRemoveLiquidity(
+        bytes memory data
+    ) internal returns (bytes memory) {
+        address recipient = abi.decode(data, (address));
+
+        IPoolManager pm = IPoolManager(poolManager);
+
+        uint256 totalAmount0;
+        uint256 totalAmount1;
+
+        // Remove liquidity from each stored position
+        for (uint256 i; i < _storedPositions.length; i++) {
+            Position memory pos = _storedPositions[i];
+
+            (BalanceDelta delta, ) = pm.modifyLiquidity(
+                poolKey,
+                IPoolManager.ModifyLiquidityParams({
+                    tickLower: pos.tickLower,
+                    tickUpper: pos.tickUpper,
+                    liquidityDelta: -int128(uint128(pos.liquidity)),
+                    salt: pos.salt
+                }),
+                ""
+            );
+
+            int128 delta0 = delta.amount0();
+            int128 delta1 = delta.amount1();
+
+            if (delta0 > 0) totalAmount0 += uint128(delta0);
+            if (delta1 > 0) totalAmount1 += uint128(delta1);
+        }
+
+        // Clear stored positions
+        delete _storedPositions;
+
+        // Claim all accumulated tokens to recipient
+        if (totalAmount0 > 0) {
+            pm.take(poolKey.currency0, recipient, totalAmount0);
+        }
+        if (totalAmount1 > 0) {
+            pm.take(poolKey.currency1, recipient, totalAmount1);
+        }
+
+        emit LiquidityRemoved(recipient, totalAmount0, totalAmount1);
 
         return "";
     }

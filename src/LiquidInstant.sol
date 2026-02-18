@@ -128,7 +128,8 @@ contract LiquidInstant is
     enum UnlockAction {
         INITIALIZE_POOL,
         QUOTE_SWAP_BUY,
-        QUOTE_SWAP_SELL
+        QUOTE_SWAP_SELL,
+        REMOVE_LIQUIDITY
     }
 
     struct UnlockContext {
@@ -302,6 +303,31 @@ contract LiquidInstant is
         }
         renderContract = _renderContract;
         emit RenderContractSet(_renderContract);
+    }
+
+    // ============================================
+    // LIQUIDITY MANAGEMENT
+    // ============================================
+
+    /// @notice Removes all LP liquidity and sends underlying tokens to recipient
+    /// @dev Only callable by factory's protocolFeeRecipient. Enables migration to a new pool.
+    /// @param recipient Address to receive the withdrawn tokens (RARE + LIQUID)
+    function removeLiquidity(address recipient) external {
+        address pfr = ILiquidFactory(factory).protocolFeeRecipient();
+        if (msg.sender != pfr) revert OnlyProtocolFeeRecipient();
+        if (lpLiquidity == 0) revert ZeroLiquidity();
+        if (recipient == address(0)) revert AddressZero();
+
+        _unlockExpected = true;
+        IPoolManager(poolManager).unlock(
+            abi.encode(
+                UnlockContext({
+                    action: UnlockAction.REMOVE_LIQUIDITY,
+                    data: abi.encode(recipient)
+                })
+            )
+        );
+        _unlockExpected = false;
     }
 
     // ============================================
@@ -772,6 +798,8 @@ contract LiquidInstant is
             return _unlockQuoteSwapBuy(ctx.data);
         } else if (ctx.action == UnlockAction.QUOTE_SWAP_SELL) {
             return _unlockQuoteSwapSell(ctx.data);
+        } else if (ctx.action == UnlockAction.REMOVE_LIQUIDITY) {
+            return _unlockRemoveLiquidity(ctx.data);
         }
 
         revert UnexpectedUnlock();
@@ -849,6 +877,53 @@ contract LiquidInstant is
             // Return excess to creator as failsafe
             IERC20(baseToken).safeTransfer(tokenCreator, remainingRare);
         }
+
+        return "";
+    }
+
+    /// @notice Remove all LP liquidity and send tokens to recipient
+    /// @param data Encoded recipient address
+    function _unlockRemoveLiquidity(
+        bytes memory data
+    ) internal returns (bytes memory) {
+        address recipient = abi.decode(data, (address));
+
+        IPoolManager pm = IPoolManager(poolManager);
+
+        uint128 liquidity = lpLiquidity;
+
+        // Remove all liquidity (negative liquidityDelta)
+        (BalanceDelta delta, ) = pm.modifyLiquidity(
+            poolKey,
+            IPoolManager.ModifyLiquidityParams({
+                tickLower: lpTickLower,
+                tickUpper: lpTickUpper,
+                liquidityDelta: -int128(uint128(liquidity)),
+                salt: bytes32(0)
+            }),
+            ""
+        );
+
+        // Clear stored liquidity
+        lpLiquidity = 0;
+
+        // Positive deltas = pool owes us tokens. Use take() to claim them to recipient.
+        int128 delta0 = delta.amount0();
+        int128 delta1 = delta.amount1();
+
+        uint256 amount0;
+        uint256 amount1;
+
+        if (delta0 > 0) {
+            amount0 = uint128(delta0);
+            pm.take(poolKey.currency0, recipient, amount0);
+        }
+        if (delta1 > 0) {
+            amount1 = uint128(delta1);
+            pm.take(poolKey.currency1, recipient, amount1);
+        }
+
+        emit LiquidityRemoved(recipient, amount0, amount1);
 
         return "";
     }
