@@ -33,7 +33,9 @@ contract AnvilForkAuctionBidIntegrationTest is AnvilForkAuctionBase {
         );
 
         uint256 bidAmount = 0.1 ether;
-        bytes memory routeData = _encodeEthToRareRoute(bidAmount);
+        (bytes memory bidCommands, bytes[] memory bidInputs) = _encodeEthToRareRoute(
+            bidAmount
+        );
 
         vm.deal(buyer, 10 ether);
         vm.prank(buyer);
@@ -43,7 +45,8 @@ contract AnvilForkAuctionBidIntegrationTest is AnvilForkAuctionBase {
             buyer,
             address(0),
             0,
-            routeData,
+            bidCommands,
+            bidInputs,
             block.timestamp + 1 hours
         );
 
@@ -60,14 +63,17 @@ contract AnvilForkAuctionBidIntegrationTest is AnvilForkAuctionBase {
             maxPossibleRefund
         );
 
-        bytes memory exitRouteData = _encodeRareToEthRoute(maxPossibleRefund);
+        (bytes memory exitCommands, bytes[] memory exitInputs) = _encodeRareToEthRoute(
+            maxPossibleRefund
+        );
         vm.prank(buyer);
         uint256 ethReceived = auctioneer.exitBidToETH(
             graduatedToken,
             bidId,
             buyer,
             0, // minEthOut: accept any amount in integration test
-            exitRouteData,
+            exitCommands,
+            exitInputs,
             block.timestamp + 1 hours
         );
 

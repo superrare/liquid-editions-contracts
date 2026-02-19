@@ -134,14 +134,11 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         address liquidTokenAddress,
         uint256 ethForSwap,
         uint256 minTokensOut
-    ) internal view returns (bytes memory) {
-        (bytes memory commands, bytes[] memory inputs, uint256 deadline) =
-            _buildExecuteParams(liquidTokenAddress, ethForSwap, minTokensOut);
-        return abi.encodeWithSignature(
-            "execute(bytes,bytes[],uint256)",
-            commands,
-            inputs,
-            deadline
+    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
+        (commands, inputs, ) = _buildExecuteParams(
+            liquidTokenAddress,
+            ethForSwap,
+            minTokensOut
         );
     }
 
@@ -149,7 +146,7 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         address liquidTokenAddress,
         uint256 tokenAmount,
         uint256 minEthOut
-    ) internal view returns (bytes memory) {
+    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
         address outputCurrency = address(0);
         PathKey[] memory path = new PathKey[](2);
         path[0] = PathKey({
@@ -185,17 +182,9 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         params[2] = abi.encode(outputCurrency, uint128(minEthOut));
 
         bytes memory v4SwapInput = abi.encode(actions, params);
-        bytes memory commands = abi.encodePacked(V4_SWAP);
-        bytes[] memory inputs = new bytes[](1);
+        commands = abi.encodePacked(V4_SWAP);
+        inputs = new bytes[](1);
         inputs[0] = v4SwapInput;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        return abi.encodeWithSignature(
-            "execute(bytes,bytes[],uint256)",
-            commands,
-            inputs,
-            deadline
-        );
     }
 
     function _ethForSwap(uint256 ethAmount) internal view returns (uint256) {
@@ -206,7 +195,11 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
 
         uint256 ethAmount = 0.01 ether;
         uint256 ethForSwap = _ethForSwap(ethAmount);
-        bytes memory routeData = _encodeBuyRoute(address(liquidToken), ethForSwap, 1);
+        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRoute(
+            address(liquidToken),
+            ethForSwap,
+            1
+        );
 
         uint256 balanceBefore = liquidToken.balanceOf(buyer);
 
@@ -216,7 +209,8 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
             buyer,
             address(0),
             1,
-            routeData,
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
 
@@ -229,14 +223,19 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         // First buy tokens
         uint256 buyEth = 0.01 ether;
         uint256 ethForSwap = _ethForSwap(buyEth);
-        bytes memory buyRoute = _encodeBuyRoute(address(liquidToken), ethForSwap, 1);
+        (bytes memory buyCommands, bytes[] memory buyInputs) = _encodeBuyRoute(
+            address(liquidToken),
+            ethForSwap,
+            1
+        );
         vm.prank(buyer);
         router.buy{value: buyEth}(
             address(liquidToken),
             buyer,
             address(0),
             1,
-            buyRoute,
+            buyCommands,
+            buyInputs,
             block.timestamp + 1 hours
         );
 
@@ -246,14 +245,19 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         uint256 ethBefore = buyer.balance;
         vm.startPrank(buyer);
         IERC20(liquidToken).approve(address(router), tokensToSell);
-        bytes memory sellRoute = _encodeSellRoute(address(liquidToken), tokensToSell, 1);
+        (bytes memory sellCommands, bytes[] memory sellInputs) = _encodeSellRoute(
+            address(liquidToken),
+            tokensToSell,
+            1
+        );
         uint256 ethReceived = router.sell(
             address(liquidToken),
             tokensToSell,
             buyer,
             address(0),
             1,
-            sellRoute,
+            sellCommands,
+            sellInputs,
             block.timestamp + 1 hours
         );
         vm.stopPrank();
@@ -266,7 +270,11 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
 
         uint256 ethAmount = 0.005 ether;
         uint256 ethForSwap = _ethForSwap(ethAmount);
-        bytes memory buyRoute = _encodeBuyRoute(address(liquidToken), ethForSwap, 1);
+        (bytes memory buyCommands, bytes[] memory buyInputs) = _encodeBuyRoute(
+            address(liquidToken),
+            ethForSwap,
+            1
+        );
 
         vm.prank(buyer);
         uint256 tokensBought = router.buy{value: ethAmount}(
@@ -274,20 +282,26 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
             buyer,
             address(0),
             1,
-            buyRoute,
+            buyCommands,
+            buyInputs,
             block.timestamp + 1 hours
         );
 
         vm.startPrank(buyer);
         IERC20(liquidToken).approve(address(router), tokensBought);
-        bytes memory sellRoute = _encodeSellRoute(address(liquidToken), tokensBought, 1);
+        (bytes memory sellCommands, bytes[] memory sellInputs) = _encodeSellRoute(
+            address(liquidToken),
+            tokensBought,
+            1
+        );
         router.sell(
             address(liquidToken),
             tokensBought,
             buyer,
             address(0),
             1,
-            sellRoute,
+            sellCommands,
+            sellInputs,
             block.timestamp + 1 hours
         );
         vm.stopPrank();

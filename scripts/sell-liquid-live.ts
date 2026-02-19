@@ -41,8 +41,8 @@ const CONFIG = {
   rpcUrl: expandRpcUrl(process.env.ETH_SEPOLIA || process.env.SEPOLIA_RPC_URL, 'https://ethereum-sepolia-rpc.publicnode.com'),
   
   // Deployed contracts (Ethereum Sepolia)
-  liquidRouter: '0x11D7eC6dAaf538aDd8b0AE3a8c37455508629F56', // Ethereum Sepolia LiquidRouter
-  liquidToken: '0x7e36DB05F9D60f153bBD9601f12A8D96Cb845C6a', // Your LiquidEdition token
+  liquidRouter: '0x889b8bc562a4bed31510a1352FD351649D8EebB2', // Ethereum Sepolia LiquidRouter
+  liquidToken: '0x23C8701Dd299E742a1e03e2AE046Cf2356f26f34', // Your LiquidEdition token
   
   // Real RARE token addresses (from NetworkConfig)
   rareToken: '0x197FaeF3f59eC80113e773Bb6206a17d183F97CB', // Ethereum Sepolia RARE
@@ -69,7 +69,7 @@ const WETH_ADDRESSES: Record<number, string> = {
 
 // ABIs
 const LIQUID_ROUTER_ABI = [
-  'function sell(address token, uint256 tokenAmount, address recipient, address orderReferrer, uint256 minEthOut, bytes calldata routeData, uint256 deadline) external returns (uint256 ethReceived)',
+  'function sell(address token, uint256 tokenAmount, address recipient, address orderReferrer, uint256 minEthOut, bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external returns (uint256 ethReceived)',
   'function TOTAL_FEE_BPS() external view returns (uint256)',
   'event RouterSell(address indexed token, address indexed seller, address indexed recipient, address orderReferrer, uint256 tokensIn, uint256 ethReceived, uint256 ethFee, uint256 ethToSeller, uint256 protocolFee, uint256 referrerFee, uint256 beneficiaryFee, uint256 burnFee)',
 ];
@@ -196,7 +196,8 @@ async function main() {
     console.log('  Min ETH out (after slippage):', ethers.utils.formatEther(quote.minAmountOut), 'ETH');
     console.log('  Gas estimate:', quote.gasEstimate);
     console.log('  Deadline:', new Date(quote.deadline * 1000).toISOString());
-    console.log('  Route data length:', quote.routeData.length, 'chars');
+    console.log('  Commands length:', quote.commands.length, 'chars');
+    console.log('  Inputs count:', quote.inputs.length);
     
   } catch (error: any) {
     console.error('\n❌ Failed to get quote:', error.message);
@@ -220,7 +221,8 @@ async function main() {
       wallet.address,
       ethers.constants.AddressZero,
       quote.minAmountOut,
-      quote.routeData,
+      quote.commands,
+      quote.inputs,
       quote.deadline,
       { 
         gasLimit: 1000000,

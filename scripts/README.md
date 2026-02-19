@@ -53,7 +53,8 @@ await liquidRouter.buy(
   recipient,
   orderReferrer,
   quote.minAmountOut,
-  quote.routeData,
+  quote.commands,
+  quote.inputs,
   quote.deadline,
   { value: ethAmount }
 );
@@ -108,7 +109,8 @@ const tx = await liquidRouter.buy(
   signer.address,
   ethers.constants.AddressZero, // no referrer
   quote.minAmountOut,
-  quote.routeData,
+  quote.commands,
+  quote.inputs,
   quote.deadline,
   { value: ethAmount }
 );
@@ -145,7 +147,8 @@ const tx = await liquidRouter.sell(
   signer.address,
   ethers.constants.AddressZero,
   quote.minAmountOut, // GROSS ETH (before router fee)
-  quote.routeData,
+  quote.commands,
+  quote.inputs,
   quote.deadline
 );
 

@@ -100,6 +100,7 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
             referrer,
             1,
             "",
+            new bytes[](0),
             block.timestamp + 1 hours
         );
     }
@@ -113,6 +114,7 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
         uint256 referrerBalBefore = referrer.balance;
         uint256 beneficiaryBalBefore = beneficiary.balance;
         uint256 burnerBalBefore = burner.deposited();
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.prank(user1);
         uint256 tokensReceived = liquidRouter.buy{value: 1 ether}(
@@ -120,12 +122,8 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
 
@@ -156,6 +154,7 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
             REFERRER_FEE_BPS,
             admin
         );
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.prank(user1);
         newLiquidRouter.buy{value: 1 ether}(
@@ -163,12 +162,8 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             1,
-            abi.encodeWithSelector(
-                newRouter.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
     }
@@ -217,17 +212,14 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
 
         vm.expectRevert(Pausable.EnforcedPause.selector);
         vm.prank(user1);
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
         liquidRouter.buy{value: 1 ether}(
             address(token),
             user1,
             referrer,
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
     }
@@ -241,18 +233,15 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
 
         vm.expectRevert(Pausable.EnforcedPause.selector);
         vm.prank(user1);
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
         liquidRouter.sell(
             address(token),
             1000e18,
             user1,
             referrer,
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
     }
@@ -264,17 +253,14 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
         liquidRouter.unpause();
 
         vm.prank(user1);
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
         liquidRouter.buy{value: 1 ether}(
             address(token),
             user1,
             referrer,
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
     }
@@ -444,17 +430,14 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
             )
         );
         vm.prank(user1);
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
         liquidRouter.buy{value: 1 ether}(
             address(token),
             user1,
             referrer,
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
     }

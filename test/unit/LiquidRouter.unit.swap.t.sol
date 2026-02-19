@@ -20,7 +20,9 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
             referrer,
             BoundaryConstants.ONE, // minAmountOut must be > 0
             "", // leg1 empty
+            new bytes[](0),
             "", // leg2 empty
+            new bytes[](0),
             block.timestamp + 1 hours
         );
     }
@@ -47,18 +49,8 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
         refundRouter.setShouldRefund(true);
         refundRouter.setRefundAmount(0.5 ether);
 
-        bytes memory leg1 = abi.encodeWithSelector(
-            refundRouter.execute.selector,
-            "",
-            new bytes[](0),
-            block.timestamp
-        );
-        bytes memory leg2 = abi.encodeWithSelector(
-            refundRouter.execute.selector,
-            "",
-            new bytes[](0),
-            block.timestamp
-        );
+        (bytes memory leg1Commands, bytes[] memory leg1Inputs) = _validRoute();
+        (bytes memory leg2Commands, bytes[] memory leg2Inputs) = _validRoute();
 
         vm.prank(user1);
         token.approve(address(refundRouterInstance), 1000e18);
@@ -72,8 +64,10 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             1, // minAmountOut
-            leg1,
-            leg2,
+            leg1Commands,
+            leg1Inputs,
+            leg2Commands,
+            leg2Inputs,
             block.timestamp + 1 hours
         );
     }
@@ -100,18 +94,8 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
         refundRouter.setShouldRefund(true);
         refundRouter.setRefundAmount(0.1 ether);
 
-        bytes memory leg1 = abi.encodeWithSelector(
-            refundRouter.execute.selector,
-            "",
-            new bytes[](0),
-            block.timestamp
-        );
-        bytes memory leg2 = abi.encodeWithSelector(
-            refundRouter.execute.selector,
-            "",
-            new bytes[](0),
-            block.timestamp
-        );
+        (bytes memory leg1Commands, bytes[] memory leg1Inputs) = _validRoute();
+        (bytes memory leg2Commands, bytes[] memory leg2Inputs) = _validRoute();
 
         vm.prank(user1);
         token.approve(address(refundRouterInstance), 1000e18);
@@ -125,8 +109,10 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             1, // minAmountOut
-            leg1,
-            leg2,
+            leg1Commands,
+            leg1Inputs,
+            leg2Commands,
+            leg2Inputs,
             block.timestamp + 1 hours
         );
     }
@@ -139,18 +125,8 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
         assertTrue(sent);
         assertEq(address(liquidRouter).balance, 1);
 
-        bytes memory leg1 = abi.encodeWithSelector(
-            router.execute.selector,
-            "",
-            new bytes[](0),
-            block.timestamp
-        );
-        bytes memory leg2 = abi.encodeWithSelector(
-            router.execute.selector,
-            "",
-            new bytes[](0),
-            block.timestamp
-        );
+        (bytes memory leg1Commands, bytes[] memory leg1Inputs) = _validRoute();
+        (bytes memory leg2Commands, bytes[] memory leg2Inputs) = _validRoute();
 
         vm.prank(user1);
         token.approve(address(liquidRouter), 1000e18);
@@ -163,8 +139,10 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             1, // minAmountOut
-            leg1,
-            leg2,
+            leg1Commands,
+            leg1Inputs,
+            leg2Commands,
+            leg2Inputs,
             block.timestamp + 1 hours
         );
 
@@ -200,18 +178,8 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
         refundRouter.setShouldRefund(true);
         refundRouter.setRefundAmount(0.5 ether);
 
-        bytes memory leg1 = abi.encodeWithSelector(
-            refundRouter.execute.selector,
-            "",
-            new bytes[](0),
-            block.timestamp
-        );
-        bytes memory leg2 = abi.encodeWithSelector(
-            refundRouter.execute.selector,
-            "",
-            new bytes[](0),
-            block.timestamp
-        );
+        (bytes memory leg1Commands, bytes[] memory leg1Inputs) = _validRoute();
+        (bytes memory leg2Commands, bytes[] memory leg2Inputs) = _validRoute();
 
         vm.prank(user1);
         token.approve(address(refundRouterInstance), 1000e18);
@@ -226,8 +194,10 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             1, // minAmountOut
-            leg1,
-            leg2,
+            leg1Commands,
+            leg1Inputs,
+            leg2Commands,
+            leg2Inputs,
             block.timestamp + 1 hours
         );
 

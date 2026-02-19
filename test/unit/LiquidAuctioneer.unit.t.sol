@@ -114,6 +114,18 @@ contract LiquidAuctioneerUnitTest is Test {
         graduated = LiquidGraduated(payable(token));
     }
 
+    function _validRoute()
+        internal
+        pure
+        returns (bytes memory commands, bytes[] memory inputs)
+    {
+        commands = hex"10";
+        inputs = new bytes[](1);
+        bytes memory actions = abi.encodePacked(uint8(0x07), uint8(0x0c), uint8(0x0f));
+        bytes[] memory params = new bytes[](0);
+        inputs[0] = abi.encode(actions, params);
+    }
+
     function test_MigrationViaStrategy_SweepAndGraduate() public {
         address auctionAddr = graduated.auctionAddress();
         rare.transfer(auctionAddr, 100e18);
@@ -128,6 +140,7 @@ contract LiquidAuctioneerUnitTest is Test {
     }
 
     function test_RevertWhenPaused() public {
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
         vm.prank(owner);
         auctioneer.pause();
         vm.prank(user);
@@ -138,7 +151,8 @@ contract LiquidAuctioneerUnitTest is Test {
             user,
             referrer,
             0,
-            hex"01",
+            commands,
+            inputs,
             block.timestamp + 3600
         );
     }
@@ -162,6 +176,7 @@ contract LiquidAuctioneerUnitTest is Test {
             2500,
             5000
         );
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.prank(user);
         vm.expectRevert(ILiquidAuctioneer.UnexpectedEthRefund.selector);
@@ -171,7 +186,8 @@ contract LiquidAuctioneerUnitTest is Test {
             user,
             referrer,
             0,
-            hex"01",
+            commands,
+            inputs,
             block.timestamp + 3600
         );
     }
@@ -277,6 +293,18 @@ contract LiquidAuctioneerSecurityTest is Test {
         );
     }
 
+    function _validRoute()
+        internal
+        pure
+        returns (bytes memory commands, bytes[] memory inputs)
+    {
+        commands = hex"10";
+        inputs = new bytes[](1);
+        bytes memory actions = abi.encodePacked(uint8(0x07), uint8(0x0c), uint8(0x0f));
+        bytes[] memory params = new bytes[](0);
+        inputs[0] = abi.encode(actions, params);
+    }
+
     /// @dev Helper: create a mock LiquidGraduated-like contract that returns a mock auction address
     function _setupMockAuctionToken(
         address auctionAddr
@@ -333,17 +361,13 @@ contract LiquidAuctioneerSecurityTest is Test {
             address(rare)
         );
         address liquidToken = _setupBidToken();
-        bytes memory routeData = abi.encodeWithSelector(
-            bidRouter.execute.selector,
-            "",
-            new bytes[](0),
-            block.timestamp
-        );
+        (bytes memory bidCommands, bytes[] memory bidInputs) = _validRoute();
         ReentrantBeneficiaryForAuctioneer beneficiary = new ReentrantBeneficiaryForAuctioneer();
         beneficiary.setBidParams(
             liquidToken,
             user,
-            routeData,
+            bidCommands,
+            bidInputs,
             block.timestamp + 1 hours
         );
 
@@ -363,7 +387,8 @@ contract LiquidAuctioneerSecurityTest is Test {
             user,
             address(0),
             0,
-            routeData,
+            bidCommands,
+            bidInputs,
             block.timestamp + 1 hours
         );
 
@@ -393,6 +418,7 @@ contract LiquidAuctioneerSecurityTest is Test {
             address(bidRouter),
             address(rejectingProtocol)
         );
+        (bytes memory bidCommands, bytes[] memory bidInputs) = _validRoute();
 
         vm.expectRevert(ILiquidRouter.EthTransferFailed.selector);
         vm.prank(user);
@@ -402,12 +428,8 @@ contract LiquidAuctioneerSecurityTest is Test {
             user,
             address(0),
             0,
-            abi.encodeWithSelector(
-                bidRouter.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            bidCommands,
+            bidInputs,
             block.timestamp + 1 hours
         );
     }
@@ -429,17 +451,13 @@ contract LiquidAuctioneerSecurityTest is Test {
         );
         rare.mint(address(mockAuction), refundAmount);
         address liquidToken = _setupMockAuctionToken(address(mockAuction));
-        bytes memory routeData = abi.encodeWithSelector(
-            ethRouter.execute.selector,
-            "",
-            new bytes[](0),
-            block.timestamp
-        );
+        (bytes memory exitCommands, bytes[] memory exitInputs) = _validRoute();
 
         ReentrantRecipientForAuctioneer exitRecipient = new ReentrantRecipientForAuctioneer(
                 payable(address(ethAuctioneer)),
                 liquidToken,
-                routeData,
+                exitCommands,
+                exitInputs,
                 block.timestamp + 1 hours,
                 true
             );
@@ -452,7 +470,8 @@ contract LiquidAuctioneerSecurityTest is Test {
             0,
             address(exitRecipient),
             0,
-            routeData,
+            exitCommands,
+            exitInputs,
             block.timestamp + 1 hours
         );
         vm.stopPrank();
@@ -475,17 +494,13 @@ contract LiquidAuctioneerSecurityTest is Test {
         );
         rare.mint(address(mockAuction), refundAmount);
         address liquidToken = _setupMockAuctionToken(address(mockAuction));
-        bytes memory routeData = abi.encodeWithSelector(
-            ethRouter.execute.selector,
-            "",
-            new bytes[](0),
-            block.timestamp
-        );
+        (bytes memory exitCommands, bytes[] memory exitInputs) = _validRoute();
 
         ReentrantRecipientForAuctioneer exitRecipient = new ReentrantRecipientForAuctioneer(
                 payable(address(ethAuctioneer)),
                 liquidToken,
-                routeData,
+                exitCommands,
+                exitInputs,
                 block.timestamp + 1 hours,
                 false
             );
@@ -500,7 +515,8 @@ contract LiquidAuctioneerSecurityTest is Test {
             0,
             address(exitRecipient),
             0,
-            routeData,
+            exitCommands,
+            exitInputs,
             block.timestamp + 1 hours
         );
         vm.stopPrank();
@@ -527,6 +543,7 @@ contract LiquidAuctioneerSecurityTest is Test {
         // User approves auctioneer to pull RARE
         vm.startPrank(user);
         rare.approve(address(malAuctioneer), type(uint256).max);
+        (bytes memory exitCommands, bytes[] memory exitInputs) = _validRoute();
 
         // After fix: should revert because malicious router doesn't actually consume RARE
         // (it transfers RARE to attacker, but the balance check catches it)
@@ -536,7 +553,8 @@ contract LiquidAuctioneerSecurityTest is Test {
             0, // bidId
             recipient,
             0, // minEthOut
-            hex"01", // routeData (non-empty to pass validation)
+            exitCommands,
+            exitInputs,
             block.timestamp + 1 hours
         );
         vm.stopPrank();
@@ -578,6 +596,7 @@ contract LiquidAuctioneerSecurityTest is Test {
         // User approves and calls exit with minEthOut = 0
         vm.startPrank(user);
         rare.approve(address(noEthAuctioneer), type(uint256).max);
+        (bytes memory exitCommands, bytes[] memory exitInputs) = _validRoute();
 
         uint256 recipientBalBefore = recipient.balance;
         uint256 ethReceived = noEthAuctioneer.exitBidToETH(
@@ -585,7 +604,8 @@ contract LiquidAuctioneerSecurityTest is Test {
             0,
             recipient,
             0, // minEthOut = 0 (accept zero ETH)
-            hex"01",
+            exitCommands,
+            exitInputs,
             block.timestamp + 1 hours
         );
         vm.stopPrank();
@@ -628,6 +648,7 @@ contract LiquidAuctioneerSecurityTest is Test {
 
         vm.startPrank(user);
         rare.approve(address(ethAuctioneer), type(uint256).max);
+        (bytes memory exitCommands, bytes[] memory exitInputs) = _validRoute();
 
         // minEthOut = 1 ETH, but router only returns 0.5 ETH
         vm.expectRevert(abi.encodeWithSignature("SlippageExceeded()"));
@@ -636,7 +657,8 @@ contract LiquidAuctioneerSecurityTest is Test {
             0,
             recipient,
             1 ether, // minEthOut: too high
-            hex"01",
+            exitCommands,
+            exitInputs,
             block.timestamp + 1 hours
         );
         vm.stopPrank();
@@ -664,6 +686,7 @@ contract LiquidAuctioneerSecurityTest is Test {
 
         vm.startPrank(user);
         rare.approve(address(ethAuctioneer), type(uint256).max);
+        (bytes memory exitCommands, bytes[] memory exitInputs) = _validRoute();
 
         uint256 recipientBalBefore = recipient.balance;
         uint256 ethReceived = ethAuctioneer.exitBidToETH(
@@ -671,7 +694,8 @@ contract LiquidAuctioneerSecurityTest is Test {
             0,
             recipient,
             1 ether, // minEthOut: expect at least 1 ETH
-            hex"01",
+            exitCommands,
+            exitInputs,
             block.timestamp + 1 hours
         );
         vm.stopPrank();
@@ -704,6 +728,7 @@ contract LiquidAuctioneerSecurityTest is Test {
 
         vm.startPrank(user);
         rare.approve(address(ethAuctioneer), type(uint256).max);
+        (bytes memory exitCommands, bytes[] memory exitInputs) = _validRoute();
 
         vm.expectRevert(abi.encodeWithSignature("AddressZero()"));
         ethAuctioneer.exitBidToETH(
@@ -711,7 +736,8 @@ contract LiquidAuctioneerSecurityTest is Test {
             0,
             address(0), // zero recipient
             0,
-            hex"01",
+            exitCommands,
+            exitInputs,
             block.timestamp + 1 hours
         );
         vm.stopPrank();
@@ -845,7 +871,8 @@ contract ReentrantBeneficiaryForAuctioneer {
     LiquidAuctioneer public auctioneer;
     address public liquidToken;
     address public bidOwner;
-    bytes public routeData;
+    bytes public routeCommands;
+    bytes[] public routeInputs;
     uint256 public deadline;
     bool public shouldReenter;
 
@@ -858,12 +885,14 @@ contract ReentrantBeneficiaryForAuctioneer {
     function setBidParams(
         address _liquidToken,
         address _bidOwner,
-        bytes calldata _routeData,
+        bytes calldata _routeCommands,
+        bytes[] calldata _routeInputs,
         uint256 _deadline
     ) external {
         liquidToken = _liquidToken;
         bidOwner = _bidOwner;
-        routeData = _routeData;
+        routeCommands = _routeCommands;
+        routeInputs = _routeInputs;
         deadline = _deadline;
         shouldReenter = true;
     }
@@ -878,7 +907,8 @@ contract ReentrantBeneficiaryForAuctioneer {
             bidOwner,
             address(0),
             0,
-            routeData,
+            routeCommands,
+            routeInputs,
             deadline
         );
     }
@@ -887,20 +917,23 @@ contract ReentrantBeneficiaryForAuctioneer {
 contract ReentrantRecipientForAuctioneer {
     LiquidAuctioneer public auctioneer;
     address public liquidToken;
-    bytes public routeData;
+    bytes public routeCommands;
+    bytes[] public routeInputs;
     uint256 public deadline;
     bool public useFullExit;
 
     constructor(
         address payable _auctioneer,
         address _liquidToken,
-        bytes memory _routeData,
+        bytes memory _routeCommands,
+        bytes[] memory _routeInputs,
         uint256 _deadline,
         bool _useFullExit
     ) {
         auctioneer = LiquidAuctioneer(payable(_auctioneer));
         liquidToken = _liquidToken;
-        routeData = _routeData;
+        routeCommands = _routeCommands;
+        routeInputs = _routeInputs;
         deadline = _deadline;
         useFullExit = _useFullExit;
     }
@@ -912,7 +945,8 @@ contract ReentrantRecipientForAuctioneer {
                 0,
                 address(this),
                 0,
-                routeData,
+                routeCommands,
+                routeInputs,
                 deadline
             );
         } else {
@@ -923,7 +957,8 @@ contract ReentrantRecipientForAuctioneer {
                 0,
                 address(this),
                 0,
-                routeData,
+                routeCommands,
+                routeInputs,
                 deadline
             );
         }

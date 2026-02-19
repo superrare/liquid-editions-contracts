@@ -116,10 +116,10 @@ library NetworkConfig {
                     lbpStrategyFactory: 0x89Dd5691e53Ea95d19ED2AbdEdCf4cBbE50da1ff,
                     protocolFeeRecipient: 0xBa68422A154e459f7b4992a95Ad358d412b6bd1d,
                     liquid: LiquidAddresses({
-                        factory: 0x522eADA54e18289c98798dc9b6286A794ddDf003,
-                        router: 0x6Ac1182EdC9A35c0f956b18A9d9F95Dc0171E7F0,
-                        auctioneer: 0xd39Ed6DC7368fbA7c050E7C5a057571320Fa51E4,
-                        swapGuard: 0xc5016af242Ffa74b2C243Ee0346475280e6d8080
+                        factory: 0x11111f5B72e4a46b5Bd2Bce90098A05c5DfB3e54,
+                        router: 0x889b8bc562a4bed31510a1352FD351649D8EebB2,
+                        auctioneer: 0xF7554806d4F952bB0870279909122C074b5ba881,
+                        swapGuard: 0x69E682bde73c1906CCcE0B0aA0587D63B4C4E080
                     })
                 });
         }

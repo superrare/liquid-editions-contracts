@@ -144,12 +144,17 @@ contract ReentrantRecipientForRouter {
 
     receive() external payable {
         if (shouldReenter) {
+            bytes[] memory inputs = new bytes[](1);
+            bytes memory actions = abi.encodePacked(uint8(0x07), uint8(0x0c), uint8(0x0f));
+            bytes[] memory params = new bytes[](0);
+            inputs[0] = abi.encode(actions, params);
             router.buy{value: 0.01 ether}(
                 token,
                 beneficiary,
                 address(0),
                 1,
-                abi.encodePacked(bytes1(0x00)),
+                hex"10",
+                inputs,
                 block.timestamp + 1 hours
             );
         }
@@ -237,6 +242,20 @@ abstract contract LiquidRouterUnitTestBase is Test {
     uint256 constant RARE_BURN_FEE_BPS = 5000;
     uint256 constant PROTOCOL_FEE_BPS = 3000;
     uint256 constant REFERRER_FEE_BPS = 2000;
+
+    function _validRoute()
+        internal
+        pure
+        returns (bytes memory commands, bytes[] memory inputs)
+    {
+        commands = hex"10";
+        inputs = new bytes[](1);
+
+        // V4 route with allowed actions only.
+        bytes memory actions = abi.encodePacked(uint8(0x07), uint8(0x0c), uint8(0x0f));
+        bytes[] memory params = new bytes[](0);
+        inputs[0] = abi.encode(actions, params);
+    }
 
     function deployLiquidRouter(
         address universalRouter,

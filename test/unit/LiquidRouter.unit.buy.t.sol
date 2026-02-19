@@ -16,6 +16,7 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         uint256 expectedFee = (ethAmount * TOTAL_FEE_BPS) / 10000; // 4%
         uint256 ethForSwap = ethAmount - expectedFee;
         uint256 expectedTokens = (ethForSwap * router.tokenPerEth()) / 1e18;
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.prank(user1);
         uint256 tokensReceived = liquidRouter.buy{value: ethAmount}(
@@ -23,12 +24,8 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             1, // minTokensOut (must be > 0)
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
 
@@ -38,6 +35,7 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
 
     function testBuyEmitsEvent() public {
         uint256 ethAmount = 1 ether;
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.expectEmit(true, true, true, false);
         emit ILiquidRouter.RouterBuy(
@@ -61,12 +59,8 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             1, // minTokensOut (must be > 0)
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
     }
@@ -74,6 +68,7 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
     function testBuyDistributesFees() public {
         uint256 ethAmount = 1 ether;
         uint256 totalFee = (ethAmount * TOTAL_FEE_BPS) / 10000; // 4%
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         uint256 protocolBalBefore = protocolFeeRecipient.balance;
         uint256 referrerBalBefore = referrer.balance;
@@ -86,12 +81,8 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             1, // minTokensOut (must be > 0)
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
 
@@ -118,6 +109,7 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             referrer,
             1, // minTokensOut (must be > 0)
             "",
+            new bytes[](0),
             block.timestamp + 1 hours
         );
     }
@@ -131,6 +123,7 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             referrer,
             1, // minTokensOut (must be > 0)
             "",
+            new bytes[](0),
             block.timestamp + 1 hours
         );
     }
@@ -138,6 +131,7 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
     function testBuyRevertsOnSlippageExceeded() public {
         uint256 ethAmount = 1 ether;
         uint256 unreasonablyHighMinOut = 1000000e18;
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.expectRevert(ILiquidRouter.SlippageExceeded.selector);
         vm.prank(user1);
@@ -146,18 +140,15 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             unreasonablyHighMinOut,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
     }
 
     function testBuyRevertsOnSwapFailure() public {
         router.setShouldFail(true);
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.expectRevert("Router: swap failed");
         vm.prank(user1);
@@ -166,17 +157,14 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             1, // minTokensOut (must be > 0)
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
     }
 
     function testBuyRevertsOnZeroMinTokensOut() public {
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
         vm.expectRevert(ILiquidRouter.InvalidAmount.selector);
         vm.prank(user1);
         liquidRouter.buy{value: 1 ether}(
@@ -184,12 +172,8 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             BoundaryConstants.ZERO, // minTokensOut must be > 0
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
     }
@@ -215,12 +199,7 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         vm.prank(admin);
         fotLiquidRouter.registerToken(address(fot), beneficiary);
 
-        bytes memory routeData = abi.encodeWithSelector(
-            fotRouter.execute.selector,
-            "",
-            new bytes[](0),
-            block.timestamp
-        );
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         // Calculate expected amounts after swap
         uint256 fee = (ethAmount * TOTAL_FEE_BPS) / 10000; // 4%
@@ -245,13 +224,15 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             1, // minTokensOut (must be > 0)
-            routeData,
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
     }
 
     function testBuyRevertsOnExpiredDeadline() public {
         vm.warp(block.timestamp + 2 hours);
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.expectRevert(ILiquidRouter.DeadlineExpired.selector);
         vm.prank(user1);
@@ -260,12 +241,8 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             1, // minTokensOut (must be > 0)
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp - 1 hours
-            ),
+            commands,
+            inputs,
             block.timestamp - 1 // Expired
         );
     }
@@ -278,7 +255,8 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             1, // minTokensOut (must be > 0 to reach routeData check)
-            "", // Empty routeData
+            "",
+            new bytes[](0),
             block.timestamp + 1 hours
         );
     }
@@ -286,6 +264,7 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
     function testBuyToDifferentRecipient() public {
         uint256 ethAmount = 1 ether;
         uint256 user2TokensBefore = token.balanceOf(user2);
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         // user1 buys for user2
         vm.prank(user1);
@@ -294,12 +273,8 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             user2, // recipient is user2
             referrer,
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
 
@@ -329,6 +304,7 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
 
         refundRouter.setShouldRefund(true);
         refundRouter.setRefundAmount(1 wei); // Refund 1 wei
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.expectRevert(ILiquidRouter.UnexpectedEthRefund.selector);
         vm.prank(user1);
@@ -337,12 +313,8 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             1, // minTokensOut
-            abi.encodeWithSelector(
-                refundRouter.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
     }
@@ -369,6 +341,7 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
 
         refundRouter.setShouldRefund(true);
         refundRouter.setRefundAmount(0.1 ether); // Refund 10% of 1 ether
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.expectRevert(ILiquidRouter.UnexpectedEthRefund.selector);
         vm.prank(user1);
@@ -377,12 +350,8 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             1, // minTokensOut
-            abi.encodeWithSelector(
-                refundRouter.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
     }
@@ -399,6 +368,7 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         uint256 expectedFee = (ethAmount * TOTAL_FEE_BPS) / 10000;
         uint256 expectedTokens = ((ethAmount - expectedFee) * router.tokenPerEth()) /
             1e18;
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.prank(user1);
         uint256 tokensReceived = liquidRouter.buy{value: ethAmount}(
@@ -406,12 +376,8 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             1, // minTokensOut
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
 
@@ -448,6 +414,7 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
 
         refundRouter.setShouldRefund(true);
         refundRouter.setRefundAmount(1 wei); // Refund 1 wei
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.expectRevert(ILiquidRouter.UnexpectedEthRefund.selector);
         vm.prank(user1);
@@ -456,12 +423,8 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             user1,
             referrer,
             1, // minTokensOut
-            abi.encodeWithSelector(
-                refundRouter.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
 

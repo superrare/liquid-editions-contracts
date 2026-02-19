@@ -36,8 +36,8 @@ import {LiquidFeeLib} from "liquid-editions/LiquidFeeLib.sol";
 /// Clients must:
 /// 1. Use Universal Router's Quoter to determine expected output off-chain
 /// 2. Encode the swap route using Universal Router's command format
-/// 3. Pass the encoded routeData to buy()/sell()/swap()
-/// 4. The routeData MUST use EXACT_INPUT for buys (no partial fills / ETH refunds)
+/// 3. Pass `commands` and `inputs` to buy()/sell()/swap()
+/// 4. Routes MUST use EXACT_INPUT semantics (no partial fills / refunds)
 ///
 /// ## Security Model
 /// - nonReentrant on all trading functions
@@ -183,7 +183,8 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     /// @param recipient The address to receive the tokens
     /// @param orderReferrer The address of the order referrer (receives referrer fee)
     /// @param minTokensOut Minimum tokens to receive (slippage protection)
-    /// @param routeData Encoded Universal Router commands and inputs for the swap
+    /// @param commands Encoded Universal Router command bytes
+    /// @param inputs Encoded Universal Router command inputs (one per command)
     /// @param deadline Transaction deadline timestamp
     /// @return tokensReceived The amount of tokens received
     ///
@@ -195,7 +196,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     /// 5. Fee is distributed to beneficiary/protocol/referrer/burn
     ///
     /// ## Client Requirements
-    /// - routeData must be pre-encoded for ETH → token swap
+    /// - commands/inputs must encode an ETH → token swap
     /// - MUST use EXACT_INPUT route type (entire ethForSwap amount is consumed)
     /// - Quote the expected output off-chain using Universal Router's Quoter
     /// - Set minTokensOut based on quoted output minus acceptable slippage
@@ -209,7 +210,8 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         address recipient,
         address orderReferrer,
         uint256 minTokensOut,
-        bytes calldata routeData,
+        bytes calldata commands,
+        bytes[] calldata inputs,
         uint256 deadline
     )
         external
@@ -241,13 +243,14 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         // This gives us the "baseline" ETH balance to compare against after swap
         uint256 ethBalanceBefore = address(this).balance - msg.value;
 
-        // Client provides pre-encoded Universal Router calldata
         // Route: ETH → token (potentially multi-hop via WETH → intermediate → token)
         LiquidFeeLib.executeSwap(
             universalRouter,
             ethForSwap,
-            routeData,
-            deadline
+            commands,
+            inputs,
+            deadline,
+            false
         );
 
         // SECURITY: Ensure no ETH was returned by the router
@@ -307,7 +310,8 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     /// @param recipient The address to receive the ETH
     /// @param orderReferrer The address of the order referrer (receives referrer fee)
     /// @param minEthOut Minimum GROSS ETH expected from swap (before fees) - slippage protection
-    /// @param routeData Encoded Universal Router commands and inputs for the swap
+    /// @param commands Encoded Universal Router command bytes
+    /// @param inputs Encoded Universal Router command inputs (one per command)
     /// @param deadline Transaction deadline timestamp
     /// @return ethReceived The amount of ETH received (after fees)
     ///
@@ -325,7 +329,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     ///
     /// ## Client Requirements
     /// - User must have approved this contract for tokenAmount first
-    /// - routeData must be pre-encoded for token → ETH swap (unwrap WETH to ETH)
+    /// - commands/inputs must encode a token → ETH swap
     /// - Quote the expected ETH output off-chain using Universal Router's Quoter
     /// - Set minEthOut to quoted gross output with your slippage tolerance applied
     /// - The contract internally adjusts for the TOTAL_FEE_BPS fee
@@ -341,7 +345,8 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         address recipient,
         address orderReferrer,
         uint256 minEthOut,
-        bytes calldata routeData,
+        bytes calldata commands,
+        bytes[] calldata inputs,
         uint256 deadline
     ) external nonReentrant whenNotPaused returns (uint256 ethReceived) {
         // input validation
@@ -363,10 +368,16 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
 
         uint256 ethBalanceBefore = address(this).balance;
 
-        // Client provides pre-encoded Universal Router calldata
         // Route: token → ETH (via token → WETH → unwrap, potentially multi-hop)
         // Pass 0 ETH value since we're selling tokens, not buying
-        LiquidFeeLib.executeSwap(universalRouter, 0, routeData, deadline);
+        LiquidFeeLib.executeSwap(
+            universalRouter,
+            0,
+            commands,
+            inputs,
+            deadline,
+            true
+        );
 
         // Clear Permit2 approvals
         _clearPermit2(token);
@@ -445,7 +456,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     /// 2. Subtract 4% fee: ethForLeg2 = ethMidpoint * 9600 / 10000
     /// 3. Quote leg2 off-chain with ethForLeg2
     /// 4. Set minAmountOut from leg2 quote with slippage tolerance
-    /// 5. Encode leg1 and leg2 as Universal Router execute() calldata
+    /// 5. Encode leg1 and leg2 as Universal Router commands/inputs
     /// 6. Both legs MUST use EXACT_INPUT routes
     ///
     /// @param tokenIn Input token (address(0) for ETH)
@@ -454,8 +465,10 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     /// @param recipient Address to receive output
     /// @param orderReferrer Address of the order referrer (receives referrer fee)
     /// @param minAmountOut Minimum final output after fees
-    /// @param leg1 Route: tokenIn -> ETH (empty if input is ETH)
-    /// @param leg2 Route: ETH -> tokenOut (empty if output is ETH)
+    /// @param leg1Commands Route commands for tokenIn -> ETH (empty if input is ETH)
+    /// @param leg1Inputs Route inputs for tokenIn -> ETH
+    /// @param leg2Commands Route commands for ETH -> tokenOut (empty if output is ETH)
+    /// @param leg2Inputs Route inputs for ETH -> tokenOut
     /// @param deadline Transaction deadline timestamp
     /// @return amountOut The amount of output received
     function swap(
@@ -465,19 +478,29 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         address recipient,
         address orderReferrer,
         uint256 minAmountOut,
-        bytes calldata leg1,
-        bytes calldata leg2,
+        bytes calldata leg1Commands,
+        bytes[] calldata leg1Inputs,
+        bytes calldata leg2Commands,
+        bytes[] calldata leg2Inputs,
         uint256 deadline
     ) external payable nonReentrant whenNotPaused returns (uint256 amountOut) {
         // --- VALIDATION ---
         if (recipient == address(0)) revert AddressZero();
         if (minAmountOut == 0) revert InvalidAmount();
-        if (leg1.length == 0 && leg2.length == 0) revert BothLegsEmpty();
+        if (leg1Commands.length == 0 && leg2Commands.length == 0) {
+            revert BothLegsEmpty();
+        }
+        if (leg1Commands.length == 0 && leg1Inputs.length != 0) {
+            revert InvalidRouteData();
+        }
+        if (leg2Commands.length == 0 && leg2Inputs.length != 0) {
+            revert InvalidRouteData();
+        }
 
         // --- LEG 1: tokenIn -> ETH ---
         uint256 grossEth;
 
-        if (leg1.length == 0) {
+        if (leg1Commands.length == 0) {
             // Input is ETH
             if (tokenIn != address(0)) revert InvalidRouteData();
             grossEth = msg.value;
@@ -497,7 +520,14 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
             _approvePermit2(tokenIn, amountIn);
 
             uint256 ethBefore = address(this).balance;
-            LiquidFeeLib.executeSwap(universalRouter, 0, leg1, deadline);
+            LiquidFeeLib.executeSwap(
+                universalRouter,
+                0,
+                leg1Commands,
+                leg1Inputs,
+                deadline,
+                true
+            );
 
             _clearPermit2(tokenIn);
             _verifyTokensConsumed(tokenIn, tokenBalanceBefore, amountIn);
@@ -510,7 +540,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         uint256 ethForLeg2 = grossEth - fee;
 
         // --- LEG 2: ETH -> tokenOut ---
-        if (leg2.length == 0) {
+        if (leg2Commands.length == 0) {
             // Output is ETH
             if (tokenOut != address(0)) revert InvalidRouteData();
             amountOut = ethForLeg2;
@@ -536,8 +566,10 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
             LiquidFeeLib.executeSwap(
                 universalRouter,
                 ethForLeg2,
-                leg2,
-                deadline
+                leg2Commands,
+                leg2Inputs,
+                deadline,
+                false
             );
 
             // SECURITY: Ensure no ETH was refunded by Universal Router
@@ -582,7 +614,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
             msg.sender,
             recipient,
             orderReferrer,
-            leg1.length == 0 ? msg.value : amountIn,
+            leg1Commands.length == 0 ? msg.value : amountIn,
             grossEth,
             fee,
             amountOut,

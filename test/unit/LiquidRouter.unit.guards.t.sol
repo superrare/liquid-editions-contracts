@@ -28,18 +28,15 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
 
         vm.expectRevert(ILiquidRouter.EthTransferFailed.selector);
         vm.prank(address(reentrant));
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
         liquidRouter.sell(
             address(token),
             tokenAmount,
             address(reentrant),
             referrer,
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
     }
@@ -59,17 +56,14 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
         );
 
         vm.prank(user1);
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
         liquidRouter.buy{value: 1 ether}(
             address(token),
             user1,
             referrer,
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
 
@@ -89,18 +83,15 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
         token.approve(address(liquidRouter), tokenAmount);
 
         vm.prank(user1);
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
         liquidRouter.sell(
             address(token),
             tokenAmount,
             user1,
             address(reentrantReferrer),
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
 
@@ -139,17 +130,14 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
 
         vm.expectRevert(ILiquidRouter.EthTransferFailed.selector);
         vm.prank(user1);
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
         rejectingRouter.buy{value: 1 ether}(
             address(token),
             user1,
             referrer,
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
     }
@@ -176,18 +164,15 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
 
         vm.expectRevert(ILiquidRouter.EthTransferFailed.selector);
         vm.prank(user1);
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
         rejectingRouter.sell(
             address(token),
             tokenAmount,
             user1,
             referrer,
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
     }

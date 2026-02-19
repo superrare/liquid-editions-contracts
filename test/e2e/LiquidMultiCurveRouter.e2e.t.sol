@@ -479,7 +479,7 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
     ) internal returns (uint256 tokensReceived) {
         uint256 ethForSwap = (ethAmount * (10000 - router.TOTAL_FEE_BPS())) /
             10000;
-        bytes memory routeData = _encodeBuyRouteWithHooks(
+        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRouteWithHooks(
             token,
             poolHooks,
             ethForSwap,
@@ -492,7 +492,8 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
                 recipient,
                 referrer,
                 1,
-                routeData,
+                commands,
+                inputs,
                 block.timestamp + 1 hours
             );
     }
@@ -507,7 +508,7 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
     ) internal returns (uint256 ethReceived) {
         vm.startPrank(asUser);
         IERC20(token).approve(address(router), tokenAmount);
-        bytes memory routeData = _encodeSellRouteWithHooks(
+        (bytes memory commands, bytes[] memory inputs) = _encodeSellRouteWithHooks(
             token,
             poolHooks,
             tokenAmount,
@@ -519,7 +520,8 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
             recipient,
             referrer,
             1,
-            routeData,
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
         vm.stopPrank();

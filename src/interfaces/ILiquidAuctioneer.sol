@@ -20,7 +20,7 @@ interface ILiquidAuctioneer {
     /// @notice Thrown when ETH received from swap is below the caller's minimum
     error SlippageExceeded();
 
-    /// @notice Thrown when RARE tokens were not fully consumed by the swap (possible theft via routeData)
+    /// @notice Thrown when RARE tokens were not fully consumed by the swap (possible theft via crafted route)
     error UnexpectedTokenBalance();
 
     /// @notice Thrown when router returns unexpected ETH (breaks fee accounting)
@@ -50,7 +50,8 @@ interface ILiquidAuctioneer {
     /// @param bidOwner Owner of the bid (receives tokens/refunds)
     /// @param orderReferrer Address of the order referrer (receives referrer fee)
     /// @param prevTickPrice Previous tick price for bid ordering
-    /// @param routeData Encoded Universal Router route for ETH -> RARE swap
+    /// @param commands Encoded Universal Router command bytes for ETH -> RARE swap
+    /// @param inputs Encoded Universal Router command inputs (one per command)
     /// @param deadline Transaction deadline timestamp
     /// @return bidId The bid ID from the auction
     function bidWithETH(
@@ -59,7 +60,8 @@ interface ILiquidAuctioneer {
         address bidOwner,
         address orderReferrer,
         uint256 prevTickPrice,
-        bytes calldata routeData,
+        bytes calldata commands,
+        bytes[] calldata inputs,
         uint256 deadline
     ) external payable returns (uint256 bidId);
 
@@ -68,7 +70,8 @@ interface ILiquidAuctioneer {
     /// @param bidId The bid ID to exit
     /// @param recipient Address to receive ETH
     /// @param minEthOut Minimum ETH output required (slippage protection)
-    /// @param routeData Encoded Universal Router route for RARE -> ETH swap
+    /// @param commands Encoded Universal Router command bytes for RARE -> ETH swap
+    /// @param inputs Encoded Universal Router command inputs (one per command)
     /// @param deadline Transaction deadline timestamp
     /// @return ethReceived Amount of ETH received
     function exitBidToETH(
@@ -76,7 +79,8 @@ interface ILiquidAuctioneer {
         uint256 bidId,
         address recipient,
         uint256 minEthOut,
-        bytes calldata routeData,
+        bytes calldata commands,
+        bytes[] calldata inputs,
         uint256 deadline
     ) external returns (uint256 ethReceived);
 
@@ -87,7 +91,8 @@ interface ILiquidAuctioneer {
     /// @param outbidBlock Block where bid was outbid
     /// @param recipient Address to receive ETH
     /// @param minEthOut Minimum ETH output required (slippage protection)
-    /// @param routeData Encoded Universal Router route for RARE -> ETH swap
+    /// @param commands Encoded Universal Router command bytes for RARE -> ETH swap
+    /// @param inputs Encoded Universal Router command inputs (one per command)
     /// @param deadline Transaction deadline timestamp
     /// @return ethReceived Amount of ETH received
     function exitPartialBidToETH(
@@ -97,7 +102,8 @@ interface ILiquidAuctioneer {
         uint256 outbidBlock,
         address recipient,
         uint256 minEthOut,
-        bytes calldata routeData,
+        bytes calldata commands,
+        bytes[] calldata inputs,
         uint256 deadline
     ) external returns (uint256 ethReceived);
 

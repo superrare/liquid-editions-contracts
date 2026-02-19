@@ -47,7 +47,7 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         uint256 ethForSwap = _ethForSwap(ethAmount);
         uint256 rareBefore = IERC20(config.rareToken).balanceOf(buyer);
 
-        bytes memory routeData = _encodeBuyRouteV3Only(
+        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRouteV3Only(
             config.rareToken,
             ethForSwap,
             1
@@ -59,7 +59,8 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             buyer,
             address(0),
             1,
-            routeData,
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
 
@@ -105,7 +106,6 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
 
     // ---------- Router: buy, sell, swap ----------
     function test_Sell_LiquidToken_ViaRouter() public {
-
         // First buy tokens
         _doBuy(buyer, address(liquidToken), buyer, 0.01 ether, address(0));
 
@@ -135,7 +135,6 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
     }
 
     function test_BuySell_RoundTrip() public {
-
         uint256 tokensBought = _doBuy(
             buyer,
             address(liquidToken),
@@ -156,11 +155,10 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
     /// @notice Buy reverts when minTokensOut is unreasonably high (slippage protection)
     /// @dev Revert comes from Universal Router / V4 swap layer (amountOutMinimum), not LiquidRouter
     function test_Buy_RevertsOnSlippage() public {
-
         uint256 ethAmount = 0.01 ether;
         uint256 ethForSwap = _ethForSwap(ethAmount);
         uint256 unreasonableMinOut = 1_000_000 ether;
-        bytes memory routeData = _encodeBuyRoute(
+        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRoute(
             address(liquidToken),
             ethForSwap,
             unreasonableMinOut
@@ -173,7 +171,8 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             buyer,
             address(0),
             unreasonableMinOut,
-            routeData,
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
     }
@@ -181,13 +180,12 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
     /// @notice Sell reverts when minEthOut is unreasonably high (slippage protection)
     /// @dev Revert comes from Universal Router / V4 swap layer (amountOutMinimum), not LiquidRouter
     function test_Sell_RevertsOnSlippage() public {
-
         _doBuy(buyer, address(liquidToken), buyer, 0.01 ether, address(0));
         uint256 tokensToSell = liquidToken.balanceOf(buyer) / 2;
         require(tokensToSell > 0, "No tokens to sell");
 
         uint256 unreasonableMinEthOut = 1000 ether;
-        bytes memory routeData = _encodeSellRoute(
+        (bytes memory commands, bytes[] memory inputs) = _encodeSellRoute(
             address(liquidToken),
             tokensToSell,
             unreasonableMinEthOut
@@ -203,13 +201,13 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             buyer,
             address(0),
             unreasonableMinEthOut,
-            routeData,
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
     }
 
     function test_Buy_WithReferrer_ReceivesFee() public {
-
         // Deploy a second router with referrerFeeBPS > 0 (DeployConfig uses 0)
         DeployConfig.FeeConfig memory referrerRouterConfig = DeployConfig
             .FeeConfig({
@@ -234,7 +232,7 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         uint256 ethAmount = 0.01 ether;
         uint256 ethForSwap = (ethAmount *
             (10000 - referrerRouter.TOTAL_FEE_BPS())) / 10000;
-        bytes memory routeData = _encodeBuyRoute(
+        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRoute(
             address(liquidToken),
             ethForSwap,
             1
@@ -248,7 +246,8 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             buyer,
             referrer,
             1,
-            routeData,
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
 
@@ -261,7 +260,6 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
     }
 
     function test_Burn_LiquidToken() public {
-
         _doBuy(buyer, address(liquidToken), buyer, 0.01 ether, address(0));
 
         uint256 burnAmount = liquidToken.balanceOf(buyer) / 2;
@@ -315,7 +313,6 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
     }
 
     function test_RAREBurner_ReceivesAndFlushes() public {
-
         // Deploy a burner with tryOnDeposit: false so ETH stays in pending (main burner may flush on deposit)
         DeployConfig.BurnerConfig memory burnerCfg = deployConfig.burner;
         burnerCfg.tryOnDeposit = false;
@@ -348,7 +345,7 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         uint256 ethAmount = 0.01 ether;
         uint256 ethForSwap = (ethAmount *
             (10000 - burnRouter.TOTAL_FEE_BPS())) / 10000;
-        bytes memory routeData = _encodeBuyRoute(
+        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRoute(
             address(liquidToken),
             ethForSwap,
             1
@@ -360,7 +357,8 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             buyer,
             address(0),
             1,
-            routeData,
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
 
@@ -378,7 +376,6 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
     // ---------- Factory: createLiquidToken (standalone flow) ----------
     /// @notice Liquid -> Liquid via sell then buy (router has no swap; two-leg flow)
     function test_Swap_LiquidToLiquid_ViaRouter() public {
-
         // Create second Liquid token
         vm.startPrank(tokenCreator);
         uint256 minRare = factory.minRareLiquidityWei();

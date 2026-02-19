@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {IRAREBurner} from "liquid-editions/interfaces/IRAREBurner.sol";
+import {RoutePolicy} from "liquid-editions/RoutePolicy.sol";
 
 /// @title LiquidFeeLib
 /// @notice Shared fee calculation, swap execution, and fee distribution for LiquidRouter and LiquidAuctioneer
@@ -23,6 +24,7 @@ library LiquidFeeLib {
 
     error DeadlineExpired();
     error InvalidRouteData();
+    error CommandInputLengthMismatch();
     error SwapFailed();
     error EthTransferFailed();
 
@@ -61,17 +63,32 @@ library LiquidFeeLib {
     /// @notice Executes a swap via Universal Router
     /// @param universalRouter Address of Uniswap Universal Router
     /// @param ethValue ETH to send with the call
-    /// @param routeData Encoded route data for the swap
+    /// @param commands Encoded Universal Router command bytes
+    /// @param inputs Encoded Universal Router command inputs (one per command)
     /// @param deadline Transaction deadline timestamp
+    /// @param expectsEthOutput True if this route must return native ETH to caller
     function executeSwap(
         address universalRouter,
         uint256 ethValue,
-        bytes calldata routeData,
-        uint256 deadline
+        bytes calldata commands,
+        bytes[] calldata inputs,
+        uint256 deadline,
+        bool expectsEthOutput
     ) internal {
-        // Validate deadline and route data
+        // Validate deadline and route structure
         if (block.timestamp > deadline) revert DeadlineExpired();
-        if (routeData.length == 0) revert InvalidRouteData();
+        if (commands.length == 0) revert InvalidRouteData();
+        if (commands.length != inputs.length) revert CommandInputLengthMismatch();
+
+        // Enforce route policy before crossing the Universal Router boundary.
+        RoutePolicy.validateRoute(commands, inputs, expectsEthOutput);
+
+        bytes memory routeData = abi.encodeWithSignature(
+            "execute(bytes,bytes[],uint256)",
+            commands,
+            inputs,
+            deadline
+        );
 
         // Execute swap via Universal Router (supports V2/V3/V4, multi-hop)
         (bool success, bytes memory result) = universalRouter.call{

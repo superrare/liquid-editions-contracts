@@ -1,8 +1,8 @@
 /**
  * Universal Router encoding for LiquidRouter swaps
  * 
- * This script generates the `routeData` parameter needed for LiquidRouter.buy() and
- * LiquidRouter.sell() by encoding Universal Router swap commands.
+ * This script generates Universal Router `commands` + `inputs` needed for
+ * LiquidRouter.buy() and LiquidRouter.sell().
  * 
  * ROUTING STRATEGY:
  * 1. Query V4 pools directly via V4 Quoter
@@ -361,7 +361,8 @@ interface ManualBuyQuoteParams {
 interface QuoteResult {
   amountOut: string;
   minAmountOut: string;
-  routeData: string;
+  commands: string;
+  inputs: string[];
   deadline: number;
   route: string;
   gasEstimate: string;
@@ -800,14 +801,14 @@ function encodeMultiHopV4Swap(
     ));
 
     // Second swap params (RARE → Liquid)
-    // Use 0 as amountIn to signal "use delta from previous swap"
-    // Actually, we need to use the expected rareAmount
+    // OPEN_DELTA = 0: consume whatever hop1 actually produced.
+    // This is safer than hard-coding an intermediate quote amount.
     params.push(ethers.utils.defaultAbiCoder.encode(
       ['tuple(tuple(address,address,uint24,int24,address),bool,uint128,uint128,bytes)'],
       [[
         [currency0_2, currency1_2, v4RareToLiquid.fee, v4RareToLiquid.tickSpacing, v4RareToLiquid.hooks],
         zeroForOne2,
-        rareAmount,
+        0,
         liquidTokenAmountMin,
         '0x'
       ]]
@@ -1146,18 +1147,8 @@ export async function getManualBuyQuote(
     }
   }
 
-  const universalRouterInterface = new ethers.utils.Interface([
-    'function execute(bytes commands, bytes[] inputs, uint256 deadline)',
-  ]);
-
   // Ensure commands is a hex string starting with 0x
   const commandsHex = commands.startsWith('0x') ? commands : '0x' + commands;
-  
-  const routeData = universalRouterInterface.encodeFunctionData('execute', [
-    commandsHex,
-    inputs,
-    deadline,
-  ]);
 
   const baseGas = 100000;
   const swapGas = swapEncoding.commands === COMMANDS.V3_SWAP_EXACT_IN ? 150000 : 100000;
@@ -1166,7 +1157,8 @@ export async function getManualBuyQuote(
   return {
     amountOut,
     minAmountOut,
-    routeData,
+    commands: commandsHex,
+    inputs,
     deadline,
     route: swapEncoding.description,
     gasEstimate,
@@ -1189,6 +1181,7 @@ async function getMultiHopSellQuote(
   rareAmount: ethers.BigNumber;
   v4Quote: V4QuoteResult; // First hop: Liquid → RARE
   description: string;
+  isEstimated: boolean; // True when spot fallback path is used
   secondHop: {
     type: 'v4' | 'v3';
     v4Quote?: V4QuoteResult;
@@ -1213,6 +1206,7 @@ async function getMultiHopSellQuote(
   }
 
   // Step 1: Quote Liquid → RARE via V4
+  let usedSpotEstimate = false;
   let liquidToRareV4 = await getV4DirectQuote(
     provider,
     chainId,
@@ -1259,6 +1253,7 @@ async function getMultiHopSellQuote(
         // Apply 5% conservative buffer - spot price overestimates for sells (price moves down)
         const conservativeOut = rareOut.mul(95).div(100);
         if (conservativeOut.gt(0)) {
+          usedSpotEstimate = true;
           liquidToRareV4 = {
             amountOut: conservativeOut,
             fee: 0,
@@ -1377,6 +1372,7 @@ async function getMultiHopSellQuote(
     rareAmount,
     v4Quote: liquidToRareV4,
     description: `Liquid → RARE (V4 ${liquidToRareV4.fee / 10000}%) → ETH (${rareToEthRoute})`,
+    isEstimated: usedSpotEstimate,
     secondHop,
   };
 }
@@ -1396,7 +1392,7 @@ function encodeMultiHopV4SellSwap(
   baseTokenAddress: string, // RARE
   liquidTokenAddress: string,
   tokenAmount: ethers.BigNumber,
-  rareAmount: ethers.BigNumber,
+  _rareAmount: ethers.BigNumber,
   ethAmountMin: ethers.BigNumber,
   v4LiquidToRare: V4QuoteResult,
   secondHop: { type: 'v4' | 'v3'; v4Quote?: V4QuoteResult; v3Fee?: number; usesNativeEth: boolean }
@@ -1461,12 +1457,14 @@ function encodeMultiHopV4SellSwap(
     ));
 
     // Second swap params (RARE → ETH)
+    // OPEN_DELTA = 0: consume whatever hop1 actually produced.
+    // Prevents CurrencyNotSettled when intermediate estimates are imprecise.
     params.push(ethers.utils.defaultAbiCoder.encode(
       ['tuple(tuple(address,address,uint24,int24,address),bool,uint128,uint128,bytes)'],
       [[
         [currency0_2, currency1_2, v4Quote.fee, v4Quote.tickSpacing, v4Quote.hooks],
         zeroForOne2,
-        rareAmount,
+        0,
         ethAmountMin,
         '0x'
       ]]
@@ -1667,7 +1665,19 @@ export async function getManualSellQuote(
     const mh = bestQuote.data as NonNullable<typeof multiHopQuote>;
     console.log(`\n✓ Best route: Multi-hop (${mh.description})`);
     amountOut = mh.amountOut.toString();
-    minAmountOut = mh.amountOut.mul(10000 - slippageBps).div(10000).toString();
+    let effectiveSlippageBps = slippageBps;
+    if (mh.isEstimated) {
+      // getCurrentPrice() fallback is a spot estimate and can materially overestimate
+      // output on large sells due to curve impact; widen protection to reduce false reverts.
+      effectiveSlippageBps = Math.max(slippageBps, 5000);
+      console.log(
+        `  ⚠ Spot-estimate route detected; using ${effectiveSlippageBps / 100}% minOut slippage`
+      );
+    }
+    minAmountOut = mh.amountOut
+      .mul(10000 - effectiveSlippageBps)
+      .div(10000)
+      .toString();
     
     // Encode full multi-hop route: Liquid → RARE → ETH
     swapEncoding = encodeMultiHopV4SellSwap(
@@ -1759,15 +1769,7 @@ export async function getManualSellQuote(
     }
   }
 
-  const universalRouterInterface = new ethers.utils.Interface([
-    'function execute(bytes commands, bytes[] inputs, uint256 deadline)',
-  ]);
-
-  const routeData = universalRouterInterface.encodeFunctionData('execute', [
-    commands,
-    inputs,
-    deadline,
-  ]);
+  const commandsHex = commands.startsWith('0x') ? commands : '0x' + commands;
 
   const baseGas = 100000;
   const swapGas = swapEncoding.commands === COMMANDS.V3_SWAP_EXACT_IN ? 150000 : 100000;
@@ -1776,7 +1778,8 @@ export async function getManualSellQuote(
   return {
     amountOut,
     minAmountOut,
-    routeData,
+    commands: commandsHex,
+    inputs,
     deadline,
     route: swapEncoding.description,
     gasEstimate,

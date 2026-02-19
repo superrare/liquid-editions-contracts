@@ -195,7 +195,11 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
         address referrer
     ) internal returns (uint256 tokensReceived) {
         uint256 ethForSwap = _ethForSwap(ethAmount);
-        bytes memory routeData = _encodeBuyRoute(token, ethForSwap, 1);
+        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRoute(
+            token,
+            ethForSwap,
+            1
+        );
         vm.prank(asUser);
         return
             router.buy{value: ethAmount}(
@@ -203,7 +207,8 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
                 recipient,
                 referrer,
                 1,
-                routeData,
+                commands,
+                inputs,
                 block.timestamp + 1 hours
             );
     }
@@ -217,14 +222,19 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
     ) internal returns (uint256 ethReceived) {
         vm.startPrank(asUser);
         IERC20(token).approve(address(router), tokenAmount);
-        bytes memory routeData = _encodeSellRoute(token, tokenAmount, 1);
+        (bytes memory commands, bytes[] memory inputs) = _encodeSellRoute(
+            token,
+            tokenAmount,
+            1
+        );
         ethReceived = router.sell(
             token,
             tokenAmount,
             recipient,
             referrer,
             1,
-            routeData,
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
         vm.stopPrank();
@@ -236,7 +246,7 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
         address poolHooks,
         uint256 ethForSwap,
         uint256 minTokensOut
-    ) internal view returns (bytes memory) {
+    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
         address currencyIn = address(0);
 
         PathKey[] memory path = new PathKey[](2);
@@ -276,24 +286,16 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
 
         bytes memory v4SwapInput = abi.encode(actions, params);
 
-        bytes memory commands = abi.encodePacked(V4_SWAP);
-        bytes[] memory inputs = new bytes[](1);
+        commands = abi.encodePacked(V4_SWAP);
+        inputs = new bytes[](1);
         inputs[0] = v4SwapInput;
-
-        return
-            abi.encodeWithSignature(
-                "execute(bytes,bytes[],uint256)",
-                commands,
-                inputs,
-                block.timestamp + 1 hours
-            );
     }
 
     function _encodeBuyRoute(
         address liquidTokenAddress,
         uint256 ethForSwap,
         uint256 minTokensOut
-    ) internal view returns (bytes memory) {
+    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
         return
             _encodeBuyRouteWithHooks(
                 liquidTokenAddress,
@@ -308,7 +310,7 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
         address poolHooks,
         uint256 tokenAmount,
         uint256 minEthOut
-    ) internal view returns (bytes memory) {
+    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
         address outputCurrency = address(0);
 
         PathKey[] memory path = new PathKey[](2);
@@ -349,24 +351,16 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
 
         bytes memory v4SwapInput = abi.encode(actions, params);
 
-        bytes memory commands = abi.encodePacked(V4_SWAP);
-        bytes[] memory inputs = new bytes[](1);
+        commands = abi.encodePacked(V4_SWAP);
+        inputs = new bytes[](1);
         inputs[0] = v4SwapInput;
-
-        return
-            abi.encodeWithSignature(
-                "execute(bytes,bytes[],uint256)",
-                commands,
-                inputs,
-                block.timestamp + 1 hours
-            );
     }
 
     function _encodeSellRoute(
         address liquidTokenAddress,
         uint256 tokenAmount,
         uint256 minEthOut
-    ) internal view returns (bytes memory) {
+    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
         return
             _encodeSellRouteWithHooks(
                 liquidTokenAddress,
@@ -383,7 +377,7 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
         address outputToken,
         uint256 ethForSwap,
         uint256 minTokensOut
-    ) internal view returns (bytes memory) {
+    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
         bytes memory wrapInput = abi.encode(
             ROUTER_ADDRESS,
             ethForSwap
@@ -404,24 +398,16 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
             false // payerIsUser = false (Universal Router has WETH)
         );
 
-        bytes memory commands = abi.encodePacked(WRAP_ETH, V3_SWAP_EXACT_IN);
-        bytes[] memory inputs = new bytes[](2);
+        commands = abi.encodePacked(WRAP_ETH, V3_SWAP_EXACT_IN);
+        inputs = new bytes[](2);
         inputs[0] = wrapInput;
         inputs[1] = v3SwapInput;
-
-        return
-            abi.encodeWithSignature(
-                "execute(bytes,bytes[],uint256)",
-                commands,
-                inputs,
-                block.timestamp + 1 hours
-            );
     }
 
     function _encodeBuyRouteForSwapLeg2(
         address liquidTokenAddress,
         uint256 minTokensOut
-    ) internal view returns (bytes memory) {
+    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
         address currencyIn = address(0);
 
         PathKey[] memory path = new PathKey[](2);
@@ -461,16 +447,8 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
 
         bytes memory v4SwapInput = abi.encode(actions, params);
 
-        bytes memory commands = abi.encodePacked(V4_SWAP);
-        bytes[] memory inputs = new bytes[](1);
+        commands = abi.encodePacked(V4_SWAP);
+        inputs = new bytes[](1);
         inputs[0] = v4SwapInput;
-
-        return
-            abi.encodeWithSignature(
-                "execute(bytes,bytes[],uint256)",
-                commands,
-                inputs,
-                block.timestamp + 1 hours
-            );
     }
 }

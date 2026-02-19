@@ -86,7 +86,8 @@ contract LiquidAuctioneer is
     /// @param bidOwner Address that will own the bid and receive filled tokens
     /// @param orderReferrer Referrer address (receives referrer fee)
     /// @param prevTickPrice Previous tick price for CCA (use floorPrice when maxPrice=0)
-    /// @param routeData Encoded Universal Router route (ETH -> RARE)
+    /// @param commands Encoded Universal Router command bytes (ETH -> RARE)
+    /// @param inputs Encoded Universal Router command inputs (one per command)
     /// @param deadline Swap deadline
     /// @return bidId The CCA bid ID
     function bidWithETH(
@@ -95,7 +96,8 @@ contract LiquidAuctioneer is
         address bidOwner,
         address orderReferrer,
         uint256 prevTickPrice,
-        bytes calldata routeData,
+        bytes calldata commands,
+        bytes[] calldata inputs,
         uint256 deadline
     ) external payable nonReentrant whenNotPaused returns (uint256 bidId) {
         if (liquidToken == address(0) || bidOwner == address(0))
@@ -113,8 +115,10 @@ contract LiquidAuctioneer is
         LiquidFeeLib.executeSwap(
             UNIVERSAL_ROUTER,
             ethForSwap,
-            routeData,
-            deadline
+            commands,
+            inputs,
+            deadline,
+            false
         );
 
         // SECURITY: Ensure no ETH was returned by the router (breaks fee accounting)
@@ -273,7 +277,8 @@ contract LiquidAuctioneer is
     /// @param bidId The CCA bid ID
     /// @param recipient ETH recipient
     /// @param minEthOut Minimum ETH out (slippage protection)
-    /// @param routeData Encoded Universal Router route (RARE -> ETH)
+    /// @param commands Encoded Universal Router command bytes (RARE -> ETH)
+    /// @param inputs Encoded Universal Router command inputs (one per command)
     /// @param deadline Swap deadline
     /// @return ethReceived ETH sent to recipient
     function exitBidToETH(
@@ -281,7 +286,8 @@ contract LiquidAuctioneer is
         uint256 bidId,
         address recipient,
         uint256 minEthOut,
-        bytes calldata routeData,
+        bytes calldata commands,
+        bytes[] calldata inputs,
         uint256 deadline
     ) external nonReentrant whenNotPaused returns (uint256 ethReceived) {
         if (recipient == address(0)) revert ILiquidRouter.AddressZero();
@@ -310,7 +316,14 @@ contract LiquidAuctioneer is
 
         // Swap RARE -> ETH via Universal Router (uses Permit2)
         _approvePermit2ForRouter(rareRefund);
-        LiquidFeeLib.executeSwap(UNIVERSAL_ROUTER, 0, routeData, deadline);
+        LiquidFeeLib.executeSwap(
+            UNIVERSAL_ROUTER,
+            0,
+            commands,
+            inputs,
+            deadline,
+            true
+        );
         _clearPermit2ForRouter();
 
         // Ensure all RARE we pulled was consumed (prevents partial swap exploits)
@@ -338,7 +351,8 @@ contract LiquidAuctioneer is
     /// @param outbidBlock Block when bid was outbid
     /// @param recipient ETH recipient
     /// @param minEthOut Minimum ETH out (slippage protection)
-    /// @param routeData Encoded Universal Router route (RARE -> ETH)
+    /// @param commands Encoded Universal Router command bytes (RARE -> ETH)
+    /// @param inputs Encoded Universal Router command inputs (one per command)
     /// @param deadline Swap deadline
     /// @return ethReceived ETH sent to recipient
     function exitPartialBidToETH(
@@ -348,7 +362,8 @@ contract LiquidAuctioneer is
         uint256 outbidBlock,
         address recipient,
         uint256 minEthOut,
-        bytes calldata routeData,
+        bytes calldata commands,
+        bytes[] calldata inputs,
         uint256 deadline
     ) external nonReentrant whenNotPaused returns (uint256 ethReceived) {
         if (recipient == address(0)) revert ILiquidRouter.AddressZero();
@@ -380,7 +395,14 @@ contract LiquidAuctioneer is
 
         // Swap RARE -> ETH via Universal Router (uses Permit2)
         _approvePermit2ForRouter(rareRefund);
-        LiquidFeeLib.executeSwap(UNIVERSAL_ROUTER, 0, routeData, deadline);
+        LiquidFeeLib.executeSwap(
+            UNIVERSAL_ROUTER,
+            0,
+            commands,
+            inputs,
+            deadline,
+            true
+        );
         _clearPermit2ForRouter();
 
         // Ensure all RARE we pulled was consumed (prevents partial swap exploits)

@@ -32,7 +32,9 @@ contract AnvilForkAuctioneerFeeDeductionTest is AnvilForkAuctionBase {
 
         address referrer = makeAddr("auctioneerFeeDeductionReferrer");
         uint256 bidAmount = 1 ether;
-        bytes memory routeData = _encodeEthToRareRoute(bidAmount);
+        (bytes memory commands, bytes[] memory inputs) = _encodeEthToRareRoute(
+            bidAmount
+        );
         address protocolRecipient = auctioneer.PROTOCOL_FEE_RECIPIENT();
         address tokenBeneficiary = auctioneer.tokenBeneficiaries(state.graduatedToken);
         address rareBurner = auctioneer.RARE_BURNER();
@@ -55,7 +57,8 @@ contract AnvilForkAuctioneerFeeDeductionTest is AnvilForkAuctionBase {
             buyer,
             referrer,
             0,
-            routeData,
+            commands,
+            inputs,
             block.timestamp + 1 hours
         );
         BalanceSnapshot memory afterSnapshot = _snapshotBalances(

@@ -284,12 +284,20 @@ contract DeployLiquidSystem is Script {
                 LiquidFactory(result.factory).setPoolHooks(result.guard);
             }
         }
+        // When only router is redeployed, whitelist it on existing guard
+        if (deployRouter && !deploySwapGuard && result.guard != address(0)) {
+            console.log(
+                "=== Step 6b: Adding new router to existing SwapGuard ==="
+            );
+            LiquidSwapGuard(result.guard).addCaller(result.router);
+            console.log("  addCaller(liquidRouter)");
+        }
         // When only auctioneer is redeployed, whitelist it on existing guard
         if (
             deployAuctioneer && !deploySwapGuard && result.guard != address(0)
         ) {
             console.log(
-                "=== Step 6b: Adding new auctioneer to existing SwapGuard ==="
+                "=== Step 6c: Adding new auctioneer to existing SwapGuard ==="
             );
             LiquidSwapGuard(result.guard).addCaller(result.auctioneer);
             console.log("  addCaller(liquidAuctioneer)");
@@ -303,7 +311,7 @@ contract DeployLiquidSystem is Script {
             LiquidFactory factoryContract = LiquidFactory(result.factory);
             if (factoryContract.lbpStrategyFactory() == address(0)) {
                 console.log(
-                    "=== Step 6c: Configuring factory for Graduated (CCA) tokens ==="
+                    "=== Step 6d: Configuring factory for Graduated (CCA) tokens ==="
                 );
                 factoryContract.setCcaFactory(networkConfig.ccaFactory);
                 factoryContract.setLbpStrategyFactory(

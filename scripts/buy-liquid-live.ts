@@ -41,7 +41,7 @@ const CONFIG = {
   rpcUrl: expandRpcUrl(process.env.ETH_SEPOLIA || process.env.SEPOLIA_RPC_URL, 'https://ethereum-sepolia-rpc.publicnode.com'),
   
   // Deployed contracts (Ethereum Sepolia)
-  liquidRouter: '0x6Ac1182EdC9A35c0f956b18A9d9F95Dc0171E7F0', // Ethereum Sepolia LiquidRouter
+  liquidRouter: '0x889b8bc562a4bed31510a1352FD351649D8EebB2', // Ethereum Sepolia LiquidRouter
   liquidToken: '0x23C8701Dd299E742a1e03e2AE046Cf2356f26f34', // Your LiquidEdition token
   
   // Real RARE token addresses (from NetworkConfig)
@@ -69,7 +69,7 @@ const WETH_ADDRESSES: Record<number, string> = {
 
 // ABIs
 const LIQUID_ROUTER_ABI = [
-  'function buy(address token, address recipient, address orderReferrer, uint256 minTokensOut, bytes calldata routeData, uint256 deadline) external payable returns (uint256 tokensReceived)',
+  'function buy(address token, address recipient, address orderReferrer, uint256 minTokensOut, bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable returns (uint256 tokensReceived)',
   'function TOTAL_FEE_BPS() external view returns (uint256)',
   'event RouterBuy(address indexed token, address indexed buyer, address indexed recipient, address orderReferrer, uint256 ethAmount, uint256 ethFee, uint256 ethSwapped, uint256 tokensReceived, uint256 protocolFee, uint256 referrerFee, uint256 beneficiaryFee, uint256 burnFee)',
 ];
@@ -166,7 +166,8 @@ async function main() {
     console.log('  Min tokens out (after slippage):', ethers.utils.formatEther(quote.minAmountOut), tokenSymbol);
     console.log('  Gas estimate:', quote.gasEstimate);
     console.log('  Deadline:', new Date(quote.deadline * 1000).toISOString());
-    console.log('  Route data length:', quote.routeData.length, 'chars');
+    console.log('  Commands length:', quote.commands.length, 'chars');
+    console.log('  Inputs count:', quote.inputs.length);
     
   } catch (error: any) {
     console.error('\n❌ Failed to get quote:', error.message);
@@ -189,7 +190,8 @@ async function main() {
       wallet.address,
       ethers.constants.AddressZero,
       quote.minAmountOut,
-      quote.routeData,
+      quote.commands,
+      quote.inputs,
       quote.deadline,
       { 
         value: ethAmount,

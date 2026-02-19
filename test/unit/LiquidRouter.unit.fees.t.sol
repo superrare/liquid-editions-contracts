@@ -9,6 +9,48 @@ import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
 /// @title LiquidRouter Fees Unit Tests
 /// @notice Fee rounding, referrer, beneficiary
 contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
+    function _buyWithValidRoute(
+        LiquidRouter targetRouter,
+        address tradeToken,
+        address recipient,
+        address referrer_,
+        uint256 minTokensOut,
+        uint256 ethAmount
+    ) internal returns (uint256 tokensReceived) {
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
+        return
+            targetRouter.buy{value: ethAmount}(
+                tradeToken,
+                recipient,
+                referrer_,
+                minTokensOut,
+                commands,
+                inputs,
+                block.timestamp + 1 hours
+            );
+    }
+
+    function _sellWithValidRoute(
+        LiquidRouter targetRouter,
+        address tradeToken,
+        uint256 tokenAmount,
+        address recipient,
+        address referrer_,
+        uint256 minEthOut
+    ) internal returns (uint256 ethReceived) {
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
+        return
+            targetRouter.sell(
+                tradeToken,
+                tokenAmount,
+                recipient,
+                referrer_,
+                minEthOut,
+                commands,
+                inputs,
+                block.timestamp + 1 hours
+            );
+    }
 
     function testQuoteFeeBreakdown() public view {
         uint256 totalFee = 1 ether;
@@ -47,18 +89,13 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         uint256 burnerBalBefore = burner.deposited();
 
         vm.prank(user1);
-        customRouter.buy{value: ethAmount}(
+        _buyWithValidRoute(
+            customRouter,
             address(token),
             user1,
             referrer,
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
-            block.timestamp + 1 hours
+            ethAmount
         );
 
         uint256 beneficiaryFee = (totalFee * 2500) / 10000; // 25%
@@ -75,18 +112,13 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         uint256 protocolBalBefore = protocolFeeRecipient.balance;
 
         vm.prank(user1);
-        liquidRouter.buy{value: 1 ether}(
+        _buyWithValidRoute(
+            liquidRouter,
             address(token),
             user1,
             referrer,
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
-            block.timestamp + 1 hours
+            1 ether
         );
 
         assertTrue(protocolFeeRecipient.balance > protocolBalBefore);
@@ -152,18 +184,13 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         uint256 protocolBalBefore = protocolFeeRecipient.balance;
 
         vm.prank(user1);
-        newLiquidRouter.buy{value: 1 ether}(
+        _buyWithValidRoute(
+            newLiquidRouter,
             address(newToken),
             user1,
             referrer,
             1,
-            abi.encodeWithSelector(
-                newRouter.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
-            block.timestamp + 1 hours
+            1 ether
         );
 
         assertTrue(protocolFeeRecipient.balance > protocolBalBefore);
@@ -190,18 +217,13 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         uint256 routerBalBefore = address(liquidRouter).balance;
 
         vm.prank(user1);
-        liquidRouter.buy{value: ethAmount}(
+        _buyWithValidRoute(
+            liquidRouter,
             address(token),
             user1,
             address(0),
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
-            block.timestamp + 1 hours
+            ethAmount
         );
 
         uint256 protocolBalAfter = protocolFeeRecipient.balance;
@@ -259,18 +281,13 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         uint256 routerBalBefore = address(referrerFallbackRouter).balance;
 
         vm.prank(user1);
-        referrerFallbackRouter.buy{value: ethAmount}(
+        _buyWithValidRoute(
+            referrerFallbackRouter,
             address(customToken),
             user1,
             address(gasHog),
             1,
-            abi.encodeWithSelector(
-                customRouter.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
-            block.timestamp + 1 hours
+            ethAmount
         );
 
         uint256 protocolBalAfter = protocolFeeRecipient.balance;
@@ -294,18 +311,13 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         uint256 protocolBalBefore = protocolFeeRecipient.balance;
 
         vm.prank(user1);
-        liquidRouter.buy{value: 1 ether}(
+        _buyWithValidRoute(
+            liquidRouter,
             address(token),
             user1,
             address(rejecter),
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
-            block.timestamp + 1 hours
+            1 ether
         );
 
         assertTrue(protocolFeeRecipient.balance > protocolBalBefore);
@@ -315,18 +327,13 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         uint256 protocolBalBefore = protocolFeeRecipient.balance;
 
         vm.prank(user1);
-        liquidRouter.buy{value: 1 ether}(
+        _buyWithValidRoute(
+            liquidRouter,
             address(token),
             user1,
             address(0), // No referrer
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
-            block.timestamp + 1 hours
+            1 ether
         );
 
         assertTrue(protocolFeeRecipient.balance > protocolBalBefore);
@@ -336,18 +343,13 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         uint256 protocolBalBefore = protocolFeeRecipient.balance;
 
         vm.prank(user1);
-        liquidRouter.buy{value: 1 ether}(
+        _buyWithValidRoute(
+            liquidRouter,
             address(token),
             user1,
             address(0),
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
-            block.timestamp + 1 hours
+            1 ether
         );
 
         assertTrue(protocolFeeRecipient.balance > protocolBalBefore);
@@ -357,18 +359,13 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         uint256 protocolBalBefore = protocolFeeRecipient.balance;
 
         vm.prank(user1);
-        liquidRouter.buy{value: 1 ether}(
+        _buyWithValidRoute(
+            liquidRouter,
             address(token),
             user1,
             protocolFeeRecipient,
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
-            block.timestamp + 1 hours
+            1 ether
         );
 
         assertTrue(protocolFeeRecipient.balance > protocolBalBefore);
@@ -379,18 +376,13 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         uint256 routerBalanceBefore = address(liquidRouter).balance;
 
         vm.prank(user1);
-        liquidRouter.buy{value: ethAmount}(
+        _buyWithValidRoute(
+            liquidRouter,
             address(token),
             user1,
             referrer,
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
-            block.timestamp + 1 hours
+            ethAmount
         );
 
         assertEq(address(liquidRouter).balance, routerBalanceBefore);
@@ -403,19 +395,13 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         token.approve(address(liquidRouter), tokenAmount);
 
         vm.prank(user1);
-        liquidRouter.sell(
+        _sellWithValidRoute(
+            liquidRouter,
             address(token),
             tokenAmount,
             user1,
             referrer,
-            1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
-            block.timestamp + 1 hours
+            1
         );
 
         assertEq(token.balanceOf(address(liquidRouter)), 0);
@@ -503,18 +489,13 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         uint256 routerBalanceBefore = address(liquidRouter).balance;
 
         vm.prank(user1);
-        liquidRouter.buy{value: msgValue}(
+        _buyWithValidRoute(
+            liquidRouter,
             address(token),
             user1,
             referrer,
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
-            block.timestamp + 1 hours
+            msgValue
         );
 
         assertEq(address(liquidRouter).balance, routerBalanceBefore);
@@ -552,18 +533,13 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         uint256 protocolBalanceBefore = referrerAsProtocol.balance;
 
         vm.prank(user1);
-        liquidRouter.buy{value: 1 ether}(
+        _buyWithValidRoute(
+            liquidRouter,
             address(token),
             user1,
             referrerAsProtocol,
             1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
-            block.timestamp + 1 hours
+            1 ether
         );
 
         uint256 protocolBalanceAfter = referrerAsProtocol.balance;
@@ -589,19 +565,13 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         uint256 protocolBalanceBefore = referrerAsProtocol.balance;
 
         vm.prank(user1);
-        liquidRouter.sell(
+        _sellWithValidRoute(
+            liquidRouter,
             address(token),
             tokenAmount,
             user1,
             referrerAsProtocol,
-            1,
-            abi.encodeWithSelector(
-                router.execute.selector,
-                "",
-                new bytes[](0),
-                block.timestamp
-            ),
-            block.timestamp + 1 hours
+            1
         );
 
         uint256 protocolBalanceAfter = referrerAsProtocol.balance;

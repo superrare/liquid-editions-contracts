@@ -43,7 +43,7 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
 
     function _encodeEthToRareRoute(
         uint256 ethAmount
-    ) internal view returns (bytes memory) {
+    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
         address currencyIn = address(0);
         PathKey[] memory path = new PathKey[](1);
         path[0] = PathKey({
@@ -70,21 +70,14 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
         params[1] = abi.encode(currencyIn, type(uint128).max);
         params[2] = abi.encode(config.rareToken, uint128(1));
         bytes memory v4SwapInput = abi.encode(actions, params);
-        bytes memory commands = abi.encodePacked(V4_SWAP);
-        bytes[] memory inputs = new bytes[](1);
+        commands = abi.encodePacked(V4_SWAP);
+        inputs = new bytes[](1);
         inputs[0] = v4SwapInput;
-        return
-            abi.encodeWithSignature(
-                "execute(bytes,bytes[],uint256)",
-                commands,
-                inputs,
-                block.timestamp + 1 hours
-            );
     }
 
     function _encodeRareToEthRoute(
         uint256 rareAmount
-    ) internal view returns (bytes memory) {
+    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
         address currencyIn = config.rareToken;
         address outputCurrency = address(0);
         PathKey[] memory path = new PathKey[](1);
@@ -111,16 +104,9 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
         params[1] = abi.encode(currencyIn, type(uint128).max);
         params[2] = abi.encode(outputCurrency, uint128(1));
         bytes memory v4SwapInput = abi.encode(actions, params);
-        bytes memory commands = abi.encodePacked(V4_SWAP);
-        bytes[] memory inputs = new bytes[](1);
+        commands = abi.encodePacked(V4_SWAP);
+        inputs = new bytes[](1);
         inputs[0] = v4SwapInput;
-        return
-            abi.encodeWithSignature(
-                "execute(bytes,bytes[],uint256)",
-                commands,
-                inputs,
-                block.timestamp + 1 hours
-            );
     }
 
     // Helper struct to reduce stack depth in _createAuctionForTest
@@ -357,7 +343,9 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
                 vm.roll(targetBlock);
                 lastBlockRolled = targetBlock;
             }
-            bytes memory routeData = _encodeEthToRareRoute(ethAmounts[i]);
+            (bytes memory commands, bytes[] memory inputs) = _encodeEthToRareRoute(
+                ethAmounts[i]
+            );
             uint256 prevTick = maxPrices[i] > 0 ? floorPrice : 0;
             vm.prank(bidders[i]);
             bidIds[i] = auctioneer.bidWithETH{value: ethAmounts[i]}(
@@ -366,7 +354,8 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
                 bidders[i],
                 address(0),
                 prevTick,
-                routeData,
+                commands,
+                inputs,
                 block.timestamp + 1 hours
             );
         }
@@ -391,7 +380,9 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
             uint256 bidId = bidIds[i];
             vm.prank(bidder);
             IERC20(config.rareToken).approve(address(auctioneer), 50e21);
-            bytes memory exitRouteData = _encodeRareToEthRoute(50e21);
+            (bytes memory exitCommands, bytes[] memory exitInputs) = _encodeRareToEthRoute(
+                50e21
+            );
             Bid memory bid = cca.bids(bidId);
             if (bid.maxPrice < clearingPrice) {
                 vm.prank(bidder);
@@ -402,7 +393,8 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
                     0,
                     bidder,
                     0, // minEthOut: accept any amount in tests
-                    exitRouteData,
+                    exitCommands,
+                    exitInputs,
                     block.timestamp + 1 hours
                 );
             } else {
@@ -412,7 +404,8 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
                     bidId,
                     bidder,
                     0, // minEthOut: accept any amount in tests
-                    exitRouteData,
+                    exitCommands,
+                    exitInputs,
                     block.timestamp + 1 hours
                 );
             }
@@ -438,7 +431,7 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
         address poolHooks = graduated.snapshotPoolHooks();
         uint256 buyEthAmount = 0.02 ether;
         uint256 ethForSwap = _ethForSwap(buyEthAmount);
-        bytes memory buyRoute = _encodeBuyRouteWithHooks(
+        (bytes memory buyCommands, bytes[] memory buyInputs) = _encodeBuyRouteWithHooks(
             graduatedToken,
             poolHooks,
             ethForSwap,
@@ -450,7 +443,8 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
             trader,
             address(0),
             1,
-            buyRoute,
+            buyCommands,
+            buyInputs,
             block.timestamp + 1 hours
         );
         assertGt(tokensBought, 0, "Trader should receive tokens");
@@ -458,7 +452,7 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
         if (tokensToSell > 0) {
             vm.prank(trader);
             IERC20(graduatedToken).approve(address(router), tokensToSell);
-            bytes memory sellRoute = _encodeSellRouteWithHooks(
+            (bytes memory sellCommands, bytes[] memory sellInputs) = _encodeSellRouteWithHooks(
                 graduatedToken,
                 poolHooks,
                 tokensToSell,
@@ -472,7 +466,8 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
                 trader,
                 address(0),
                 1,
-                sellRoute,
+                sellCommands,
+                sellInputs,
                 block.timestamp + 1 hours
             );
             assertGt(ethReceived, 0, "Trader should receive ETH");

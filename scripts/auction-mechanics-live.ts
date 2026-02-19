@@ -60,7 +60,7 @@
  */
 
 import { ethers } from 'ethers';
-import { getEthToRareQuote, getRareToEthQuote } from './uniswap-manual-router';
+import { getManualBuyQuote, getManualSellQuote } from './uniswap-manual-router';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 
@@ -170,9 +170,9 @@ const CCA_ABI = [
   'function bids(uint256) external view returns (uint64 startBlock, uint24 startCumulativeMps, uint64 exitedBlock, uint256 maxPrice, address owner, uint256 amountQ96, uint256 tokensFilled)',
 ];
 const AUCTIONEER_ABI = [
-  'function bidWithETH(address liquidToken, uint256 maxPrice, address bidOwner, address orderReferrer, uint256 prevTickPrice, bytes calldata routeData, uint256 deadline) external payable returns (uint256 bidId)',
-  'function exitBidToETH(address liquidToken, uint256 bidId, address recipient, uint256 minEthOut, bytes calldata routeData, uint256 deadline) external returns (uint256 ethReceived)',
-  'function exitPartialBidToETH(address liquidToken, uint256 bidId, uint256 lastFullyFilledCheckpointBlock, uint256 outbidBlock, address recipient, uint256 minEthOut, bytes calldata routeData, uint256 deadline) external returns (uint256 ethReceived)',
+  'function bidWithETH(address liquidToken, uint256 maxPrice, address bidOwner, address orderReferrer, uint256 prevTickPrice, bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable returns (uint256 bidId)',
+  'function exitBidToETH(address liquidToken, uint256 bidId, address recipient, uint256 minEthOut, bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external returns (uint256 ethReceived)',
+  'function exitPartialBidToETH(address liquidToken, uint256 bidId, uint256 lastFullyFilledCheckpointBlock, uint256 outbidBlock, address recipient, uint256 minEthOut, bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external returns (uint256 ethReceived)',
   'function claimAuctionTokens(address liquidToken, uint256 bidId) external',
   'function TOTAL_FEE_BPS() external view returns (uint256)',
 ];
@@ -397,7 +397,21 @@ async function main() {
       const ethAmountWei = ethers.utils.parseEther(ethBidAmount);
       const ethForSwap = ethAmountWei.mul(10000 - feeBps).div(10000);
       try {
-        const { routeData, deadline, rareAmountOut } = await getEthToRareQuote(chainId, RPC_URL, weth, rareToken, ethForSwap, 500);
+        const quote = await getManualBuyQuote(
+          {
+            token: rareToken,
+            tokenDecimals: 18,
+            ethAmount: ethForSwap.toString(),
+            slippageBps: 500,
+            recipient: wallet.address,
+          },
+          chainId,
+          RPC_URL,
+          weth,
+          0
+        );
+        const { commands, inputs, deadline } = quote;
+        const rareAmountOut = ethers.BigNumber.from(quote.amountOut);
         const maxPrice = floorPrice.add(ethers.utils.parseEther('1'));
         const prevTickPrice = floorPrice;
         await provider.call(
@@ -411,7 +425,8 @@ async function main() {
               wallet.address,
               ethers.constants.AddressZero,
               prevTickPrice,
-              routeData,
+              commands,
+              inputs,
               deadline,
             ]),
             gasLimit: BID_GAS_LIMIT,
@@ -482,14 +497,21 @@ async function main() {
     const ccaIface = new ethers.utils.Interface(['event BidSubmitted(uint256 indexed id, address indexed owner, uint256 price, uint128 amount)']);
 
     for (let i = 0; i < bidCount; i++) {
-      const { routeData, deadline, rareAmountOut } = await getEthToRareQuote(
+      const quote = await getManualBuyQuote(
+        {
+          token: rareToken,
+          tokenDecimals: 18,
+          ethAmount: ethForSwap.toString(),
+          slippageBps: 500,
+          recipient: wallet!.address,
+        },
         chainId,
         RPC_URL,
         weth,
-        rareToken,
-        ethForSwap,
-        500
+        0
       );
+      const { commands, inputs, deadline } = quote;
+      const rareAmountOut = ethers.BigNumber.from(quote.amountOut);
       if (i === 0) {
         console.log('ETH for swap (after fee):', ethers.utils.formatEther(ethForSwap));
         console.log('Expected RARE out:', ethers.utils.formatEther(rareAmountOut));
@@ -503,7 +525,8 @@ async function main() {
           wallet!.address,
           ethers.constants.AddressZero,
           prevTickPrice,
-          routeData,
+          commands,
+          inputs,
           deadline,
           { value: ethAmountWei, gasLimit: BID_GAS_LIMIT }
         );
@@ -522,7 +545,8 @@ async function main() {
                 wallet!.address,
                 ethers.constants.AddressZero,
                 prevTickPrice,
-                routeData,
+                commands,
+                inputs,
                 deadline,
               ]),
             },
@@ -574,7 +598,8 @@ async function main() {
           console.log('CCA checkpoint() call skipped or failed:', e?.reason || e?.message || e);
         }
       }
-      let exitRouteData = '0x';
+      let exitCommands = '0x';
+      let exitInputs: string[] = [];
       let exitDeadline = 0;
       if (exitToEth) {
         console.log('Using LiquidAuctioneer exit-to-ETH mode (requires working Permit2 path and good EXIT_RARE_ESTIMATE).');
@@ -582,15 +607,20 @@ async function main() {
         const approveTx = await rareTokenContract.connect(wallet!).approve(liquidAuctioneer, ethers.constants.MaxUint256);
         await approveTx.wait();
         const exitRareEstimate = ethers.utils.parseEther(process.env.EXIT_RARE_ESTIMATE || '0.05');
-        const quote = await getRareToEthQuote(
+        const quote = await getManualSellQuote(
+          {
+            token: rareToken,
+            tokenDecimals: 18,
+            tokenAmount: exitRareEstimate.toString(),
+            slippageBps: 500,
+            recipient: wallet!.address,
+          },
           chainId,
           RPC_URL,
-          weth,
-          rareToken,
-          exitRareEstimate,
-          500
+          weth
         );
-        exitRouteData = quote.routeData;
+        exitCommands = quote.commands;
+        exitInputs = quote.inputs;
         exitDeadline = quote.deadline;
       } else {
         console.log('Using direct CCA exit mode (refund stays in RARE). Set EXIT_TO_ETH=1 to attempt swap to ETH.');
@@ -684,7 +714,8 @@ async function main() {
             bidId,
             wallet!.address,
             0, // minEthOut: accept any amount
-            exitRouteData,
+            exitCommands,
+            exitInputs,
             exitDeadline,
             { gasLimit: EXIT_GAS_LIMIT }
           );
@@ -700,7 +731,8 @@ async function main() {
               derivedOutbidHint,
               wallet!.address,
               0, // minEthOut: accept any amount
-              exitRouteData,
+              exitCommands,
+              exitInputs,
               exitDeadline,
               { gasLimit: EXIT_GAS_LIMIT }
             );
@@ -718,7 +750,8 @@ async function main() {
                 blockAtExit,
                 wallet!.address,
                 0, // minEthOut: accept any amount
-                exitRouteData,
+                exitCommands,
+                exitInputs,
                 exitDeadline,
                 { gasLimit: EXIT_GAS_LIMIT }
               );
@@ -736,7 +769,8 @@ async function main() {
                   0,
                   wallet!.address,
                   0, // minEthOut: accept any amount
-                  exitRouteData,
+                  exitCommands,
+                  exitInputs,
                   exitDeadline,
                   { gasLimit: EXIT_GAS_LIMIT }
                 );

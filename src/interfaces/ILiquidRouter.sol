@@ -30,7 +30,7 @@ interface ILiquidRouter {
     /// @notice Thrown when the transaction deadline has expired
     error DeadlineExpired();
 
-    /// @notice Thrown when routeData is empty or invalid
+    /// @notice Thrown when route commands or inputs are invalid
     error InvalidRouteData();
 
     /// @notice Thrown when ETH is unexpectedly returned during a buy (forces EXACT_INPUT routes)
@@ -238,7 +238,8 @@ interface ILiquidRouter {
     /// @param recipient The address to receive the tokens
     /// @param orderReferrer The address of the order referrer (receives referrer fee)
     /// @param minTokensOut Minimum tokens to receive (slippage protection)
-    /// @param routeData Encoded Universal Router commands and inputs for the swap
+    /// @param commands Encoded Universal Router command bytes
+    /// @param inputs Encoded Universal Router command inputs (one per command)
     /// @param deadline Transaction deadline timestamp
     /// @return tokensReceived The amount of tokens received
     function buy(
@@ -246,7 +247,8 @@ interface ILiquidRouter {
         address recipient,
         address orderReferrer,
         uint256 minTokensOut,
-        bytes calldata routeData,
+        bytes calldata commands,
+        bytes[] calldata inputs,
         uint256 deadline
     ) external payable returns (uint256 tokensReceived);
 
@@ -257,7 +259,8 @@ interface ILiquidRouter {
     /// @param recipient The address to receive the ETH
     /// @param orderReferrer The address of the order referrer (receives referrer fee)
     /// @param minEthOut Minimum GROSS ETH expected from swap (before fees) - contract adjusts internally
-    /// @param routeData Encoded Universal Router commands and inputs for the swap
+    /// @param commands Encoded Universal Router command bytes
+    /// @param inputs Encoded Universal Router command inputs (one per command)
     /// @param deadline Transaction deadline timestamp
     /// @return ethReceived The amount of ETH received (after fees)
     function sell(
@@ -266,7 +269,8 @@ interface ILiquidRouter {
         address recipient,
         address orderReferrer,
         uint256 minEthOut,
-        bytes calldata routeData,
+        bytes calldata commands,
+        bytes[] calldata inputs,
         uint256 deadline
     ) external returns (uint256 ethReceived);
 
@@ -280,8 +284,10 @@ interface ILiquidRouter {
     /// @param recipient Address to receive output
     /// @param orderReferrer Address of the order referrer (receives referrer fee)
     /// @param minAmountOut Minimum final output after fees
-    /// @param leg1 Route: tokenIn -> ETH (empty if input is ETH)
-    /// @param leg2 Route: ETH -> tokenOut (empty if output is ETH)
+    /// @param leg1Commands Route commands for tokenIn -> ETH (empty if input is ETH)
+    /// @param leg1Inputs Route inputs for tokenIn -> ETH
+    /// @param leg2Commands Route commands for ETH -> tokenOut (empty if output is ETH)
+    /// @param leg2Inputs Route inputs for ETH -> tokenOut
     /// @param deadline Transaction deadline timestamp
     /// @return amountOut The amount of output received
     function swap(
@@ -291,8 +297,10 @@ interface ILiquidRouter {
         address recipient,
         address orderReferrer,
         uint256 minAmountOut,
-        bytes calldata leg1,
-        bytes calldata leg2,
+        bytes calldata leg1Commands,
+        bytes[] calldata leg1Inputs,
+        bytes calldata leg2Commands,
+        bytes[] calldata leg2Inputs,
         uint256 deadline
     ) external payable returns (uint256 amountOut);
 
