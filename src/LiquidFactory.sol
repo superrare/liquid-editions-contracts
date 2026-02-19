@@ -10,6 +10,7 @@ import {LiquidGraduated} from "liquid-editions/LiquidGraduated.sol";
 import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 import {ILiquidFactory} from "liquid-editions/interfaces/ILiquidFactory.sol";
+import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
 import {IDistributionStrategy} from "continuous-clearing-auction/interfaces/external/IDistributionStrategy.sol";
 import {AuctionParameters} from "continuous-clearing-auction/interfaces/IContinuousClearingAuction.sol";
 import {MigratorParameters} from "liquid-editions/types/MigratorParameters.sol";
@@ -52,6 +53,8 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
 
     /// @notice Recipient for LP position at migration (LBP strategy positionRecipient)
     address public protocolFeeRecipient;
+    /// @notice Router used for automatic token registration
+    address public liquidRouter;
 
     // Protocol addresses
     address public weth;
@@ -245,6 +248,7 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
 
         // Emit event for indexing
         emit LiquidTokenCreated(clone, _creator, _tokenUri);
+        _registerTokenWithRouter(clone, _creator);
 
         return clone;
     }
@@ -300,6 +304,7 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
         );
 
         emit LiquidTokenCreated(clone, _creator, _tokenUri);
+        _registerTokenWithRouter(clone, _creator);
         return clone;
     }
 
@@ -424,7 +429,17 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
         address auctionAddr = _getInitializer(strategyAddr);
 
         emit LiquidTokenCreated(clone, _creator, _tokenUri);
+        _registerTokenWithRouter(clone, _creator);
         return (clone, auctionAddr);
+    }
+
+    function _registerTokenWithRouter(
+        address token,
+        address beneficiary
+    ) internal {
+        if (liquidRouter == address(0)) return;
+        if (liquidRouter.code.length == 0) return;
+        ILiquidRouter(liquidRouter).registerToken(token, beneficiary);
     }
 
     /// @notice Returns the CCA auction address from a strategy contract
@@ -526,6 +541,17 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
             revert AddressZero();
         }
         protocolFeeRecipient = _protocolFeeRecipient;
+    }
+
+    /// @notice Sets the router used for automatic token registration
+    /// @dev The router uses tokenCreator checks for factory-originated registrations.
+    function setLiquidRouter(
+        address _liquidRouter
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_liquidRouter == address(0)) revert AddressZero();
+        address oldLiquidRouter = liquidRouter;
+        liquidRouter = _liquidRouter;
+        emit LiquidRouterUpdated(oldLiquidRouter, _liquidRouter);
     }
 
     /// @notice Sets the WETH address

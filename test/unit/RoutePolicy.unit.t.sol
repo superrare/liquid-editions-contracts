@@ -16,6 +16,7 @@ contract RoutePolicyHarness {
 
 contract RoutePolicyUnitTest is Test {
     RoutePolicyHarness internal harness;
+    uint8 internal constant ALLOW_REVERT_FLAG = 0x80;
 
     address internal constant MSG_SENDER =
         address(0x0000000000000000000000000000000000000001);
@@ -32,7 +33,10 @@ contract RoutePolicyUnitTest is Test {
         inputs[0] = "";
 
         vm.expectRevert(
-            abi.encodeWithSelector(RoutePolicy.DisallowedCommand.selector, bytes1(0x04))
+            abi.encodeWithSelector(
+                RoutePolicy.DisallowedCommand.selector,
+                bytes1(0x04)
+            )
         );
         harness.validate(commands, inputs, false);
     }
@@ -40,7 +44,13 @@ contract RoutePolicyUnitTest is Test {
     function testValidateRouteRevertsOnInvalidV3Recipient() public {
         bytes memory commands = hex"00"; // V3_SWAP_EXACT_IN
         bytes[] memory inputs = new bytes[](1);
-        inputs[0] = abi.encode(address(0xBEEF), uint256(1), uint256(1), bytes(""), true);
+        inputs[0] = abi.encode(
+            address(0xBEEF),
+            uint256(1),
+            uint256(1),
+            bytes(""),
+            true
+        );
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -55,7 +65,13 @@ contract RoutePolicyUnitTest is Test {
     function testValidateRouteRevertsWhenEthOutputMissingUnwrapWeth() public {
         bytes memory commands = hex"00"; // V3_SWAP_EXACT_IN
         bytes[] memory inputs = new bytes[](1);
-        inputs[0] = abi.encode(ROUTER_ADDRESS, uint256(1), uint256(1), bytes(""), true);
+        inputs[0] = abi.encode(
+            ROUTER_ADDRESS,
+            uint256(1),
+            uint256(1),
+            bytes(""),
+            true
+        );
 
         vm.expectRevert(RoutePolicy.MissingUnwrapWeth.selector);
         harness.validate(commands, inputs, true);
@@ -69,7 +85,10 @@ contract RoutePolicyUnitTest is Test {
         inputs[0] = abi.encode(actions, params);
 
         vm.expectRevert(
-            abi.encodeWithSelector(RoutePolicy.BlockedV4Action.selector, uint8(0x09))
+            abi.encodeWithSelector(
+                RoutePolicy.BlockedV4Action.selector,
+                uint8(0x09)
+            )
         );
         harness.validate(commands, inputs, false);
     }
@@ -88,9 +107,84 @@ contract RoutePolicyUnitTest is Test {
     function testValidateRouteAllowsV2ToRouterWithUnwrapToSender() public view {
         bytes memory commands = hex"080c"; // V2_SWAP_EXACT_IN + UNWRAP_WETH
         bytes[] memory inputs = new bytes[](2);
-        inputs[0] = abi.encode(ROUTER_ADDRESS, uint256(1), uint256(1), new address[](0), false);
+        inputs[0] = abi.encode(
+            ROUTER_ADDRESS,
+            uint256(1),
+            uint256(1),
+            new address[](0),
+            false
+        );
         inputs[1] = abi.encode(MSG_SENDER, uint256(1));
 
+        harness.validate(commands, inputs, true);
+    }
+
+    function testValidateRouteRevertsOnAllowRevertBit() public {
+        bytes memory commands = abi.encodePacked(
+            bytes1(uint8(bytes1(0x08)) | ALLOW_REVERT_FLAG) // V2_SWAP_EXACT_IN | allowRevert
+        );
+        bytes[] memory inputs = new bytes[](1);
+        inputs[0] = abi.encode(
+            ROUTER_ADDRESS,
+            uint256(1),
+            uint256(1),
+            new address[](0),
+            false
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RoutePolicy.DisallowedCommandFlags.selector,
+                bytes1(uint8(bytes1(0x08)) | ALLOW_REVERT_FLAG)
+            )
+        );
+        harness.validate(commands, inputs, true);
+    }
+
+    function testValidateRouteRevertsWhenTokenOutputFinalRecipientIsRouter()
+        public
+    {
+        bytes memory commands = hex"00"; // V3_SWAP_EXACT_IN
+        bytes[] memory inputs = new bytes[](1);
+        inputs[0] = abi.encode(
+            ROUTER_ADDRESS,
+            uint256(1),
+            uint256(1),
+            bytes(""),
+            true
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RoutePolicy.InvalidFinalRecipient.selector,
+                bytes1(0x00),
+                ROUTER_ADDRESS
+            )
+        );
+        harness.validate(commands, inputs, false);
+    }
+
+    function testValidateRouteRevertsWhenEthOutputRouteDoesNotEndInUnwrap()
+        public
+    {
+        bytes memory commands = hex"080c0b"; // V2_SWAP_EXACT_IN + UNWRAP_WETH + WRAP_ETH
+        bytes[] memory inputs = new bytes[](3);
+        inputs[0] = abi.encode(
+            ROUTER_ADDRESS,
+            uint256(1),
+            uint256(1),
+            new address[](0),
+            false
+        );
+        inputs[1] = abi.encode(MSG_SENDER, uint256(1));
+        inputs[2] = abi.encode(ROUTER_ADDRESS, uint256(1));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RoutePolicy.InvalidFinalRouteCommand.selector,
+                bytes1(0x0b)
+            )
+        );
         harness.validate(commands, inputs, true);
     }
 }

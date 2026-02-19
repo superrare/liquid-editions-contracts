@@ -186,8 +186,9 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
     function setUp() public override {
         super.setUp();
 
-        vm.prank(admin);
+        vm.startPrank(admin);
         guard.addCaller(address(router));
+        vm.stopPrank();
 
         deal(config.rareToken, tokenCreator, 5000 ether);
 

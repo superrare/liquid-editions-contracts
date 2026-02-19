@@ -79,8 +79,7 @@ contract LiquidMultiCurveSnipingTest is Test {
         mockRARE.mint(tokenCreator, 10_000 ether);
         mockRARE.mint(sniper, 10_000 ether);
 
-        vm.startPrank(admin);
-        factory = new LiquidFactory(
+        vm.startPrank(admin);        factory = new LiquidFactory(
             admin,
             config.weth,
             config.uniswapV4PoolManager,
@@ -92,6 +91,7 @@ contract LiquidMultiCurveSnipingTest is Test {
             300,
             LIQUIDITY
         );
+                factory.setLiquidRouter(address(1));
         instantImpl = new LiquidInstant();
         multiCurveImpl = new LiquidMultiCurve();
         factory.setImplementation(address(instantImpl));

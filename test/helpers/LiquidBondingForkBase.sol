@@ -121,6 +121,7 @@ abstract contract LiquidBondingForkBase is Test {
             300,
             1e15
         );
+        tempFactory.setLiquidRouter(address(1));
 
         LiquidInstant liquidImplementation = new LiquidInstant();
         tempFactory.setImplementation(address(liquidImplementation));

@@ -4,6 +4,13 @@ pragma solidity ^0.8.0;
 /// @title ILiquidAuctioneer
 /// @notice Interface for the LiquidAuctioneer contract that handles CCA auction interactions
 interface ILiquidAuctioneer {
+    enum RouteKind {
+        NONE,
+        V4_SINGLE,
+        V3_PATH,
+        V2_PATH
+    }
+
     // ============================================
     // ERRORS
     // ============================================
@@ -25,6 +32,8 @@ interface ILiquidAuctioneer {
 
     /// @notice Thrown when router returns unexpected ETH (breaks fee accounting)
     error UnexpectedEthRefund();
+    /// @notice Thrown when configured preset route is invalid or missing
+    error InvalidPresetRoute();
 
     // ============================================
     // EVENTS
@@ -39,31 +48,52 @@ interface ILiquidAuctioneer {
         address indexed to,
         uint256 amount
     );
+    /// @notice Emitted when preset token->RARE route configuration changes
+    event TokenRouteUpdated(address indexed tokenIn, RouteKind indexed kind);
 
     // ============================================
     // FUNCTIONS
     // ============================================
 
-    /// @notice Bid on a CCA auction using ETH
+    /// @notice Bid on a CCA auction using a configured preset route
+    /// @param tokenIn Input token address (address(0) for native ETH)
+    /// @param amountIn Input amount for ERC20 bids (ignored for native ETH bids)
     /// @param liquidToken The Liquid token address
     /// @param maxPrice Maximum price willing to pay
     /// @param bidOwner Owner of the bid (receives tokens/refunds)
     /// @param orderReferrer Address of the order referrer (receives referrer fee)
     /// @param prevTickPrice Previous tick price for bid ordering
-    /// @param commands Encoded Universal Router command bytes for ETH -> RARE swap
-    /// @param inputs Encoded Universal Router command inputs (one per command)
+    /// @param minRareOut Minimum RARE amount to bid (slippage protection)
     /// @param deadline Transaction deadline timestamp
     /// @return bidId The bid ID from the auction
-    function bidWithETH(
+    function bid(
+        address tokenIn,
+        uint256 amountIn,
         address liquidToken,
         uint256 maxPrice,
         address bidOwner,
         address orderReferrer,
         uint256 prevTickPrice,
-        bytes calldata commands,
-        bytes[] calldata inputs,
+        uint256 minRareOut,
         uint256 deadline
     ) external payable returns (uint256 bidId);
+
+    /// @notice Set preset token->RARE route to V4 single-hop config (owner only)
+    function setTokenRouteV4(
+        address tokenIn,
+        uint24 fee,
+        int24 tickSpacing,
+        address hooks
+    ) external;
+
+    /// @notice Set preset token->RARE route to V3 path config (owner only)
+    function setTokenRouteV3(address tokenIn, bytes calldata path) external;
+
+    /// @notice Set preset token->RARE route to V2 path config (owner only)
+    function setTokenRouteV2(address tokenIn, address[] calldata path) external;
+
+    /// @notice Clear preset token->RARE route configuration (owner only)
+    function removeTokenRoute(address tokenIn) external;
 
     /// @notice Exit a fully filled bid and swap refund to ETH
     /// @param liquidToken The Liquid token address

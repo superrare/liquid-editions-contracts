@@ -32,7 +32,6 @@ contract LiquidFactoryUnitTest is Test {
         quoter = new MockV4Quoter();
         weth = new MockERC20();
         baseToken = new MockERC20();
-
         factory = new LiquidFactory(
             admin,
             address(weth),
@@ -45,6 +44,10 @@ contract LiquidFactoryUnitTest is Test {
             300,
             1e15
         );
+
+        vm.prank(admin);
+
+        factory.setLiquidRouter(address(1));
 
         liquidImplementation = new LiquidInstant();
         vm.prank(admin);

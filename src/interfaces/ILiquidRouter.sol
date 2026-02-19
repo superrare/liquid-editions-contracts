@@ -177,6 +177,14 @@ interface ILiquidRouter {
         address newBeneficiary
     );
 
+    /// @notice Emitted when the trusted factory address used for auto-registration is updated
+    /// @param oldFactory Previous trusted factory
+    /// @param newFactory New trusted factory
+    event TrustedFactoryUpdated(
+        address indexed oldFactory,
+        address indexed newFactory
+    );
+
     /// @notice Emitted when the allowlist is enabled/disabled
     /// @param enabled Whether the allowlist is enabled
     event AllowlistEnabledUpdated(bool enabled);
@@ -333,8 +341,17 @@ interface ILiquidRouter {
 
     /// @notice Register a token with its beneficiary
     /// @param token The token address
-    /// @param beneficiary The beneficiary address (receives "creator" fees)
+    /// @param beneficiary The beneficiary address (receives "creator" fees).
+    ///        When called by trusted factory, beneficiary must match tokenCreator.
     function registerToken(address token, address beneficiary) external;
+
+    /// @notice Configure the trusted factory address for auto-registrations
+    /// @param trustedFactory The factory address allowed to register with `beneficiary == tokenCreator`
+    function setTrustedFactory(address trustedFactory) external;
+
+    /// @notice Get the trusted factory used for auto-registrations
+    /// @return trustedFactory The trusted factory address
+    function trustedFactory() external view returns (address trustedFactory);
 
     /// @notice Remove a token from the allowlist
     /// @dev Also clears the beneficiary mapping

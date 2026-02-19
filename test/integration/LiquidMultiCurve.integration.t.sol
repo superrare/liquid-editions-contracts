@@ -119,6 +119,7 @@ contract LiquidMultiCurveIntegrationTest is Test {
             burnerAddr
         );
         router = LiquidRouter(payable(routerAddr));
+        factory.setLiquidRouter(address(1));
 
         swapHelper = new LiquidPoolSwapHelper(IPoolManager(config.uniswapV4PoolManager));
 

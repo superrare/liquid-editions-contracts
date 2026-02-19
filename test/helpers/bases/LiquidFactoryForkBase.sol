@@ -43,6 +43,7 @@ abstract contract LiquidFactoryForkBase is ForkTestBase {
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
+        f.setLiquidRouter(address(1));
         f.setImplementation(address(liquidImpl));
         f.setBaseToken(address(mockRARE));
         return f;

@@ -20,6 +20,7 @@ library DeployLiquidAuctioneer {
      * @param universalRouter Uniswap Universal Router address
      * @param rareBurner Address of the RAREBurner contract
      * @param baseToken RARE token address (base token for auctions)
+     * @param weth wrapped native token address for preset ETH route
      * @param silent If true, suppress deployment logs (for tests)
      * @return auctioneer Address of the deployed LiquidAuctioneer
      */
@@ -30,6 +31,7 @@ library DeployLiquidAuctioneer {
         address universalRouter,
         address rareBurner,
         address baseToken,
+        address weth,
         bool silent
     ) internal returns (address auctioneer) {
         if (!silent) {
@@ -46,6 +48,7 @@ library DeployLiquidAuctioneer {
         );
         require(rareBurner != address(0), "RAREBurner cannot be zero");
         require(baseToken != address(0), "Base token (RARE) cannot be zero");
+        require(weth != address(0), "WETH cannot be zero");
 
         LiquidAuctioneer auctioneerContract = new LiquidAuctioneer(
             owner,
@@ -53,6 +56,7 @@ library DeployLiquidAuctioneer {
             protocolFeeRecipient,
             rareBurner,
             baseToken,
+            weth,
             config.rareBurnFeeBPS,
             config.protocolFeeBPS,
             config.referrerFeeBPS

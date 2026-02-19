@@ -111,6 +111,8 @@ contract LiquidInstantQuoteUnitTest is Test {
             300,
             1e15
         );
+        vm.prank(admin);
+        factory.setLiquidRouter(address(1));
 
         vm.startPrank(admin);
         factory.setImplementation(address(liquidImpl));

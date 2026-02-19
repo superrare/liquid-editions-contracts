@@ -96,6 +96,7 @@ contract LiquidMultiCurveMainnetTest is Test {
             300,
             MIN_RARE
         );
+                factory.setLiquidRouter(address(1));
         instantImpl = new LiquidInstant();
         multiCurveImpl = new LiquidMultiCurve();
         factory.setImplementation(address(instantImpl));

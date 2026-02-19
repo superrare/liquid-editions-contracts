@@ -98,7 +98,6 @@ contract LiquidInstantBaseMainnetTest is Test {
         );
 
         liquidImplementation = new LiquidInstant();
-
         factory = new LiquidFactory(
             admin,
             config.weth,
@@ -111,6 +110,9 @@ contract LiquidInstantBaseMainnetTest is Test {
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
+
+        
+        factory.setLiquidRouter(address(1));
 
         // Set the implementation in the factory
         factory.setImplementation(address(liquidImplementation));

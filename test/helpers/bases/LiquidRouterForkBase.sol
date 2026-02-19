@@ -110,6 +110,8 @@ abstract contract LiquidRouterForkBase is Test {
             burnerAddr
         );
         router = LiquidRouter(payable(routerAddr));
+        factory.setLiquidRouter(address(router));
+        router.setTrustedFactory(address(factory));
 
         vm.stopPrank();
     }

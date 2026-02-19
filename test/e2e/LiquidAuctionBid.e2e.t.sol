@@ -10,7 +10,7 @@ import {ILBPStrategy} from "liquid-editions/interfaces/ILBPStrategy.sol";
 
 /**
  * @title AnvilForkAuctionBidIntegrationTest
- * @notice Fork test for single bidWithETH flow.
+ * @notice Fork test for single bid flow.
  */
 contract AnvilForkAuctionBidIntegrationTest is AnvilForkAuctionBase {
     function test_BidWithETH_LiquidAuctioneer() public {
@@ -33,20 +33,17 @@ contract AnvilForkAuctionBidIntegrationTest is AnvilForkAuctionBase {
         );
 
         uint256 bidAmount = 0.1 ether;
-        (bytes memory bidCommands, bytes[] memory bidInputs) = _encodeEthToRareRoute(
-            bidAmount
-        );
-
         vm.deal(buyer, 10 ether);
         vm.prank(buyer);
-        uint256 bidId = auctioneer.bidWithETH{value: bidAmount}(
+        uint256 bidId = auctioneer.bid{value: bidAmount}(
+            address(0),
+            0,
             graduatedToken,
             0,
             buyer,
             address(0),
             0,
-            bidCommands,
-            bidInputs,
+            1,
             block.timestamp + 1 hours
         );
 

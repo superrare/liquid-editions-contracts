@@ -83,6 +83,7 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
                         config.uniswapUniversalRouter,
                         address(burner),
                         config.rareToken,
+                        config.weth,
                         true
                     )
                 )

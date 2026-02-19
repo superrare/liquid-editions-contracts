@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 import "forge-std/console.sol";
 import {LiquidSwapGuard} from "liquid-editions/LiquidSwapGuard.sol";
 import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {RoutePolicy} from "liquid-editions/RoutePolicy.sol";
 import {LiquidRouterForkBase} from "liquid-editions-test/helpers/bases/LiquidRouterForkBase.sol";
 import {DeployLiquidSwapGuard} from "script/deployers/DeployLiquidSwapGuard.s.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -16,9 +17,11 @@ import {TickMath} from "v4-core/libraries/TickMath.sol";
 
 /// @notice IUniversalRouter for direct execute call
 interface IUniversalRouter {
-    function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline)
-        external
-        payable;
+    function execute(
+        bytes calldata commands,
+        bytes[] calldata inputs,
+        uint256 deadline
+    ) external payable;
 }
 
 /**
@@ -30,10 +33,14 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
     LiquidSwapGuard public guard;
     LiquidInstant public liquidToken;
 
+    uint8 constant ALLOW_REVERT_FLAG = 0x80;
     bytes1 constant V4_SWAP = 0x10;
+    bytes1 constant WRAP_ETH = 0x0b;
     uint8 constant SWAP_EXACT_IN = 0x07;
     uint8 constant SETTLE_ALL = 0x0c;
     uint8 constant TAKE_ALL = 0x0f;
+    address constant ROUTER_ADDRESS =
+        address(0x0000000000000000000000000000000000000002);
     uint24 constant ETH_RARE_POOL_FEE = 3000;
     int24 constant ETH_RARE_POOL_TICK_SPACING = 60;
 
@@ -90,7 +97,11 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         address liquidTokenAddress,
         uint256 ethForSwap,
         uint256 minTokensOut
-    ) internal view returns (bytes memory commands, bytes[] memory inputs, uint256 deadline) {
+    )
+        internal
+        view
+        returns (bytes memory commands, bytes[] memory inputs, uint256 deadline)
+    {
         PathKey[] memory path = new PathKey[](2);
         path[0] = PathKey({
             intermediateCurrency: config.rareToken,
@@ -191,8 +202,33 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         return (ethAmount * (10000 - router.TOTAL_FEE_BPS())) / 10000;
     }
 
-    function test_swapViaLiquidRouter_succeeds() public {
+    function _appendWrapEth(
+        bytes memory commands,
+        bytes[] memory inputs,
+        bool allowRevert
+    )
+        internal
+        pure
+        returns (bytes memory nextCommands, bytes[] memory nextInputs)
+    {
+        bytes1 wrapCommand = allowRevert
+            ? bytes1(uint8(WRAP_ETH) | ALLOW_REVERT_FLAG)
+            : WRAP_ETH;
 
+        nextCommands = abi.encodePacked(commands, wrapCommand);
+        nextInputs = new bytes[](inputs.length + 1);
+        for (uint256 i; i < inputs.length; i++) {
+            nextInputs[i] = inputs[i];
+        }
+
+        // Intentionally impossible amount so WRAP_ETH fails if executed.
+        nextInputs[inputs.length] = abi.encode(
+            ROUTER_ADDRESS,
+            type(uint256).max
+        );
+    }
+
+    function test_swapViaLiquidRouter_succeeds() public {
         uint256 ethAmount = 0.01 ether;
         uint256 ethForSwap = _ethForSwap(ethAmount);
         (bytes memory commands, bytes[] memory inputs) = _encodeBuyRoute(
@@ -219,7 +255,6 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
     }
 
     function test_Sell_LiquidToken_ViaRouter() public {
-
         // First buy tokens
         uint256 buyEth = 0.01 ether;
         uint256 ethForSwap = _ethForSwap(buyEth);
@@ -245,11 +280,10 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         uint256 ethBefore = buyer.balance;
         vm.startPrank(buyer);
         IERC20(liquidToken).approve(address(router), tokensToSell);
-        (bytes memory sellCommands, bytes[] memory sellInputs) = _encodeSellRoute(
-            address(liquidToken),
-            tokensToSell,
-            1
-        );
+        (
+            bytes memory sellCommands,
+            bytes[] memory sellInputs
+        ) = _encodeSellRoute(address(liquidToken), tokensToSell, 1);
         uint256 ethReceived = router.sell(
             address(liquidToken),
             tokensToSell,
@@ -267,7 +301,6 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
     }
 
     function test_BuySell_RoundTrip_ViaRouter() public {
-
         uint256 ethAmount = 0.005 ether;
         uint256 ethForSwap = _ethForSwap(ethAmount);
         (bytes memory buyCommands, bytes[] memory buyInputs) = _encodeBuyRoute(
@@ -289,11 +322,10 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
 
         vm.startPrank(buyer);
         IERC20(liquidToken).approve(address(router), tokensBought);
-        (bytes memory sellCommands, bytes[] memory sellInputs) = _encodeSellRoute(
-            address(liquidToken),
-            tokensBought,
-            1
-        );
+        (
+            bytes memory sellCommands,
+            bytes[] memory sellInputs
+        ) = _encodeSellRoute(address(liquidToken), tokensBought, 1);
         router.sell(
             address(liquidToken),
             tokensBought,
@@ -306,24 +338,110 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         );
         vm.stopPrank();
 
-        assertEq(liquidToken.balanceOf(buyer), 0, "Should have sold all tokens");
+        assertEq(
+            liquidToken.balanceOf(buyer),
+            0,
+            "Should have sold all tokens"
+        );
     }
 
     function test_swapViaUniversalRouterDirectly_reverts() public {
-
         uint256 ethAmount = 0.01 ether;
         uint256 ethForSwap = _ethForSwap(ethAmount);
-        (bytes memory commands, bytes[] memory inputs, uint256 deadline) =
-            _buildExecuteParams(address(liquidToken), ethForSwap, 1);
+        (
+            bytes memory commands,
+            bytes[] memory inputs,
+            uint256 deadline
+        ) = _buildExecuteParams(address(liquidToken), ethForSwap, 1);
 
         vm.deal(buyer, ethAmount);
         vm.prank(buyer);
         vm.expectRevert(); // Hook reverts with UnauthorizedCaller (buyer is not LiquidRouter)
-        IUniversalRouter(config.uniswapUniversalRouter).execute{value: ethAmount}(
+        IUniversalRouter(config.uniswapUniversalRouter).execute{
+            value: ethAmount
+        }(commands, inputs, deadline);
+    }
+
+    function test_buyWithFailingTrailingWrapWithoutAllowRevert_reverts()
+        public
+    {
+        uint256 ethAmount = 0.01 ether;
+        uint256 ethForSwap = _ethForSwap(ethAmount);
+        (
+            bytes memory baseCommands,
+            bytes[] memory baseInputs
+        ) = _encodeBuyRoute(address(liquidToken), ethForSwap, 1);
+        (bytes memory commands, bytes[] memory inputs) = _appendWrapEth(
+            baseCommands,
+            baseInputs,
+            false
+        );
+
+        vm.prank(buyer);
+        vm.expectRevert();
+        router.buy{value: ethAmount}(
+            address(liquidToken),
+            buyer,
+            address(0),
+            1,
             commands,
             inputs,
-            deadline
+            block.timestamp + 1 hours
         );
+    }
+
+    function test_buyWithFailingTrailingWrapAllowRevert_revertsInRoutePolicy()
+        public
+    {
+        uint256 ethAmount = 0.01 ether;
+        uint256 ethForSwap = _ethForSwap(ethAmount);
+        (
+            bytes memory baseCommands,
+            bytes[] memory baseInputs
+        ) = _encodeBuyRoute(address(liquidToken), ethForSwap, 1);
+        (bytes memory commands, bytes[] memory inputs) = _appendWrapEth(
+            baseCommands,
+            baseInputs,
+            true
+        );
+
+        vm.prank(buyer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RoutePolicy.DisallowedCommandFlags.selector,
+                bytes1(uint8(WRAP_ETH) | ALLOW_REVERT_FLAG)
+            )
+        );
+        router.buy{value: ethAmount}(
+            address(liquidToken),
+            buyer,
+            address(0),
+            1,
+            commands,
+            inputs,
+            block.timestamp + 1 hours
+        );
+    }
+
+    function test_buyBaselineRoute_andLooseMinOut_succeeds() public {
+        uint256 ethAmount = 0.01 ether;
+        uint256 ethForSwap = _ethForSwap(ethAmount);
+        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRoute(
+            address(liquidToken),
+            ethForSwap,
+            1
+        );
+        vm.prank(buyer);
+        uint256 bought = router.buy{value: ethAmount}(
+            address(liquidToken),
+            buyer,
+            address(0),
+            1,
+            commands,
+            inputs,
+            block.timestamp + 1 hours
+        );
+        assertGt(bought, 0);
     }
 
     /// @notice Fork test: attacker's direct pm.initialize() via unlock reverts (real PoolManager)
@@ -336,7 +454,8 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         );
 
         // Build PoolKey same as LiquidInstant would (currencies sorted by address, guard as hooks)
-        (Currency currency0, Currency currency1) = config.rareToken < predictedToken
+        (Currency currency0, Currency currency1) = config.rareToken <
+            predictedToken
             ? (Currency.wrap(config.rareToken), Currency.wrap(predictedToken))
             : (Currency.wrap(predictedToken), Currency.wrap(config.rareToken));
 
@@ -370,13 +489,21 @@ contract AttackerInitializer is IUnlockCallback {
         poolManager = _poolManager;
     }
 
-    function tryInitialize(PoolKey memory poolKey, uint160 sqrtPriceX96) external {
+    function tryInitialize(
+        PoolKey memory poolKey,
+        uint160 sqrtPriceX96
+    ) external {
         poolManager.unlock(abi.encode(poolKey, sqrtPriceX96));
     }
 
-    function unlockCallback(bytes calldata data) external override returns (bytes memory) {
+    function unlockCallback(
+        bytes calldata data
+    ) external override returns (bytes memory) {
         require(msg.sender == address(poolManager), "only pool manager");
-        (PoolKey memory poolKey, uint160 sqrtPriceX96) = abi.decode(data, (PoolKey, uint160));
+        (PoolKey memory poolKey, uint160 sqrtPriceX96) = abi.decode(
+            data,
+            (PoolKey, uint160)
+        );
         poolManager.initialize(poolKey, sqrtPriceX96);
         return "";
     }

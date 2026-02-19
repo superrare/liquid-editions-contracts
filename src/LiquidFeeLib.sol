@@ -12,6 +12,9 @@ library LiquidFeeLib {
     // CONSTANTS
     // ============================================
 
+    /// @notice Total trading fee in basis points (4% = 400 BPS)
+    uint256 internal constant TOTAL_FEE_BPS = 400;
+
     /// @notice Beneficiary's share of total fees in basis points (25%)
     uint256 internal constant BENEFICIARY_FEE_BPS = 2500;
 
@@ -70,15 +73,16 @@ library LiquidFeeLib {
     function executeSwap(
         address universalRouter,
         uint256 ethValue,
-        bytes calldata commands,
-        bytes[] calldata inputs,
+        bytes memory commands,
+        bytes[] memory inputs,
         uint256 deadline,
         bool expectsEthOutput
     ) internal {
         // Validate deadline and route structure
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (commands.length == 0) revert InvalidRouteData();
-        if (commands.length != inputs.length) revert CommandInputLengthMismatch();
+        if (commands.length != inputs.length)
+            revert CommandInputLengthMismatch();
 
         // Enforce route policy before crossing the Universal Router boundary.
         RoutePolicy.validateRoute(commands, inputs, expectsEthOutput);

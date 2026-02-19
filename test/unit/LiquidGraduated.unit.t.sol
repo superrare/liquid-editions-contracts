@@ -45,7 +45,6 @@ contract LiquidGraduatedUnitTest is Test {
 
         mockPoolManager = new MockV4PoolManager();
         mockCcaFactory = new MockCCAFactory(address(rare));
-
         factory = new LiquidFactory(
             admin,
             makeAddr("weth"),
@@ -58,7 +57,9 @@ contract LiquidGraduatedUnitTest is Test {
             300,
             1e15
         );
+
         vm.startPrank(admin);
+        factory.setLiquidRouter(address(1));
         factory.setBaseToken(address(rare));
         implementation = new LiquidGraduated();
         factory.setLiquidGraduatedImplementation(address(implementation));

@@ -88,7 +88,7 @@ const NETWORK_CONFIG: Record<
   },
 };
 
-/** Gas limit for bidWithETH (swap + CCA submitBid). Simulation uses this too so dry run matches broadcast. */
+/** Gas limit for bid (swap + CCA submitBid). Simulation uses this too so dry run matches broadcast. */
 const BID_GAS_LIMIT = 1_000_000;
 /** Gas limit for exitBidToETH / exitPartialBidToETH. */
 const EXIT_GAS_LIMIT = 500_000;
@@ -170,7 +170,7 @@ const CCA_ABI = [
   'function bids(uint256) external view returns (uint64 startBlock, uint24 startCumulativeMps, uint64 exitedBlock, uint256 maxPrice, address owner, uint256 amountQ96, uint256 tokensFilled)',
 ];
 const AUCTIONEER_ABI = [
-  'function bidWithETH(address liquidToken, uint256 maxPrice, address bidOwner, address orderReferrer, uint256 prevTickPrice, bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable returns (uint256 bidId)',
+  'function bid(address tokenIn, uint256 amountIn, address liquidToken, uint256 maxPrice, address bidOwner, address orderReferrer, uint256 prevTickPrice, uint256 minRareOut, uint256 deadline) external payable returns (uint256 bidId)',
   'function exitBidToETH(address liquidToken, uint256 bidId, address recipient, uint256 minEthOut, bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external returns (uint256 ethReceived)',
   'function exitPartialBidToETH(address liquidToken, uint256 bidId, uint256 lastFullyFilledCheckpointBlock, uint256 outbidBlock, address recipient, uint256 minEthOut, bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external returns (uint256 ethReceived)',
   'function claimAuctionTokens(address liquidToken, uint256 bidId) external',
@@ -410,7 +410,8 @@ async function main() {
           weth,
           0
         );
-        const { commands, inputs, deadline } = quote;
+        const deadline = quote.deadline;
+        const minRareOut = ethers.BigNumber.from(quote.minAmountOut);
         const rareAmountOut = ethers.BigNumber.from(quote.amountOut);
         const maxPrice = floorPrice.add(ethers.utils.parseEther('1'));
         const prevTickPrice = floorPrice;
@@ -419,14 +420,15 @@ async function main() {
             to: liquidAuctioneer,
             from: wallet.address,
             value: ethAmountWei,
-            data: auctioneer.interface.encodeFunctionData('bidWithETH', [
+            data: auctioneer.interface.encodeFunctionData('bid', [
+              ethers.constants.AddressZero,
+              0,
               liquidTokenAddress,
               maxPrice,
               wallet.address,
               ethers.constants.AddressZero,
               prevTickPrice,
-              commands,
-              inputs,
+              minRareOut,
               deadline,
             ]),
             gasLimit: BID_GAS_LIMIT,
@@ -510,7 +512,8 @@ async function main() {
         weth,
         0
       );
-      const { commands, inputs, deadline } = quote;
+      const deadline = quote.deadline;
+      const minRareOut = ethers.BigNumber.from(quote.minAmountOut);
       const rareAmountOut = ethers.BigNumber.from(quote.amountOut);
       if (i === 0) {
         console.log('ETH for swap (after fee):', ethers.utils.formatEther(ethForSwap));
@@ -519,14 +522,15 @@ async function main() {
 
       let txBid: ethers.ContractTransaction;
       try {
-        txBid = await auctioneer.bidWithETH(
+        txBid = await auctioneer.bid(
+          ethers.constants.AddressZero,
+          0,
           liquidTokenAddress,
           maxPrice,
           wallet!.address,
           ethers.constants.AddressZero,
           prevTickPrice,
-          commands,
-          inputs,
+          minRareOut,
           deadline,
           { value: ethAmountWei, gasLimit: BID_GAS_LIMIT }
         );
@@ -539,14 +543,15 @@ async function main() {
               to: liquidAuctioneer,
               from: wallet!.address,
               value: ethAmountWei,
-              data: auctioneer.interface.encodeFunctionData('bidWithETH', [
+              data: auctioneer.interface.encodeFunctionData('bid', [
+                ethers.constants.AddressZero,
+                0,
                 liquidTokenAddress,
                 maxPrice,
                 wallet!.address,
                 ethers.constants.AddressZero,
                 prevTickPrice,
-                commands,
-                inputs,
+                minRareOut,
                 deadline,
               ]),
             },

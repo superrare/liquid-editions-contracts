@@ -12,6 +12,8 @@ import {DeployLiquidAuctioneer} from "./deployers/DeployLiquidAuctioneer.s.sol";
 import {DeployLiquidSwapGuard} from "./deployers/DeployLiquidSwapGuard.s.sol";
 import {LiquidSwapGuard} from "liquid-editions/LiquidSwapGuard.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
+import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
+import {LiquidAuctioneer} from "liquid-editions/LiquidAuctioneer.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 
 /**
@@ -55,6 +57,10 @@ import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
  *   forge script script/DeployLiquidSystem.s.sol:DeployLiquidSystem --rpc-url $RPC_URL --broadcast --gas-limit 30000000
  */
 contract DeployLiquidSystem is Script {
+    uint8 private constant ROUTE_V4_SINGLE = 1;
+    uint8 private constant ROUTE_V3_PATH = 2;
+    uint8 private constant ROUTE_V2_PATH = 3;
+
     struct DeploymentResult {
         address burner;
         address guard;
@@ -252,7 +258,31 @@ contract DeployLiquidSystem is Script {
                 networkConfig.uniswapUniversalRouter,
                 result.burner,
                 networkConfig.rareToken,
+                networkConfig.weth,
                 false
+            );
+            LiquidAuctioneer auctioneerContract = LiquidAuctioneer(
+                payable(result.auctioneer)
+            );
+            _configureAuctionRoute(
+                auctioneerContract,
+                address(0),
+                networkConfig,
+                deployConfig.auctioneerRoutes.ethToRare
+            );
+            if (networkConfig.usdc != address(0)) {
+                _configureAuctionRoute(
+                    auctioneerContract,
+                    networkConfig.usdc,
+                    networkConfig,
+                    deployConfig.auctioneerRoutes.usdcToRare
+                );
+            }
+            _configureAuctionRoute(
+                auctioneerContract,
+                networkConfig.rareToken,
+                networkConfig,
+                deployConfig.auctioneerRoutes.rareToRare
             );
         } else {
             result.auctioneer = networkConfig.liquid.auctioneer;
@@ -326,6 +356,16 @@ contract DeployLiquidSystem is Script {
                 );
             }
         }
+        // Link factory and router so creation auto-registers beneficiary in one tx.
+        if (result.factory != address(0) && result.router != address(0)) {
+            LiquidFactory factoryContract = LiquidFactory(result.factory);
+            LiquidRouter routerContract = LiquidRouter(payable(result.router));
+            factoryContract.setLiquidRouter(result.router);
+            routerContract.setTrustedFactory(result.factory);
+            console.log("=== Step 6e: Configuring auto-registration ===");
+            console.log("  factory.setLiquidRouter(router)");
+            console.log("  router.setTrustedFactory(factory)");
+        }
         console.log("");
 
         vm.stopBroadcast();
@@ -381,6 +421,8 @@ contract DeployLiquidSystem is Script {
         console.log("----------------------------------------");
         console.log("RARE Token:");
         console.logAddress(networkConfig.rareToken);
+        console.log("USDC:");
+        console.logAddress(networkConfig.usdc);
         console.log("WETH:");
         console.logAddress(networkConfig.weth);
         console.log("Uniswap V4 Pool Manager:");
@@ -454,5 +496,42 @@ contract DeployLiquidSystem is Script {
         );
         console.log("4. Test buy/sell using:");
         console.log("   cd scripts && npx ts-node buy-liquid-live.ts");
+    }
+
+    function _configureAuctionRoute(
+        LiquidAuctioneer auctioneerContract,
+        address tokenIn,
+        NetworkConfig.Config memory networkConfig,
+        DeployConfig.AuctionRouteConfig memory routeConfig
+    ) internal {
+        if (uint8(routeConfig.kind) == ROUTE_V4_SINGLE) {
+            auctioneerContract.setTokenRouteV4(
+                tokenIn,
+                routeConfig.v4Fee,
+                routeConfig.v4TickSpacing,
+                routeConfig.v4Hooks
+            );
+            return;
+        }
+        if (uint8(routeConfig.kind) == ROUTE_V3_PATH) {
+            // If no explicit path is configured, use default tokenIn -> WETH -> RARE.
+            if (routeConfig.v3Path.length == 0) {
+                address pathStart = tokenIn == address(0)
+                    ? networkConfig.weth
+                    : tokenIn;
+                routeConfig.v3Path = abi.encodePacked(
+                    pathStart,
+                    uint24(3000),
+                    networkConfig.weth,
+                    uint24(3000),
+                    networkConfig.rareToken
+                );
+            }
+            auctioneerContract.setTokenRouteV3(tokenIn, routeConfig.v3Path);
+            return;
+        }
+        if (uint8(routeConfig.kind) == ROUTE_V2_PATH) {
+            auctioneerContract.setTokenRouteV2(tokenIn, routeConfig.v2Path);
+        }
     }
 }

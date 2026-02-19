@@ -41,7 +41,7 @@ const CONFIG = {
   rpcUrl: expandRpcUrl(process.env.ETH_SEPOLIA || process.env.SEPOLIA_RPC_URL, 'https://ethereum-sepolia-rpc.publicnode.com'),
   
   // Deployed contracts (Ethereum Sepolia)
-  liquidRouter: '0x0e2c03E7565576C99546d378C7C8f828b392aC45', // Ethereum Sepolia LiquidRouter (NEW)
+  liquidRouter: '0x889b8bc562a4bed31510a1352FD351649D8EebB2', // Ethereum Sepolia LiquidRouter (NEW)
   
   // Token addresses
   tokenIn: '0x626Cad21a54A1e62a0fEEa372345e5C9D7C165f6', // Your LiquidEdition token (input)
@@ -72,7 +72,7 @@ const WETH_ADDRESSES: Record<number, string> = {
 
 // ABIs
 const LIQUID_ROUTER_ABI = [
-  'function swap(address tokenIn, uint256 amountIn, address tokenOut, address recipient, address orderReferrer, uint256 minAmountOut, bytes calldata leg1, bytes calldata leg2, uint256 deadline) external payable returns (uint256 amountOut)',
+  'function swap(address tokenIn, uint256 amountIn, address tokenOut, address recipient, address orderReferrer, uint256 minAmountOut, bytes calldata leg1Commands, bytes[] calldata leg1Inputs, bytes calldata leg2Commands, bytes[] calldata leg2Inputs, uint256 deadline) external payable returns (uint256 amountOut)',
   'function TOTAL_FEE_BPS() external view returns (uint256)',
   'event RouterSwap(address indexed tokenIn, address indexed tokenOut, address indexed sender, address recipient, address orderReferrer, uint256 amountIn, uint256 ethAtMidpoint, uint256 fee, uint256 amountOut, uint256 protocolFee, uint256 referrerFee, uint256 beneficiaryFeeA, uint256 beneficiaryFeeB, uint256 burnFee)',
 ];
@@ -311,8 +311,10 @@ async function main() {
       wallet.address,
       ethers.constants.AddressZero, // No referrer
       minTokenOut,
-      leg1Quote.routeData, // leg1: tokenIn -> ETH
-      leg2Quote.routeData, // leg2: ETH -> tokenOut
+      leg1Quote.commands, // leg1: tokenIn -> ETH
+      leg1Quote.inputs,
+      leg2Quote.commands, // leg2: ETH -> tokenOut
+      leg2Quote.inputs,
       leg1Quote.deadline, // Use same deadline for both legs
       { 
         gasLimit: 1500000, // Higher gas limit for two-leg swap

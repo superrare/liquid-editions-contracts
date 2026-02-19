@@ -72,7 +72,6 @@ contract LiquidInstantMainnetBasicTest is Test {
             false // disabled initially
         );
         liquidImplementation = new LiquidInstant();
-
         factory = new LiquidFactory(
             admin,
             config.weth,
@@ -85,6 +84,9 @@ contract LiquidInstantMainnetBasicTest is Test {
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
+
+        
+        factory.setLiquidRouter(address(1));
 
         factory.setImplementation(address(liquidImplementation));
 
@@ -322,6 +324,7 @@ contract LiquidInstantMainnetBasicTest is Test {
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
+                testFactory.setLiquidRouter(address(1));
 
         // Create implementation and set it in factory
         LiquidInstant factoryLiquidInstantImplementation = new LiquidInstant();
@@ -507,6 +510,7 @@ contract LiquidInstantMainnetBasicTest is Test {
             300,
             1e15
         );
+                testFactory.setLiquidRouter(address(1));
         testFactory.setImplementation(address(liquidImplementation));
         testFactory.setBaseToken(address(testRARE));
         vm.stopPrank();
@@ -569,16 +573,16 @@ contract LiquidInstantMainnetBasicTest is Test {
             }
 
             // If we found a high address, use it
-            if (
-                highRARE != address(0) &&
-                uint160(highRARE) > uint160(liquidAddress)
-            ) {
-                testRARE = MockRARE(highRARE);
-                testRARE.mint(creator, 1000 ether);
+        if (
+            highRARE != address(0) &&
+            uint160(highRARE) > uint160(liquidAddress)
+        ) {
+            testRARE = MockRARE(highRARE);
+            testRARE.mint(creator, 1000 ether);
 
-                // Recreate factory with high address RARE
-                vm.startPrank(admin);
-                testFactory = new LiquidFactory(
+            // Recreate factory with high address RARE
+            vm.startPrank(admin);
+            testFactory = new LiquidFactory(
                     admin,
                     config.weth,
                     config.uniswapV4PoolManager,
@@ -590,6 +594,7 @@ contract LiquidInstantMainnetBasicTest is Test {
                     300,
                     1e15
                 );
+                            testFactory.setLiquidRouter(address(1));
                 testFactory.setImplementation(address(liquidImplementation));
                 testFactory.setBaseToken(address(testRARE));
                 vm.stopPrank();

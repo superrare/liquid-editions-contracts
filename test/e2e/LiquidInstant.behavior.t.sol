@@ -51,6 +51,7 @@ contract LiquidInstantBehaviorTest is LiquidTokenBehaviorBase {
             300,
             LIQUIDITY
         );
+        f.setLiquidRouter(address(1));
         LiquidInstant impl = new LiquidInstant();
         f.setImplementation(address(impl));
         f.setBaseToken(address(rare));

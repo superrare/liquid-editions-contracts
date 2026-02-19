@@ -50,7 +50,6 @@ contract LiquidMigrationE2ETest is Test {
 
         liquidImpl = new LiquidInstant();
         multiCurveImpl = new LiquidMultiCurve();
-
         factory = new LiquidFactory(
             admin,
             config.weth,
@@ -63,6 +62,9 @@ contract LiquidMigrationE2ETest is Test {
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei
         );
+
+        
+        factory.setLiquidRouter(address(1));
 
         factory.setImplementation(address(liquidImpl));
         factory.setLiquidMultiCurveImplementation(address(multiCurveImpl));

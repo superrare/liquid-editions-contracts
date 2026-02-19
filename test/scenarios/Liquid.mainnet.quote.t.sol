@@ -93,7 +93,6 @@ contract LiquidInstantQuoteTradeTest is Test {
             0, // 0% slippage
             false // disabled initially
         );
-
         factory = new LiquidFactory(
             admin,
             config.weth,
@@ -106,6 +105,9 @@ contract LiquidInstantQuoteTradeTest is Test {
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
+
+        
+        factory.setLiquidRouter(address(1));
 
         factory.setImplementation(address(liquidImpl));
 

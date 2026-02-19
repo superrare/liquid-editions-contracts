@@ -7,6 +7,7 @@ import {LiquidGraduated} from "liquid-editions/LiquidGraduated.sol";
 import {ILiquidGraduated} from "liquid-editions/interfaces/ILiquidGraduated.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
+import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
 import {MockBurner} from "liquid-editions-test/helpers/MockBurner.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IDistributionStrategy} from "continuous-clearing-auction/interfaces/external/IDistributionStrategy.sol";
@@ -25,6 +26,7 @@ import {IHooks} from "v4-core/interfaces/IHooks.sol";
 
 /// @title LiquidAuctioneer Unit Tests
 contract LiquidAuctioneerUnitTest is Test {
+    address constant PERMIT2_ADDR = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
     address owner = makeAddr("owner");
     address user = makeAddr("user");
     address protocolFeeRecipient = makeAddr("protocolFeeRecipient");
@@ -33,6 +35,7 @@ contract LiquidAuctioneerUnitTest is Test {
 
     LiquidAuctioneer public auctioneer;
     MockRARE public rare;
+    MockERC20 public usdc;
     MockRouter public router;
     MockBurner public burner;
     LiquidFactory public factory;
@@ -44,6 +47,7 @@ contract LiquidAuctioneerUnitTest is Test {
     function setUp() public {
         vm.deal(user, 100 ether);
         rare = new MockRARE();
+        usdc = new MockERC20();
         rare.mint(admin, 1000 ether);
         router = new MockRouter(address(rare));
         burner = new MockBurner();
@@ -54,6 +58,7 @@ contract LiquidAuctioneerUnitTest is Test {
             protocolFeeRecipient,
             address(burner),
             address(rare),
+            makeAddr("weth"),
             2500,
             2500,
             5000
@@ -75,6 +80,7 @@ contract LiquidAuctioneerUnitTest is Test {
             300,
             1e15
         );
+                factory.setLiquidRouter(address(1));
         factory.setBaseToken(address(rare));
         implementation = new LiquidGraduated();
         factory.setLiquidGraduatedImplementation(address(implementation));
@@ -140,19 +146,19 @@ contract LiquidAuctioneerUnitTest is Test {
     }
 
     function test_RevertWhenPaused() public {
-        (bytes memory commands, bytes[] memory inputs) = _validRoute();
         vm.prank(owner);
         auctioneer.pause();
         vm.prank(user);
         vm.expectRevert();
-        auctioneer.bidWithETH{value: 1 ether}(
-            address(graduated),
+        auctioneer.bid{value: 1 ether}(
+            address(0),
             0,
+            address(graduated),
+            1,
             user,
             referrer,
             0,
-            commands,
-            inputs,
+            1,
             block.timestamp + 3600
         );
     }
@@ -172,22 +178,23 @@ contract LiquidAuctioneerUnitTest is Test {
             protocolFeeRecipient,
             address(burner),
             address(rare),
+            makeAddr("weth"),
             2500,
             2500,
             5000
         );
-        (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.prank(user);
         vm.expectRevert(ILiquidAuctioneer.UnexpectedEthRefund.selector);
-        refundAuctioneer.bidWithETH{value: 1 ether}(
-            address(graduated),
+        refundAuctioneer.bid{value: 1 ether}(
+            address(0),
             0,
+            address(graduated),
+            1,
             user,
             referrer,
             0,
-            commands,
-            inputs,
+            1,
             block.timestamp + 3600
         );
     }
@@ -249,6 +256,68 @@ contract LiquidAuctioneerUnitTest is Test {
         assertEq(rare.balanceOf(owner) - ownerBalBefore, rescueAmount);
         assertEq(rare.balanceOf(address(auctioneer)), 0);
     }
+
+    function test_BidWithUSDC_UsesUnifiedBidPath() public {
+        uint256 usdcAmount = 100e18;
+        address liquidToken = address(
+            new MockLiquidTokenForExit(address(new MockAuctionForBid()))
+        );
+        FunctionalMockPermit2 permit2Impl = new FunctionalMockPermit2();
+        vm.etch(PERMIT2_ADDR, address(permit2Impl).code);
+        rare.transfer(address(router), 10e18);
+        usdc.mint(user, usdcAmount);
+
+        vm.prank(owner);
+        auctioneer.setTokenRouteV4(address(usdc), 3000, 60, address(0));
+
+        vm.startPrank(user);
+        usdc.approve(address(auctioneer), usdcAmount);
+        uint256 bidId = auctioneer.bid(
+            address(usdc),
+            usdcAmount,
+            liquidToken,
+            1,
+            user,
+            referrer,
+            0,
+            1,
+            block.timestamp + 1 hours
+        );
+        vm.stopPrank();
+
+        assertEq(bidId, 1, "USDC bid should submit successfully");
+    }
+
+    function test_BidWithRare_UsesUnifiedBidPath() public {
+        uint256 rareInput = 1e18;
+        address liquidToken = address(
+            new MockLiquidTokenForExit(address(new MockAuctionForBid()))
+        );
+        FunctionalMockPermit2 permit2Impl = new FunctionalMockPermit2();
+        vm.etch(PERMIT2_ADDR, address(permit2Impl).code);
+        rare.transfer(address(router), 10e18);
+        rare.mint(user, rareInput);
+
+        vm.prank(owner);
+        auctioneer.setTokenRouteV4(address(rare), 3000, 60, address(0));
+
+        vm.startPrank(user);
+        rare.approve(address(auctioneer), rareInput);
+        uint256 bidId = auctioneer.bid(
+            address(rare),
+            rareInput,
+            liquidToken,
+            1,
+            user,
+            referrer,
+            0,
+            1,
+            block.timestamp + 1 hours
+        );
+        vm.stopPrank();
+
+        assertEq(bidId, 1, "RARE bid should submit successfully");
+    }
 }
 
 /// @title LiquidAuctioneer Security Tests (CRITICAL-01 fix)
@@ -287,6 +356,7 @@ contract LiquidAuctioneerSecurityTest is Test {
             protocolFeeRecipient,
             address(burner),
             address(rare),
+            makeAddr("weth"),
             2500,
             2500,
             5000
@@ -326,6 +396,7 @@ contract LiquidAuctioneerSecurityTest is Test {
                 protocolFeeRecipient,
                 address(burner),
                 address(rare),
+                makeAddr("weth"),
                 2500,
                 2500,
                 5000
@@ -343,6 +414,7 @@ contract LiquidAuctioneerSecurityTest is Test {
                 protocolRecipient,
                 address(burner),
                 address(rare),
+                makeAddr("weth"),
                 2500,
                 2500,
                 5000
@@ -354,20 +426,17 @@ contract LiquidAuctioneerSecurityTest is Test {
         return address(new MockLiquidTokenForExit(address(bidAuction)));
     }
 
-    /// @notice Beneficiary callback that reenters bidWithETH should be contained and
+    /// @notice Beneficiary callback that reenters bid should be contained and
     ///         redirected as protocol share.
     function test_BidWithETH_BeneficiaryReenters() public {
         MockBidRouterForAuctioneer bidRouter = new MockBidRouterForAuctioneer(
             address(rare)
         );
         address liquidToken = _setupBidToken();
-        (bytes memory bidCommands, bytes[] memory bidInputs) = _validRoute();
         ReentrantBeneficiaryForAuctioneer beneficiary = new ReentrantBeneficiaryForAuctioneer();
         beneficiary.setBidParams(
             liquidToken,
             user,
-            bidCommands,
-            bidInputs,
             block.timestamp + 1 hours
         );
 
@@ -381,14 +450,15 @@ contract LiquidAuctioneerSecurityTest is Test {
         uint256 protocolBefore = protocolFeeRecipient.balance;
 
         vm.prank(user);
-        bidAuctioneer.bidWithETH{value: 1 ether}(
+        bidAuctioneer.bid{value: 1 ether}(
+            address(0),
+            0,
             liquidToken,
             1,
             user,
             address(0),
             0,
-            bidCommands,
-            bidInputs,
+            1,
             block.timestamp + 1 hours
         );
 
@@ -418,18 +488,17 @@ contract LiquidAuctioneerSecurityTest is Test {
             address(bidRouter),
             address(rejectingProtocol)
         );
-        (bytes memory bidCommands, bytes[] memory bidInputs) = _validRoute();
-
         vm.expectRevert(ILiquidRouter.EthTransferFailed.selector);
         vm.prank(user);
-        bidAuctioneer.bidWithETH{value: 1 ether}(
+        bidAuctioneer.bid{value: 1 ether}(
+            address(0),
+            0,
             liquidToken,
             1,
             user,
             address(0),
             0,
-            bidCommands,
-            bidInputs,
+            1,
             block.timestamp + 1 hours
         );
     }
@@ -826,7 +895,7 @@ contract MockAuctionForExit {
     }
 }
 
-/// @dev Mock auction implementing the bid entrypoint for bidWithETH coverage tests.
+/// @dev Mock auction implementing the bid entrypoint for bid coverage tests.
 contract MockAuctionForBid {
     function submitBid(
         uint256,
@@ -871,8 +940,6 @@ contract ReentrantBeneficiaryForAuctioneer {
     LiquidAuctioneer public auctioneer;
     address public liquidToken;
     address public bidOwner;
-    bytes public routeCommands;
-    bytes[] public routeInputs;
     uint256 public deadline;
     bool public shouldReenter;
 
@@ -885,14 +952,10 @@ contract ReentrantBeneficiaryForAuctioneer {
     function setBidParams(
         address _liquidToken,
         address _bidOwner,
-        bytes calldata _routeCommands,
-        bytes[] calldata _routeInputs,
         uint256 _deadline
     ) external {
         liquidToken = _liquidToken;
         bidOwner = _bidOwner;
-        routeCommands = _routeCommands;
-        routeInputs = _routeInputs;
         deadline = _deadline;
         shouldReenter = true;
     }
@@ -901,14 +964,15 @@ contract ReentrantBeneficiaryForAuctioneer {
         if (!shouldReenter) {
             return;
         }
-        auctioneer.bidWithETH{value: 0}(
+        auctioneer.bid{value: 0}(
+            address(0),
+            0,
             liquidToken,
             1,
             bidOwner,
             address(0),
             0,
-            routeCommands,
-            routeInputs,
+            1,
             deadline
         );
     }

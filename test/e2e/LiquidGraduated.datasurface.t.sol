@@ -117,8 +117,7 @@ contract LiquidGraduatedDatasurfaceTest is Test {
         rare.mint(migrator, 1000 ether);
         mockCcaFactory = new MockCCAFactoryDS(address(rare));
 
-        vm.startPrank(admin);
-        factory = new LiquidFactory(
+        vm.startPrank(admin);        factory = new LiquidFactory(
             admin,
             config.weth,
             config.uniswapV4PoolManager,
@@ -130,6 +129,7 @@ contract LiquidGraduatedDatasurfaceTest is Test {
             300,
             1e15
         );
+                factory.setLiquidRouter(address(1));
         factory.setBaseToken(address(rare));
         instantImpl = new LiquidInstant();
         graduatedImpl = new LiquidGraduated();

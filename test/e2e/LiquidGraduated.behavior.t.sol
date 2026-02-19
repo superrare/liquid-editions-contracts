@@ -211,6 +211,7 @@ contract LiquidGraduatedBehaviorTest is LiquidTokenBehaviorBase {
             300,
             1e15
         );
+        f.setLiquidRouter(address(1));
         f.setBaseToken(address(rare));
         LiquidGraduated gradImpl = new LiquidGraduated();
         f.setLiquidGraduatedImplementation(address(gradImpl));
@@ -358,6 +359,7 @@ contract LiquidGraduatedPreGradBehaviorTest is LiquidTokenBehaviorBase {
             300,
             1e15
         );
+        f.setLiquidRouter(address(1));
         f.setBaseToken(address(rare));
         LiquidGraduated gradImpl = new LiquidGraduated();
         f.setLiquidGraduatedImplementation(address(gradImpl));

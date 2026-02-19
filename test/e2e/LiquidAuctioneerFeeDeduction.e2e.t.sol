@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 import {AnvilForkAuctionBase} from "liquid-editions-test/AnvilForkAuctionBase.sol";
 
 /// @title AnvilForkAuctioneerFeeDeductionTest
-/// @notice Verifies bidWithETH fee allocation on forked mainnet auctioneer setup.
+/// @notice Verifies bid fee allocation on forked mainnet auctioneer setup.
 contract AnvilForkAuctioneerFeeDeductionTest is AnvilForkAuctionBase {
     uint256 internal constant BENEFICIARY_FEE_BPS = 2500;
 
@@ -32,9 +32,6 @@ contract AnvilForkAuctioneerFeeDeductionTest is AnvilForkAuctionBase {
 
         address referrer = makeAddr("auctioneerFeeDeductionReferrer");
         uint256 bidAmount = 1 ether;
-        (bytes memory commands, bytes[] memory inputs) = _encodeEthToRareRoute(
-            bidAmount
-        );
         address protocolRecipient = auctioneer.PROTOCOL_FEE_RECIPIENT();
         address tokenBeneficiary = auctioneer.tokenBeneficiaries(state.graduatedToken);
         address rareBurner = auctioneer.RARE_BURNER();
@@ -51,14 +48,15 @@ contract AnvilForkAuctioneerFeeDeductionTest is AnvilForkAuctionBase {
         );
 
         vm.prank(buyer);
-        auctioneer.bidWithETH{value: bidAmount}(
+        auctioneer.bid{value: bidAmount}(
+            address(0),
+            0,
             state.graduatedToken,
             0,
             buyer,
             referrer,
             0,
-            commands,
-            inputs,
+            1,
             block.timestamp + 1 hours
         );
         BalanceSnapshot memory afterSnapshot = _snapshotBalances(

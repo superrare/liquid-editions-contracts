@@ -115,8 +115,7 @@ contract LiquidGraduatedMainnetForkTest is Test {
 
         mockCcaFactory = new MockCCAFactoryFork(address(rare));
 
-        vm.startPrank(admin);
-        factory = new LiquidFactory(
+        vm.startPrank(admin);        factory = new LiquidFactory(
             admin,
             config.weth,
             config.uniswapV4PoolManager,
@@ -128,6 +127,7 @@ contract LiquidGraduatedMainnetForkTest is Test {
             300,
             1e15
         );
+                factory.setLiquidRouter(address(1));
         factory.setBaseToken(address(rare));
         implementation = new LiquidGraduated();
         factory.setLiquidGraduatedImplementation(address(implementation));

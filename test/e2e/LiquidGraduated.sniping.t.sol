@@ -147,8 +147,7 @@ contract LiquidGraduatedSnipingTest is Test {
         rare.mint(sniper, 1000 ether);
         mockCcaFactory = new MockCCAFactorySniping();
 
-        vm.startPrank(admin);
-        factory = new LiquidFactory(
+        vm.startPrank(admin);        factory = new LiquidFactory(
             admin,
             config.weth,
             config.uniswapV4PoolManager,
@@ -160,6 +159,7 @@ contract LiquidGraduatedSnipingTest is Test {
             300,
             1e15
         );
+                factory.setLiquidRouter(address(1));
         factory.setBaseToken(address(rare));
         instantImpl = new LiquidInstant();
         graduatedImpl = new LiquidGraduated();

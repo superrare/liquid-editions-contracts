@@ -132,6 +132,7 @@ contract RAREBurnerIntegrationTest is Test {
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
+                factory.setLiquidRouter(address(1));
 
         // Set implementation
         factory.setImplementation(address(liquidImpl));

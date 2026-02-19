@@ -53,19 +53,40 @@ library DeployConfig {
         uint16 referrerFeeBPS;
     }
 
+    enum AuctionRouteKind {
+        NONE,
+        V4_SINGLE,
+        V3_PATH,
+        V2_PATH
+    }
+
+    struct AuctionRouteConfig {
+        AuctionRouteKind kind;
+        uint24 v4Fee;
+        int24 v4TickSpacing;
+        address v4Hooks;
+        bytes v3Path;
+        address[] v2Path;
+    }
+
+    struct AuctioneerRoutesConfig {
+        AuctionRouteConfig ethToRare;
+        AuctionRouteConfig usdcToRare;
+        AuctionRouteConfig rareToRare;
+    }
+
     struct Config {
         BurnerConfig burner;
         FactoryConfig factory;
         FeeConfig fees;
+        AuctioneerRoutesConfig auctioneerRoutes;
     }
 
     /**
      * @notice Get deployment configuration for a given chain ID
      * @return Config struct with all deployment parameters
      */
-    function getConfig(
-        uint256 /* chainId */
-    ) internal pure returns (Config memory) {
+    function getConfig(uint256 chainId) internal pure returns (Config memory) {
         // Default configuration (applies to all chains unless overridden)
         Config memory config = Config({
             burner: BurnerConfig({
@@ -90,15 +111,45 @@ library DeployConfig {
                 protocolFeeBPS: 10000, // 100% of remainder after creator fee
                 rareBurnFeeBPS: 0, // 0% of remainder after creator fee
                 referrerFeeBPS: 0 // 0% of remainder after creator fee
+            }),
+            auctioneerRoutes: AuctioneerRoutesConfig({
+                ethToRare: AuctionRouteConfig({
+                    kind: AuctionRouteKind.V4_SINGLE,
+                    v4Fee: 3000,
+                    v4TickSpacing: 60,
+                    v4Hooks: address(0),
+                    v3Path: bytes(""),
+                    v2Path: new address[](0)
+                }),
+                usdcToRare: AuctionRouteConfig({
+                    kind: AuctionRouteKind.NONE,
+                    v4Fee: 0,
+                    v4TickSpacing: 0,
+                    v4Hooks: address(0),
+                    v3Path: bytes(""),
+                    v2Path: new address[](0)
+                }),
+                // Keep disabled by default; RARE input can be supported later via direct-path logic.
+                rareToRare: AuctionRouteConfig({
+                    kind: AuctionRouteKind.NONE,
+                    v4Fee: 0,
+                    v4TickSpacing: 0,
+                    v4Hooks: address(0),
+                    v3Path: bytes(""),
+                    v2Path: new address[](0)
+                })
             })
         });
 
-        // Chain-specific overrides can be added here
-        // Example:
-        // if (chainId == 1) {
-        //     config.burner.poolFee = 3000;
-        //     config.factory.lpTickLower = -180;
-        // }
+        if (chainId == 1) {
+            config.auctioneerRoutes.usdcToRare.kind = AuctionRouteKind.V3_PATH;
+        } else if (chainId == 8453) {
+            config.auctioneerRoutes.usdcToRare.kind = AuctionRouteKind.V3_PATH;
+        } else if (chainId == 84532) {
+            config.auctioneerRoutes.usdcToRare.kind = AuctionRouteKind.V3_PATH;
+        } else if (chainId == 11155111) {
+            config.auctioneerRoutes.usdcToRare.kind = AuctionRouteKind.V3_PATH;
+        }
 
         return config;
     }

@@ -14,6 +14,8 @@ library NetworkConfig {
 
     struct Config {
         address rareToken;
+        /// @notice Canonical USDC token for this chain (address(0) if unavailable)
+        address usdc;
         address rareBurner;
         address weth;
         bytes32 rareEthPoolId;
@@ -39,6 +41,7 @@ library NetworkConfig {
             return
                 Config({
                     rareToken: 0xba5BDe662c17e2aDFF1075610382B9B691296350,
+                    usdc: 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48,
                     rareBurner: 0x0000000000000000000000000000000000000000, // not yet deployed
                     weth: 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2,
                     rareEthPoolId: 0xc5e82ff54924a7232a3e91ca252d505f4e4417afa2b6a8507dfb691182cd0b16,
@@ -61,6 +64,7 @@ library NetworkConfig {
             return
                 Config({
                     rareToken: 0x691077C8e8de54EA84eFd454630439F99bd8C92f,
+                    usdc: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913,
                     rareBurner: 0x0000000000000000000000000000000000000000,
                     weth: 0x4200000000000000000000000000000000000006,
                     rareEthPoolId: 0x0000000000000000000000000000000000000000000000000000000000000000,
@@ -83,6 +87,7 @@ library NetworkConfig {
             return
                 Config({
                     rareToken: 0x8b21bC8571d11F7AdB705ad8F6f6BD1deb79cE01,
+                    usdc: 0x036CbD53842c5426634e7929541eC2318f3dCF7e,
                     rareBurner: 0x978faD411a01DDc9D5eFCBC476dcf32c758Fc604,
                     weth: 0x4200000000000000000000000000000000000006,
                     rareEthPoolId: 0xb05cc8f2a70e36fc8ccff769958d8b1d90980ed38d3a6f48ae89ce9a8d18f69d,
@@ -105,6 +110,7 @@ library NetworkConfig {
             return
                 Config({
                     rareToken: 0x197FaeF3f59eC80113e773Bb6206a17d183F97CB,
+                    usdc: 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238,
                     rareBurner: 0xD985d8a1946576D43b5175ED73d9336741C17B69,
                     weth: 0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14,
                     rareEthPoolId: 0x781d2707a6eb9cd3bdbea356a0ba90f9c5ef274927f5e72b0060bba5abd94f03,
@@ -116,9 +122,9 @@ library NetworkConfig {
                     lbpStrategyFactory: 0x89Dd5691e53Ea95d19ED2AbdEdCf4cBbE50da1ff,
                     protocolFeeRecipient: 0xBa68422A154e459f7b4992a95Ad358d412b6bd1d,
                     liquid: LiquidAddresses({
-                        factory: 0x11111f5B72e4a46b5Bd2Bce90098A05c5DfB3e54,
-                        router: 0x889b8bc562a4bed31510a1352FD351649D8EebB2,
-                        auctioneer: 0xF7554806d4F952bB0870279909122C074b5ba881,
+                        factory: 0xcA94DC0001929E9BB2aB6a053f61411Ab8E62879,
+                        router: 0x7E0e7cF5514705ff7E91d6bEA4Cd633d55fB1184,
+                        auctioneer: 0x6D9cDe40169Beb1e819395B8b62ad2b1a07b4754,
                         swapGuard: 0x69E682bde73c1906CCcE0B0aA0587D63B4C4E080
                     })
                 });

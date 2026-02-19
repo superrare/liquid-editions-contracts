@@ -8,6 +8,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
+import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {IPermit2} from "liquid-editions/interfaces/IPermit2.sol";
 import {LiquidFeeLib} from "liquid-editions/LiquidFeeLib.sol";
 
@@ -57,7 +58,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     ///      Increased from 3% to 4% to compensate for 0% LP fee (removed secondary rewards).
     ///      For buys, fee is deducted from ETH input BEFORE the swap.
     ///      For sells, fee is deducted from ETH output AFTER the swap.
-    uint256 public constant TOTAL_FEE_BPS = 400;
+    uint256 public constant TOTAL_FEE_BPS = LiquidFeeLib.TOTAL_FEE_BPS;
 
     /// @notice Uniswap Permit2 contract address
     /// @dev Universal Router pulls tokens via Permit2, not directly.
@@ -113,11 +114,23 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     ///      registerToken() automatically adds to allowlist.
     mapping(address => bool) public allowedTokens;
 
+    /// @notice Trusted factory for auto-registration
+    /// @dev Only used to allow factory-driven registration where beneficiary must match tokenCreator.
+    address public trustedFactory;
+
     /// @notice Whether the allowlist is enabled
     /// @dev When false: any token can be traded (permissionless mode)
     ///      When true: only tokens in allowedTokens mapping can be traded
     ///      GOTCHA: A token can be in allowedTokens but have no beneficiary set.
     bool public allowlistEnabled;
+
+    error NotTrustedFactory(address caller, address trustedFactory);
+    error BeneficiaryNotCreator(
+        address token,
+        address tokenCreator,
+        address beneficiary
+    );
+    error NotILiquidToken(address token);
 
     // ============================================
     // CONSTRUCTOR
@@ -713,12 +726,19 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     /// @param beneficiary The beneficiary address (receives "creator" fees)
     /// @dev Automatically adds token to allowlist. Call this for each token
     ///      you want to support with a specific beneficiary.
-    function registerToken(
-        address token,
-        address beneficiary
-    ) external onlyOwner {
+    function registerToken(address token, address beneficiary) external {
         if (token == address(0)) revert AddressZero();
         if (beneficiary == address(0)) revert AddressZero();
+        if (
+            msg.sender != owner() &&
+            (trustedFactory == address(0) || msg.sender != trustedFactory)
+        ) {
+            revert NotTrustedFactory(msg.sender, trustedFactory);
+        }
+
+        if (msg.sender == trustedFactory) {
+            _assertFactoryBeneficiary(token, beneficiary);
+        }
 
         // Set beneficiary for fee distribution
         tokenBeneficiaries[token] = beneficiary;
@@ -727,6 +747,29 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         allowedTokens[token] = true;
 
         emit TokenRegistered(token, beneficiary);
+    }
+
+    function setTrustedFactory(address _trustedFactory) external onlyOwner {
+        if (_trustedFactory == address(0)) revert AddressZero();
+        address oldTrustedFactory = trustedFactory;
+        trustedFactory = _trustedFactory;
+        emit TrustedFactoryUpdated(oldTrustedFactory, _trustedFactory);
+    }
+
+    function _assertFactoryBeneficiary(
+        address token,
+        address beneficiary
+    ) internal view {
+        address tokenCreator;
+        try ILiquid(token).tokenCreator() returns (address _tokenCreator) {
+            tokenCreator = _tokenCreator;
+        } catch {
+            revert NotILiquidToken(token);
+        }
+
+        if (tokenCreator != beneficiary) {
+            revert BeneficiaryNotCreator(token, tokenCreator, beneficiary);
+        }
     }
 
     /// @notice Remove a token from the allowlist

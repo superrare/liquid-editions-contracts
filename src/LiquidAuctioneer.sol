@@ -13,7 +13,7 @@ import {ILiquidAuctioneer} from "liquid-editions/interfaces/ILiquidAuctioneer.so
 import {IPermit2} from "liquid-editions/interfaces/IPermit2.sol";
 
 /// @title LiquidAuctioneer
-/// @notice Router for CCA auction interactions: bid with ETH, exit/claim, trigger graduation
+/// @notice Router for CCA auction interactions: bid, exit/claim, trigger graduation
 /// @dev Uses LiquidFeeLib for fee and swap logic. Bid ownership is non-custodial (bidOwner = user).
 contract LiquidAuctioneer is
     ILiquidAuctioneer,
@@ -23,7 +23,7 @@ contract LiquidAuctioneer is
 {
     using SafeERC20 for IERC20;
 
-    uint256 public constant TOTAL_FEE_BPS = 400;
+    uint256 public constant TOTAL_FEE_BPS = LiquidFeeLib.TOTAL_FEE_BPS;
     address private constant PERMIT2 =
         0x000000000022D473030F116dDEE9F6B43aC78BA3;
 
@@ -32,11 +32,43 @@ contract LiquidAuctioneer is
     address public immutable RARE_BURNER;
     /// @dev RARE token address (base token for pools)
     address public immutable BASE_TOKEN;
+    /// @dev canonical wrapped native token for this chain
+    address public immutable WETH;
     uint256 public immutable RARE_BURN_FEE_BPS;
     uint256 public immutable PROTOCOL_FEE_BPS;
     uint256 public immutable REFERRER_FEE_BPS;
 
+    struct TokenRoute {
+        RouteKind kind;
+        uint24 v4Fee;
+        int24 v4TickSpacing;
+        address v4Hooks;
+        bytes v3Path;
+        address[] v2Path;
+    }
+
     mapping(address => address) public tokenBeneficiaries;
+    mapping(address => TokenRoute) private tokenToRareRoutes;
+
+    address private constant MSG_SENDER =
+        address(0x0000000000000000000000000000000000000001);
+    address private constant ROUTER_ADDRESS =
+        address(0x0000000000000000000000000000000000000002);
+    uint8 private constant CMD_V3_SWAP_EXACT_IN = 0x00;
+    uint8 private constant CMD_V2_SWAP_EXACT_IN = 0x08;
+    uint8 private constant CMD_WRAP_ETH = 0x0b;
+    uint8 private constant CMD_V4_SWAP = 0x10;
+    uint8 private constant V4_SWAP_EXACT_IN = 0x07;
+    uint8 private constant V4_SETTLE_ALL = 0x0c;
+    uint8 private constant V4_TAKE_ALL = 0x0f;
+
+    struct V4PathKey {
+        address intermediateCurrency;
+        uint24 fee;
+        int24 tickSpacing;
+        address hooks;
+        bytes hookData;
+    }
 
     /// @notice Creates LiquidAuctioneer with fee configuration
     /// @param _owner Owner address
@@ -44,6 +76,7 @@ contract LiquidAuctioneer is
     /// @param _protocolFeeRecipient Protocol fee recipient
     /// @param _rareBurner RARE burner contract
     /// @param _baseToken RARE token address
+    /// @param _weth canonical wrapped native token for this chain
     /// @param _rareBurnFeeBPS RARE burn fee in BPS (must sum with others to 10000)
     /// @param _protocolFeeBPS Protocol fee in BPS
     /// @param _referrerFeeBPS Referrer fee in BPS
@@ -53,6 +86,7 @@ contract LiquidAuctioneer is
         address _protocolFeeRecipient,
         address _rareBurner,
         address _baseToken,
+        address _weth,
         uint256 _rareBurnFeeBPS,
         uint256 _protocolFeeBPS,
         uint256 _referrerFeeBPS
@@ -62,7 +96,8 @@ contract LiquidAuctioneer is
             _universalRouter == address(0) ||
             _protocolFeeRecipient == address(0) ||
             _rareBurner == address(0) ||
-            _baseToken == address(0)
+            _baseToken == address(0) ||
+            _weth == address(0)
         ) revert ILiquidRouter.AddressZero();
         if (_rareBurnFeeBPS + _protocolFeeBPS + _referrerFeeBPS != 10000)
             revert ILiquidRouter.InvalidFeeDistribution();
@@ -71,64 +106,115 @@ contract LiquidAuctioneer is
         PROTOCOL_FEE_RECIPIENT = _protocolFeeRecipient;
         RARE_BURNER = _rareBurner;
         BASE_TOKEN = _baseToken;
+        WETH = _weth;
         RARE_BURN_FEE_BPS = _rareBurnFeeBPS;
         PROTOCOL_FEE_BPS = _protocolFeeBPS;
         REFERRER_FEE_BPS = _referrerFeeBPS;
+
+        // Safe default native ETH -> RARE route; owner can override via route setters.
+        TokenRoute storage nativeRoute = tokenToRareRoutes[address(0)];
+        nativeRoute.kind = RouteKind.V4_SINGLE;
+        nativeRoute.v4Fee = 3000;
+        nativeRoute.v4TickSpacing = 60;
+        nativeRoute.v4Hooks = address(0);
     }
 
     // Errors defined in ILiquidAuctioneer interface
 
-    /// @notice Bid on a CCA auction using ETH
-    /// @dev Deducts 4% fee, swaps remainder to RARE via Universal Router, submits bid to CCA.
-    ///      bidOwner receives the filled tokens; orderReferrer receives referrer fee.
+    /// @notice Bid on a CCA auction using a configured preset token->RARE route
+    /// @dev For native ETH (tokenIn = address(0)), deducts 4% fee and distributes ETH fees.
+    ///      For ERC20 token bids, fee distribution is skipped and amountIn is swapped as provided.
     /// @param liquidToken The LiquidGraduated token (auction not yet graduated)
+    /// @param tokenIn Input token (address(0) for native ETH)
+    /// @param amountIn Input amount for ERC20 bids (ignored for native ETH bids)
     /// @param maxPrice Maximum price willing to pay (0 = accept any)
     /// @param bidOwner Address that will own the bid and receive filled tokens
     /// @param orderReferrer Referrer address (receives referrer fee)
     /// @param prevTickPrice Previous tick price for CCA (use floorPrice when maxPrice=0)
-    /// @param commands Encoded Universal Router command bytes (ETH -> RARE)
-    /// @param inputs Encoded Universal Router command inputs (one per command)
+    /// @param minRareOut Minimum RARE amount to bid (slippage protection)
     /// @param deadline Swap deadline
     /// @return bidId The CCA bid ID
-    function bidWithETH(
+    function bid(
+        address tokenIn,
+        uint256 amountIn,
         address liquidToken,
         uint256 maxPrice,
         address bidOwner,
         address orderReferrer,
         uint256 prevTickPrice,
-        bytes calldata commands,
-        bytes[] calldata inputs,
+        uint256 minRareOut,
         uint256 deadline
     ) external payable nonReentrant whenNotPaused returns (uint256 bidId) {
         if (liquidToken == address(0) || bidOwner == address(0))
             revert ILiquidRouter.AddressZero();
+        if (minRareOut == 0) revert ILiquidRouter.InvalidAmount();
 
-        // Deduct 4% fee from ETH input
-        uint256 fee = LiquidFeeLib.calculateFee(msg.value, TOTAL_FEE_BPS);
-        uint256 ethForSwap = msg.value - fee;
+        uint256 fee = 0;
+        uint256 swapAmountIn;
+        uint256 ethBalanceBefore = address(this).balance;
 
-        // Record ETH balance before swap (exclude msg.value to get baseline)
-        uint256 ethBalanceBefore = address(this).balance - msg.value;
+        if (tokenIn == address(0)) {
+            if (msg.value == 0) revert ILiquidRouter.InvalidAmount();
+            // Deduct 4% fee from ETH input.
+            fee = LiquidFeeLib.calculateFee(msg.value, TOTAL_FEE_BPS);
+            swapAmountIn = msg.value - fee;
+            // Exclude msg.value to get pre-call baseline.
+            ethBalanceBefore = address(this).balance - msg.value;
+        } else {
+            if (msg.value != 0) revert ILiquidRouter.InvalidAmount();
+            if (amountIn == 0) revert ILiquidRouter.InvalidAmount();
+            IERC20(tokenIn).safeTransferFrom(
+                msg.sender,
+                address(this),
+                amountIn
+            );
+            swapAmountIn = amountIn;
+        }
+        (bytes memory commands, bytes[] memory inputs) = _buildTokenToRareRoute(
+            tokenIn,
+            swapAmountIn,
+            minRareOut
+        );
 
-        // Swap ETH -> RARE via Universal Router (use balance delta to avoid counting pre-existing RARE)
+        // Swap tokenIn -> RARE via Universal Router (use balance delta to avoid counting pre-existing RARE)
         uint256 rareBalanceBefore = IERC20(BASE_TOKEN).balanceOf(address(this));
+        if (tokenIn != address(0)) {
+            IERC20(tokenIn).forceApprove(PERMIT2, swapAmountIn);
+            IPermit2(PERMIT2).approve(
+                tokenIn,
+                UNIVERSAL_ROUTER,
+                uint160(
+                    swapAmountIn > type(uint160).max
+                        ? type(uint160).max
+                        : swapAmountIn
+                ),
+                uint48(block.timestamp + 1 hours)
+            );
+        }
         LiquidFeeLib.executeSwap(
             UNIVERSAL_ROUTER,
-            ethForSwap,
+            tokenIn == address(0) ? swapAmountIn : 0,
             commands,
             inputs,
             deadline,
             false
         );
+        if (tokenIn != address(0)) {
+            IERC20(tokenIn).forceApprove(PERMIT2, 0);
+            IPermit2(PERMIT2).approve(tokenIn, UNIVERSAL_ROUTER, 0, 0);
+        }
 
-        // SECURITY: Ensure no ETH was returned by the router (breaks fee accounting)
-        if (address(this).balance > ethBalanceBefore + fee) {
+        // SECURITY: Ensure no ETH was returned by the router when fee accounting depends on ETH input.
+        if (
+            tokenIn == address(0) &&
+            address(this).balance > ethBalanceBefore + fee
+        ) {
             revert ILiquidAuctioneer.UnexpectedEthRefund();
         }
 
         uint256 rareAmount = IERC20(BASE_TOKEN).balanceOf(address(this)) -
             rareBalanceBefore;
-        if (rareAmount == 0) revert NotGraduated();
+        if (rareAmount < minRareOut) revert SlippageExceeded();
 
         // Get auction address and set up Permit2 for CCA to pull RARE
         address auction = ILiquidGraduated(liquidToken).auctionAddress();
@@ -154,20 +240,220 @@ contract LiquidAuctioneer is
         IERC20(BASE_TOKEN).forceApprove(PERMIT2, 0);
         IPermit2(PERMIT2).approve(BASE_TOKEN, auction, 0, 0);
 
-        // Distribute fees (beneficiary, protocol, referrer, burn)
-        address beneficiary = tokenBeneficiaries[liquidToken];
-        LiquidFeeLib.disperseFees(
-            fee,
-            orderReferrer,
-            beneficiary,
-            beneficiary,
-            PROTOCOL_FEE_RECIPIENT,
-            RARE_BURNER,
-            RARE_BURN_FEE_BPS,
-            PROTOCOL_FEE_BPS,
-            REFERRER_FEE_BPS
-        );
+        // Distribute fees for native ETH bids only (fee value is in ETH).
+        if (fee > 0) {
+            address beneficiary = tokenBeneficiaries[liquidToken];
+            LiquidFeeLib.disperseFees(
+                fee,
+                orderReferrer,
+                beneficiary,
+                beneficiary,
+                PROTOCOL_FEE_RECIPIENT,
+                RARE_BURNER,
+                RARE_BURN_FEE_BPS,
+                PROTOCOL_FEE_BPS,
+                REFERRER_FEE_BPS
+            );
+        }
         return bidId;
+    }
+
+    function setTokenRouteV4(
+        address tokenIn,
+        uint24 fee,
+        int24 tickSpacing,
+        address hooks
+    ) external onlyOwner {
+        if (tickSpacing <= 0) revert InvalidPresetRoute();
+        TokenRoute storage route = tokenToRareRoutes[tokenIn];
+        route.kind = RouteKind.V4_SINGLE;
+        route.v4Fee = fee;
+        route.v4TickSpacing = tickSpacing;
+        route.v4Hooks = hooks;
+        delete route.v3Path;
+        delete route.v2Path;
+        emit TokenRouteUpdated(tokenIn, RouteKind.V4_SINGLE);
+    }
+
+    function setTokenRouteV3(
+        address tokenIn,
+        bytes calldata path
+    ) external onlyOwner {
+        if (!_isValidV3Path(tokenIn, path)) revert InvalidPresetRoute();
+        TokenRoute storage route = tokenToRareRoutes[tokenIn];
+        route.kind = RouteKind.V3_PATH;
+        route.v3Path = path;
+        delete route.v2Path;
+        emit TokenRouteUpdated(tokenIn, RouteKind.V3_PATH);
+    }
+
+    function setTokenRouteV2(
+        address tokenIn,
+        address[] calldata path
+    ) external onlyOwner {
+        address expectedIn = tokenIn == address(0) ? WETH : tokenIn;
+        if (!_isValidV2Path(expectedIn, path)) revert InvalidPresetRoute();
+        TokenRoute storage route = tokenToRareRoutes[tokenIn];
+        route.kind = RouteKind.V2_PATH;
+        delete route.v2Path;
+        for (uint256 i; i < path.length; ) {
+            route.v2Path.push(path[i]);
+            unchecked {
+                ++i;
+            }
+        }
+        delete route.v3Path;
+        emit TokenRouteUpdated(tokenIn, RouteKind.V2_PATH);
+    }
+
+    function removeTokenRoute(address tokenIn) external onlyOwner {
+        delete tokenToRareRoutes[tokenIn];
+        emit TokenRouteUpdated(tokenIn, RouteKind.NONE);
+    }
+
+    function getTokenToRareV2Path(
+        address tokenIn
+    ) external view returns (address[] memory) {
+        return tokenToRareRoutes[tokenIn].v2Path;
+    }
+
+    function _buildTokenToRareRoute(
+        address tokenIn,
+        uint256 amountIn,
+        uint256 minRareOut
+    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
+        TokenRoute storage route = tokenToRareRoutes[tokenIn];
+        if (route.kind == RouteKind.V4_SINGLE) {
+            return
+                _encodeV4TokenToRareRoute(tokenIn, amountIn, minRareOut, route);
+        }
+        if (route.kind == RouteKind.V3_PATH) {
+            if (route.v3Path.length == 0) revert InvalidPresetRoute();
+            if (tokenIn == address(0)) {
+                commands = abi.encodePacked(CMD_WRAP_ETH, CMD_V3_SWAP_EXACT_IN);
+                inputs = new bytes[](2);
+                inputs[0] = abi.encode(ROUTER_ADDRESS, amountIn);
+                inputs[1] = abi.encode(
+                    MSG_SENDER,
+                    amountIn,
+                    minRareOut,
+                    route.v3Path,
+                    false
+                );
+            } else {
+                commands = abi.encodePacked(CMD_V3_SWAP_EXACT_IN);
+                inputs = new bytes[](1);
+                inputs[0] = abi.encode(
+                    MSG_SENDER,
+                    amountIn,
+                    minRareOut,
+                    route.v3Path,
+                    false
+                );
+            }
+            return (commands, inputs);
+        }
+        if (route.kind == RouteKind.V2_PATH) {
+            if (route.v2Path.length == 0) revert InvalidPresetRoute();
+            if (tokenIn == address(0)) {
+                commands = abi.encodePacked(CMD_WRAP_ETH, CMD_V2_SWAP_EXACT_IN);
+                inputs = new bytes[](2);
+                inputs[0] = abi.encode(ROUTER_ADDRESS, amountIn);
+                inputs[1] = abi.encode(
+                    MSG_SENDER,
+                    amountIn,
+                    minRareOut,
+                    route.v2Path,
+                    false
+                );
+            } else {
+                commands = abi.encodePacked(CMD_V2_SWAP_EXACT_IN);
+                inputs = new bytes[](1);
+                inputs[0] = abi.encode(
+                    MSG_SENDER,
+                    amountIn,
+                    minRareOut,
+                    route.v2Path,
+                    false
+                );
+            }
+            return (commands, inputs);
+        }
+        revert InvalidPresetRoute();
+    }
+
+    function _encodeV4TokenToRareRoute(
+        address tokenIn,
+        uint256 amountIn,
+        uint256 minRareOut,
+        TokenRoute storage route
+    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
+        address currencyIn = tokenIn == address(0) ? address(0) : tokenIn;
+        V4PathKey[] memory path = new V4PathKey[](1);
+        path[0] = V4PathKey({
+            intermediateCurrency: BASE_TOKEN,
+            fee: route.v4Fee,
+            tickSpacing: route.v4TickSpacing,
+            hooks: route.v4Hooks,
+            hookData: bytes("")
+        });
+
+        bytes memory actions = abi.encodePacked(
+            bytes1(V4_SWAP_EXACT_IN),
+            bytes1(V4_SETTLE_ALL),
+            bytes1(V4_TAKE_ALL)
+        );
+
+        bytes[] memory params = new bytes[](3);
+        params[0] = abi.encode(
+            currencyIn,
+            path,
+            _toUint128(amountIn),
+            _toUint128(minRareOut)
+        );
+        params[1] = abi.encode(currencyIn, type(uint128).max);
+        params[2] = abi.encode(BASE_TOKEN, _toUint128(minRareOut));
+
+        commands = abi.encodePacked(CMD_V4_SWAP);
+        inputs = new bytes[](1);
+        inputs[0] = abi.encode(actions, params);
+    }
+
+    function _isValidV3Path(
+        address tokenIn,
+        bytes calldata path
+    ) internal view returns (bool) {
+        // V3 path is token(20) + [fee(3) + token(20)] * n
+        if (path.length < 43) return false;
+        if ((path.length - 20) % 23 != 0) return false;
+        address firstToken;
+        address lastToken;
+        assembly {
+            firstToken := shr(96, calldataload(path.offset))
+            lastToken := shr(
+                96,
+                calldataload(add(path.offset, sub(path.length, 20)))
+            )
+        }
+        address expectedInput = tokenIn == address(0) ? WETH : tokenIn;
+        return firstToken == expectedInput && lastToken == BASE_TOKEN;
+    }
+
+    function _isValidV2Path(
+        address expectedInput,
+        address[] calldata path
+    ) internal view returns (bool) {
+        if (path.length < 2) return false;
+        if (path[0] != expectedInput || path[path.length - 1] != BASE_TOKEN) {
+            return false;
+        }
+        for (uint256 i; i < path.length; ) {
+            if (path[i] == address(0)) return false;
+            unchecked {
+                ++i;
+            }
+        }
+        return true;
     }
 
     /// @notice Submits a bid to the CCA auction
@@ -438,7 +724,7 @@ contract LiquidAuctioneer is
     }
 
     /// @notice For graduated tokens: anyone can call strategy.migrate() directly after auction ends.
-    ///         This contract focuses on UX routing (bidWithETH, exitBidToETH) only.
+    ///         This contract focuses on UX routing (bid, exitBidToETH) only.
     /// @dev Call ILBPStrategy(strategy).migrate() on the token's strategy to create the pool.
 
     /// @notice Sets up Permit2 approvals for Universal Router to pull RARE
@@ -473,7 +759,7 @@ contract LiquidAuctioneer is
         tokenBeneficiaries[token] = beneficiary;
     }
 
-    /// @notice Pauses all trading (bidWithETH, exitBidToETH, etc.)
+    /// @notice Pauses all trading (bid, exitBidToETH, etc.)
     function pause() external onlyOwner {
         _pause();
     }
@@ -490,7 +776,8 @@ contract LiquidAuctioneer is
     function rescueETH(address to, uint256 amount) external onlyOwner {
         if (to == address(0)) revert ILiquidRouter.AddressZero();
         if (amount == 0) revert ILiquidRouter.InvalidAmount();
-        if (address(this).balance < amount) revert ILiquidRouter.InsufficientBalance();
+        if (address(this).balance < amount)
+            revert ILiquidRouter.InsufficientBalance();
 
         (bool ok, ) = to.call{value: amount}("");
         if (!ok) revert LiquidFeeLib.EthTransferFailed();

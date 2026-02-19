@@ -40,7 +40,6 @@ contract LiquidMultiCurveUnitTest is Test {
         quoter = new MockV4Quoter();
         weth = new MockERC20();
         baseToken = new MockERC20();
-
         factory = new LiquidFactory(
             admin,
             address(weth),
@@ -55,6 +54,7 @@ contract LiquidMultiCurveUnitTest is Test {
         );
 
         vm.startPrank(admin);
+        factory.setLiquidRouter(address(1));
         multiCurveImplementation = new LiquidMultiCurve();
         factory.setLiquidMultiCurveImplementation(address(multiCurveImplementation));
         factory.setBaseToken(address(baseToken));
@@ -163,8 +163,10 @@ contract LiquidMultiCurveUnitTest is Test {
             300,
             MIN_RARE
         );
-        vm.prank(admin);
+        vm.startPrank(admin);
+        newFactory.setLiquidRouter(address(1));
         newFactory.setBaseToken(address(baseToken));
+        vm.stopPrank();
         // Don't set liquidMultiCurveImplementation
 
         Curve[] memory curves = _defaultCurves();

@@ -346,6 +346,7 @@ contract LiquidInstantMainnetUnitTest is Test {
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
+                factory.setLiquidRouter(address(1));
 
         factory.setImplementation(address(liquidImplementation));
         factory.setBaseToken(address(mockRARE));
@@ -463,6 +464,7 @@ contract LiquidInstantMainnetUnitTest is Test {
             300,
             1e15
         );
+                badFactory.setLiquidRouter(address(1));
         badFactory.setImplementation(address(liquidImplementation));
         // Don't set baseToken - leave it as address(0)
         vm.stopPrank();

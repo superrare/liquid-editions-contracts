@@ -343,19 +343,17 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
                 vm.roll(targetBlock);
                 lastBlockRolled = targetBlock;
             }
-            (bytes memory commands, bytes[] memory inputs) = _encodeEthToRareRoute(
-                ethAmounts[i]
-            );
             uint256 prevTick = maxPrices[i] > 0 ? floorPrice : 0;
             vm.prank(bidders[i]);
-            bidIds[i] = auctioneer.bidWithETH{value: ethAmounts[i]}(
+            bidIds[i] = auctioneer.bid{value: ethAmounts[i]}(
+                address(0),
+                0,
                 graduatedToken,
                 maxPrices[i],
                 bidders[i],
                 address(0),
                 prevTick,
-                commands,
-                inputs,
+                1,
                 block.timestamp + 1 hours
             );
         }

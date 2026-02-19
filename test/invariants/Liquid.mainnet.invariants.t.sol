@@ -140,6 +140,7 @@ contract LiquidInstantMainnetInvariantTest is Test {
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
+                factory.setLiquidRouter(address(1));
 
         factory.setImplementation(address(liquidImpl));
 
@@ -155,8 +156,7 @@ contract LiquidInstantMainnetInvariantTest is Test {
         internal
         returns (LiquidFactory factoryWithBurn)
     {
-        vm.startPrank(admin);
-        factoryWithBurn = new LiquidFactory(
+        vm.startPrank(admin);        factoryWithBurn = new LiquidFactory(
             admin,
             config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
@@ -168,6 +168,7 @@ contract LiquidInstantMainnetInvariantTest is Test {
             300, // internalMaxSlippageBps
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
+                factoryWithBurn.setLiquidRouter(address(1));
         factoryWithBurn.setImplementation(address(liquidImpl));
 
         // Set base token to MockRARE
@@ -286,6 +287,7 @@ contract LiquidInstantMainnetInvariantTest is Test {
             300, // internalMaxSlippageBps
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
+                factoryWithBurn.setLiquidRouter(address(1));
         factoryWithBurn.setImplementation(address(liquidImpl));
         factoryWithBurn.setBaseToken(address(mockRARE)); // Set base token to match burner
         vm.stopPrank();

@@ -75,7 +75,6 @@ contract LiquidFactoryTest is Test {
             false // disabled initially
         );
         liquidImplementation = new LiquidInstant();
-
         factory = new LiquidFactory(
             admin,
             config.weth,
@@ -88,6 +87,9 @@ contract LiquidFactoryTest is Test {
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
+
+        
+        factory.setLiquidRouter(address(1));
 
         // Set the implementation in the factory
         factory.setImplementation(address(liquidImplementation));
@@ -285,9 +287,11 @@ contract LiquidFactoryTest is Test {
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
 
+        vm.startPrank(admin);
+        newFactory.setLiquidRouter(address(1));
         // Set baseToken
-        vm.prank(admin);
         newFactory.setBaseToken(address(mockRARE));
+        vm.stopPrank();
 
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(newFactory), 0.1 ether);
@@ -1013,6 +1017,7 @@ contract LiquidFactoryTest is Test {
             300,
             1e15
         );
+                newFactory.setLiquidRouter(address(1));
         newFactory.setImplementation(address(liquidImplementation));
         // Don't set baseToken
         vm.stopPrank();

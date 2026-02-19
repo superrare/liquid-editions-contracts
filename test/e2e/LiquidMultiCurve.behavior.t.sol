@@ -79,6 +79,7 @@ contract LiquidMultiCurveBehaviorTest is LiquidTokenBehaviorBase {
             300,
             LIQUIDITY
         );
+        f.setLiquidRouter(address(1));
         LiquidMultiCurve impl = new LiquidMultiCurve();
         f.setLiquidMultiCurveImplementation(address(impl));
         f.setBaseToken(address(rare));

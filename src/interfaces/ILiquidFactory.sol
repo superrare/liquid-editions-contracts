@@ -86,6 +86,14 @@ interface ILiquidFactory {
     /// @param baseToken The base token address (RARE)
     event BaseTokenUpdated(address baseToken);
 
+    /// @notice Emitted when the router used for auto-registration is updated
+    /// @param oldLiquidRouter Previous router address
+    /// @param newLiquidRouter New router address
+    event LiquidRouterUpdated(
+        address indexed oldLiquidRouter,
+        address indexed newLiquidRouter
+    );
+
     // ============================================
     // FUNCTIONS
     // ============================================
@@ -120,6 +128,9 @@ interface ILiquidFactory {
 
     function protocolFeeRecipient() external view returns (address);
 
+    /// @notice Router used by factory for automatic registration
+    function liquidRouter() external view returns (address);
+
     /// @notice Creates a new Liquid token instance (permissionless)
     /// @param _creator The address of the token creator (receives fees and launch reward)
     /// @param _tokenUri The ERC20z token URI (metadata link)
@@ -151,4 +162,8 @@ interface ILiquidFactory {
         uint256 _initialRareLiquidity,
         Curve[] calldata _curves
     ) external returns (address token);
+
+    /// @notice Configure the router used for automatic token registration
+    /// @param _liquidRouter Router address
+    function setLiquidRouter(address _liquidRouter) external;
 }
