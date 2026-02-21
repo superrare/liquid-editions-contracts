@@ -9,7 +9,7 @@ pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {ILiquidFactory} from "liquid-editions/interfaces/ILiquidFactory.sol";
 import {MockV4PoolManager} from "liquid-editions-test/helpers/MockV4PoolManager.sol";
 import {MockV4Quoter} from "liquid-editions-test/helpers/MockV4Quoter.sol";
@@ -25,7 +25,7 @@ contract LiquidFactoryUnitTest is Test {
     MockERC20 public baseToken;
 
     LiquidFactory public factory;
-    LiquidInstant public liquidImplementation;
+    LiquidMultiCurve public liquidImplementation;
 
     function setUp() public {
         poolManager = new MockV4PoolManager();
@@ -49,9 +49,9 @@ contract LiquidFactoryUnitTest is Test {
 
         factory.setLiquidRouter(address(1));
 
-        liquidImplementation = new LiquidInstant();
+        liquidImplementation = new LiquidMultiCurve();
         vm.prank(admin);
-        factory.setImplementation(address(liquidImplementation));
+        factory.setLiquidMultiCurveImplementation(address(liquidImplementation));
         vm.prank(admin);
         factory.setBaseToken(address(baseToken));
 
@@ -60,10 +60,10 @@ contract LiquidFactoryUnitTest is Test {
     }
 
     function test_RevertWhen_NonAdmin_SetImplementation() public {
-        LiquidInstant newImpl = new LiquidInstant();
+        LiquidMultiCurve newImpl = new LiquidMultiCurve();
         vm.prank(user1);
         vm.expectRevert();
-        factory.setImplementation(address(newImpl));
+        factory.setLiquidMultiCurveImplementation(address(newImpl));
     }
 
     function test_RevertWhen_NonAdmin_SetWeth() public {
@@ -81,7 +81,7 @@ contract LiquidFactoryUnitTest is Test {
     function test_RevertWhen_UpdateImplementationToZero() public {
         vm.prank(admin);
         vm.expectRevert(ILiquidFactory.AddressZero.selector);
-        factory.setImplementation(address(0));
+        factory.setLiquidMultiCurveImplementation(address(0));
     }
 
     function test_RevertWhen_SetWethZero() public {
@@ -161,10 +161,10 @@ contract LiquidFactoryUnitTest is Test {
     }
 
     function testUpdateImplementation() public {
-        LiquidInstant newImpl = new LiquidInstant();
+        LiquidMultiCurve newImpl = new LiquidMultiCurve();
         vm.prank(admin);
-        factory.setImplementation(address(newImpl));
-        assertEq(factory.liquidImplementation(), address(newImpl));
+        factory.setLiquidMultiCurveImplementation(address(newImpl));
+        assertEq(factory.liquidMultiCurveImplementation(), address(newImpl));
     }
 
     function testUpdateConfig() public {

@@ -3,12 +3,12 @@ pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {ILiquidFactory} from "liquid-editions/interfaces/ILiquidFactory.sol";
 import {LiquidFactoryForkBase} from "liquid-editions-test/helpers/bases/LiquidFactoryForkBase.sol";
 
 /**
- * @title LiquidInstant MEV Protection Tests
+ * @title LiquidMultiCurve MEV Protection Tests
  * @notice Tests to verify MEV protection on reward conversions
  * @dev Quoter-based slippage protection is used for LP fee conversions (LIQUID → WETH).
  *      Initialize auto-buy intentionally has NO slippage protection (atomic transaction, no MEV risk).

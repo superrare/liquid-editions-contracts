@@ -3,12 +3,11 @@ pragma solidity ^0.8.0;
 
 /**
  * @title LiquidMultiCurve Anti-Sniping Tests
- * @notice Compare sniper outcomes: LiquidInstant vs LiquidMultiCurve with identical 250 RARE liquidity
+ * @notice Compare sniper outcomes: LiquidMultiCurve vs LiquidMultiCurve with identical 250 RARE liquidity
  * @dev Simulates same-block sniper buying with X RARE; multicurve sniper gets fewer tokens (trip wire).
  */
 
 import "forge-std/Test.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
 import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
@@ -27,7 +26,7 @@ contract LiquidMultiCurveSnipingTest is Test {
     address public sniper = makeAddr("sniper");
 
     LiquidFactory public factory;
-    LiquidInstant public instantImpl;
+    LiquidMultiCurve public instantImpl;
     LiquidMultiCurve public multiCurveImpl;
     LiquidPoolSwapHelper public swapHelper;
     MockRARE public mockRARE;
@@ -92,58 +91,13 @@ contract LiquidMultiCurveSnipingTest is Test {
             LIQUIDITY
         );
                 factory.setLiquidRouter(address(1));
-        instantImpl = new LiquidInstant();
+        instantImpl = new LiquidMultiCurve();
         multiCurveImpl = new LiquidMultiCurve();
-        factory.setImplementation(address(instantImpl));
+        factory.setLiquidMultiCurveImplementation(address(instantImpl));
         factory.setLiquidMultiCurveImplementation(address(multiCurveImpl));
         factory.setBaseToken(address(mockRARE));
         swapHelper = new LiquidPoolSwapHelper(IPoolManager(config.uniswapV4PoolManager));
         vm.stopPrank();
-    }
-
-    function test_SniperGetsFewerTokens_WithMultiCurve() public {
-        vm.startPrank(tokenCreator);
-        mockRARE.approve(address(factory), LIQUIDITY * 2);
-
-        address instantAddr = factory.createLiquidToken(
-            tokenCreator,
-            "ipfs://instant",
-            "Instant",
-            "INST",
-            LIQUIDITY
-        );
-
-        Curve[] memory curves = _defaultCurves();
-        mockRARE.approve(address(factory), MULTICURVE_LIQUIDITY);
-        address multiAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://multicurve",
-            "MultiCurve",
-            "MCRV",
-            MULTICURVE_LIQUIDITY,
-            curves
-        );
-        vm.stopPrank();
-
-        LiquidInstant instantToken = LiquidInstant(payable(instantAddr));
-        LiquidMultiCurve multiToken = LiquidMultiCurve(payable(multiAddr));
-
-        uint256 snipeAmount = 50e18;
-
-        vm.startPrank(sniper);
-        mockRARE.approve(address(swapHelper), snipeAmount * 2);
-        uint256 instantTokens = swapHelper.buy(address(instantToken), snipeAmount, sniper);
-        uint256 multiTokens = swapHelper.buy(address(multiToken), snipeAmount, sniper);
-        vm.stopPrank();
-
-        assertTrue(
-            multiTokens < instantTokens,
-            "Multicurve trip wire should give fewer tokens for same RARE"
-        );
-
-        console.log("Snipe with", snipeAmount / 1e18, "RARE:");
-        console.log("  Instant tokens:", instantTokens / 1e18);
-        console.log("  MultiCurve tokens:", multiTokens / 1e18);
     }
 
     function test_TripWire_LargeBuyCausesPriceImpact() public {
@@ -151,7 +105,7 @@ contract LiquidMultiCurveSnipingTest is Test {
 
         vm.startPrank(tokenCreator);
         mockRARE.approve(address(factory), LIQUIDITY + MULTICURVE_LIQUIDITY);
-        factory.createLiquidToken(
+        factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://dummy",
             "Dummy",

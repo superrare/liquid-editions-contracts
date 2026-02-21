@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
+import {Curve} from "doppler/libraries/Multicurve.sol";
 import {NetworkConfig} from "./config/NetworkConfig.sol";
 import {console} from "forge-std/console.sol";
 import {Script} from "forge-std/Script.sol";
@@ -47,7 +48,7 @@ contract DebugTokenCreation is Script {
 
         // Check 1: Factory configuration
         console.log("1. Checking factory configuration...");
-        address factoryImpl = factory.liquidImplementation();
+        address factoryImpl = factory.liquidMultiCurveImplementation();
         address factoryBaseToken = factory.baseToken();
         address factoryPoolManager = factory.poolManager();
         uint256 minRareLiquidityWei = factory.minRareLiquidityWei();
@@ -152,14 +153,24 @@ contract DebugTokenCreation is Script {
             IERC20(baseToken).approve(factoryAddress, type(uint256).max);
         }
 
-        // Try to call createLiquidToken (this will revert but we can catch it)
+        // Build default single-curve config
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: factory.lpTickLower(),
+            tickUpper: factory.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+
+        // Try to call createLiquidTokenMultiCurve (this will revert but we can catch it)
         try
-            factory.createLiquidToken(
+            factory.createLiquidTokenMultiCurve(
                 tokenCreator,
                 tokenURI,
                 tokenName,
                 tokenSymbol,
-                initialRareLiquidity
+                initialRareLiquidity,
+                curves
             )
         returns (address newToken) {
             console.log("   [OK] Token created successfully at:", newToken);

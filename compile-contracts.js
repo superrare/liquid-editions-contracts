@@ -25,6 +25,12 @@ const SRC_DIR = path.join(ROOT, 'src');
 const TEST_DIR = path.join(ROOT, 'test');
 const LIB_DIR = path.join(ROOT, 'lib');
 
+// Files and directories to exclude from src/ compilation
+const SRC_EXCLUDES = [
+    path.join(SRC_DIR, 'examples'),        // Exclude examples directory
+    path.join(SRC_DIR, 'LiquidInstant.sol'), // Exclude LiquidInstant (deprecated)
+];
+
 // Output prefix from CLI (e.g. "compiled" or "my-prefix")
 const outputPrefix = process.argv[2] || 'compiled';
 
@@ -81,7 +87,7 @@ const DEPENDENCY_SETS = {
 /**
  * Recursively find all .sol files in a directory
  */
-function findSolidityFiles(dir) {
+function findSolidityFiles(dir, excludes = []) {
     const files = [];
 
     function traverse(currentDir) {
@@ -89,6 +95,12 @@ function findSolidityFiles(dir) {
 
         for (const item of items) {
             const fullPath = path.join(currentDir, item);
+
+            // Skip excluded files and directories
+            if (excludes.some((ex) => fullPath === ex || fullPath.startsWith(ex + path.sep))) {
+                continue;
+            }
+
             const stat = fs.statSync(fullPath);
 
             if (stat.isDirectory()) {
@@ -142,14 +154,14 @@ function compileFileList(files, outputFile, title) {
 /**
  * Compile files from a directory to an output file
  */
-function compileDirectory(dir, outputFile, title) {
+function compileDirectory(dir, outputFile, title, excludes = []) {
     try {
         if (!fs.existsSync(dir)) {
             console.warn(`⚠️  Directory not found: ${dir}, skipping...`);
             return false;
         }
 
-        const solidityFiles = findSolidityFiles(dir);
+        const solidityFiles = findSolidityFiles(dir, excludes);
 
         if (solidityFiles.length === 0) {
             console.warn(`⚠️  No Solidity files found in ${dir}, skipping...`);
@@ -207,7 +219,7 @@ function compileContracts() {
 
         // 1. Main contracts (src/)
         const contractsFile = path.join(ROOT, `${outputPrefix}-contracts.txt`);
-        if (compileDirectory(SRC_DIR, contractsFile, 'Liquid Edition Contracts')) {
+        if (compileDirectory(SRC_DIR, contractsFile, 'Liquid Edition Contracts', SRC_EXCLUDES)) {
             outputs.push(contractsFile);
         }
 

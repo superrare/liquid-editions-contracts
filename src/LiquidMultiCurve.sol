@@ -40,6 +40,8 @@ import {QuoterRevert} from "@uniswap/v4-periphery/libraries/QuoterRevert.sol";
 
 /// @notice Thrown when curves array is empty
 error ZeroCurves();
+/// @notice Thrown when a token has already been initialized
+error AlreadyInitialized();
 
 /// @title LiquidMultiCurve
 /// @notice A liquid edition token with multi-position concentrated liquidity (anti-sniping launch).
@@ -118,6 +120,8 @@ contract LiquidMultiCurve is
         uint256 _minRequiredRareLiquidity,
         Curve[] calldata _curves
     ) external initializer {
+        if (factory != address(0)) revert AlreadyInitialized();
+
         // Validate curves array is non-empty
         if (_curves.length == 0) revert ZeroCurves();
 

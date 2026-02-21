@@ -65,7 +65,6 @@ contract DeployLiquidSystem is Script {
         address burner;
         address guard;
         address factory;
-        address implementation;
         address multiCurveImplementation;
         address graduatedImplementation;
         address router;
@@ -202,7 +201,6 @@ contract DeployLiquidSystem is Script {
                     networkConfig
                 );
             result.factory = factoryResult.factory;
-            result.implementation = factoryResult.implementation;
             result.multiCurveImplementation = factoryResult
                 .multiCurveImplementation;
             result.graduatedImplementation = factoryResult
@@ -386,9 +384,6 @@ contract DeployLiquidSystem is Script {
         console.logAddress(result.burner);
         console.log(deployBurner ? "  (deployed)" : "  (existing)");
         if (deployFactory) {
-            console.log("LiquidInstant Implementation:");
-            console.logAddress(result.implementation);
-            console.log("  (deployed)");
             console.log("LiquidMultiCurve Implementation:");
             console.logAddress(result.multiCurveImplementation);
             console.log("  (deployed)");

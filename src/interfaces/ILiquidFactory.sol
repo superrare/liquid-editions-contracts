@@ -45,14 +45,6 @@ interface ILiquidFactory {
         string tokenUri
     );
 
-    /// @notice Emitted when the implementation address is updated
-    /// @param oldImplementation The old implementation address
-    /// @param newImplementation The new implementation address
-    event ImplementationUpdated(
-        address indexed oldImplementation,
-        address indexed newImplementation
-    );
-
     /// @notice Emitted when WETH address is updated
     event WethUpdated(address weth);
 
@@ -99,8 +91,6 @@ interface ILiquidFactory {
     // ============================================
 
     // Implementation addresses
-    function liquidImplementation() external view returns (address);
-
     function liquidMultiCurveImplementation() external view returns (address);
 
     // Protocol addresses (all public)
@@ -131,22 +121,7 @@ interface ILiquidFactory {
     /// @notice Router used by factory for automatic registration
     function liquidRouter() external view returns (address);
 
-    /// @notice Creates a new Liquid token instance (permissionless)
-    /// @param _creator The address of the token creator (receives fees and launch reward)
-    /// @param _tokenUri The ERC20z token URI (metadata link)
-    /// @param _name The token name
-    /// @param _symbol The token symbol
-    /// @param _initialRareLiquidity The amount of RARE tokens to provide as initial liquidity
-    /// @return token The address of the created token
-    function createLiquidToken(
-        address _creator,
-        string memory _tokenUri,
-        string memory _name,
-        string memory _symbol,
-        uint256 _initialRareLiquidity
-    ) external returns (address token);
-
-    /// @notice Creates a new Liquid token with multicurve liquidity (anti-sniping launch)
+    /// @notice Creates a new Liquid token with multicurve liquidity
     /// @param _creator The address of the token creator (receives fees and launch reward)
     /// @param _tokenUri The ERC20z token URI (metadata link)
     /// @param _name The token name

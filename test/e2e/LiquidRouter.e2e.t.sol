@@ -3,15 +3,18 @@ pragma solidity ^0.8.0;
 
 import "forge-std/console.sol";
 import {AnvilForkTestBase} from "liquid-editions-test/AnvilForkTestBase.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
 import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
 import {DeployConfig} from "script/config/DeployConfig.sol";
 import {DeployRAREBurner} from "script/deployers/DeployRAREBurner.s.sol";
 import {DeployLiquidRouter} from "script/deployers/DeployLiquidRouter.s.sol";
+import {Curve} from "doppler/libraries/Multicurve.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 
 /**
  * @title AnvilForkIntegrationTest
@@ -19,6 +22,8 @@ import {PoolId} from "v4-core/types/PoolId.sol";
  * @dev Uses NetworkConfig for all addresses. Run with: forge test --match-contract AnvilForkIntegrationTest -vvv --fork-url $ETH_MAINNET
  */
 contract AnvilForkIntegrationTest is AnvilForkTestBase {
+    using StateLibrary for IPoolManager;
+
     // ============================================
     // TESTS
     // ============================================
@@ -32,7 +37,8 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             PoolId.unwrap(liquidToken.poolId()) != bytes32(0),
             "Pool created"
         );
-        assertTrue(liquidToken.lpLiquidity() > 0, "Pool has liquidity");
+        IPoolManager pm = IPoolManager(liquidToken.poolManager());
+        assertTrue(pm.getLiquidity(liquidToken.poolId()) > 0, "Pool has liquidity");
         assertEq(factory.baseToken(), config.rareToken, "Base token set");
     }
 
@@ -380,14 +386,22 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         vm.startPrank(tokenCreator);
         uint256 minRare = factory.minRareLiquidityWei();
         IERC20(config.rareToken).approve(address(factory), minRare);
-        address token2Addr = factory.createLiquidToken(
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: factory.lpTickLower(),
+            tickUpper: factory.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+        address token2Addr = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://anvil-fork-test-2",
             "Anvil Fork Test Token 2",
             "AFT2",
-            minRare
+            minRare,
+            curves
         );
-        liquidToken2 = LiquidInstant(payable(token2Addr));
+        liquidToken2 = LiquidMultiCurve(payable(token2Addr));
         vm.stopPrank();
 
         vm.prank(admin);

@@ -9,7 +9,7 @@ pragma solidity ^0.8.0;
  */
 
 import "forge-std/Test.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidGraduated} from "liquid-editions/LiquidGraduated.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
@@ -115,7 +115,7 @@ contract LiquidGraduatedSnipingTest is Test {
     address sniper = makeAddr("sniper");
 
     LiquidFactory public factory;
-    LiquidInstant public instantImpl;
+    LiquidMultiCurve public instantImpl;
     LiquidGraduated public graduatedImpl;
     MockRARE public rare;
     MockCCAFactorySniping public mockCcaFactory;
@@ -161,9 +161,9 @@ contract LiquidGraduatedSnipingTest is Test {
         );
                 factory.setLiquidRouter(address(1));
         factory.setBaseToken(address(rare));
-        instantImpl = new LiquidInstant();
+        instantImpl = new LiquidMultiCurve();
         graduatedImpl = new LiquidGraduated();
-        factory.setImplementation(address(instantImpl));
+        factory.setLiquidMultiCurveImplementation(address(instantImpl));
         factory.setLiquidGraduatedImplementation(address(graduatedImpl));
         factory.setCcaFactory(address(mockCcaFactory));
         // Set canonical LBP strategy factory (required)
@@ -180,14 +180,14 @@ contract LiquidGraduatedSnipingTest is Test {
     function test_InstantLaunch_TradeableSameBlock() public {
         vm.startPrank(creator);
         rare.approve(address(factory), 10e18);
-        address instantAddr = factory.createLiquidToken(
+        address instantAddr = factory.createLiquidTokenMultiCurve(
             creator,
             "https://example.com/i",
             "Instant",
             "INST",
             10e18
         );
-        LiquidInstant instantToken = LiquidInstant(payable(instantAddr));
+        LiquidMultiCurve instantToken = LiquidMultiCurve(payable(instantAddr));
         vm.stopPrank();
 
         (uint256 rarePerToken, ) = instantToken.getCurrentPrice();

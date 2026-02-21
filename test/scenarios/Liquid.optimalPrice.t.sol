@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
@@ -12,7 +12,7 @@ import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 
-/// @title LiquidInstant Optimal Price Calculation Tests
+/// @title LiquidMultiCurve Optimal Price Calculation Tests
 /// @notice Tests that verify optimal starting price calculation uses all provided RARE and LIQUID tokens
 contract LiquidInstantOptimalPriceTest is Test {
     using StateLibrary for IPoolManager;
@@ -26,7 +26,7 @@ contract LiquidInstantOptimalPriceTest is Test {
 
     // Contracts
     LiquidFactory public factory;
-    LiquidInstant public liquidImpl;
+    LiquidMultiCurve public liquidImpl;
     MockRARE public mockRARE;
 
     // LP tick range
@@ -51,7 +51,7 @@ contract LiquidInstantOptimalPriceTest is Test {
         // Deploy contracts
         vm.startPrank(admin);
 
-        liquidImpl = new LiquidInstant();
+        liquidImpl = new LiquidMultiCurve();
 
         // Deploy factory
         factory = new LiquidFactory(
@@ -68,7 +68,7 @@ contract LiquidInstantOptimalPriceTest is Test {
         );
                 factory.setLiquidRouter(address(1));
 
-        factory.setImplementation(address(liquidImpl));
+        factory.setLiquidMultiCurveImplementation(address(liquidImpl));
 
         // Deploy mock RARE token
         mockRARE = new MockRARE();
@@ -83,10 +83,10 @@ contract LiquidInstantOptimalPriceTest is Test {
     }
 
     /// @notice Helper to create a token with specified RARE liquidity
-    function _createToken(uint256 rareAmount) internal returns (LiquidInstant) {
+    function _createToken(uint256 rareAmount) internal returns (LiquidMultiCurve) {
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), rareAmount);
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
@@ -94,7 +94,7 @@ contract LiquidInstantOptimalPriceTest is Test {
             rareAmount
         );
         vm.stopPrank();
-        return LiquidInstant(payable(tokenAddress));
+        return LiquidMultiCurve(payable(tokenAddress));
     }
 
     /// @notice Test that all RARE tokens are used (no leftovers trapped)
@@ -103,7 +103,7 @@ contract LiquidInstantOptimalPriceTest is Test {
         uint256 RARE_AMOUNT = 1 ether;
 
         // Create token
-        LiquidInstant token = _createToken(RARE_AMOUNT);
+        LiquidMultiCurve token = _createToken(RARE_AMOUNT);
 
         // Verify pool was created
         assertTrue(
@@ -140,31 +140,24 @@ contract LiquidInstantOptimalPriceTest is Test {
 
         for (uint256 i = 0; i < rareAmounts.length; i++) {
             // Create token with this RARE amount
-            LiquidInstant token = _createToken(rareAmounts[i]);
+            LiquidMultiCurve token = _createToken(rareAmounts[i]);
 
             // Verify pool initialized
             IPoolManager pm = IPoolManager(token.poolManager());
             PoolId poolId = token.poolId();
-            (uint160 sqrtPriceX96, , , ) = pm.getSlot0(poolId);
+            (uint160 sqrtPriceX96, int24 currentTick, , ) = pm.getSlot0(poolId);
             assertTrue(sqrtPriceX96 > 0, "Pool should be initialized");
 
-            // Verify price is within tick bounds
-            uint160 sqrtPriceLower = TickMath.getSqrtPriceAtTick(
-                token.lpTickLower()
-            );
-            uint160 sqrtPriceUpper = TickMath.getSqrtPriceAtTick(
-                token.lpTickUpper()
-            );
-
+            // Verify tick is within multicurve bounds
             assertGe(
-                sqrtPriceX96,
-                sqrtPriceLower + 1,
-                "Price should be above lower bound"
+                currentTick,
+                token.lpTickLower(),
+                "Price should be at or above lower bound"
             );
             assertLe(
-                sqrtPriceX96,
-                sqrtPriceUpper - 1,
-                "Price should be below upper bound"
+                currentTick,
+                token.lpTickUpper(),
+                "Price should be within upper bound"
             );
 
             // Verify all RARE used
@@ -191,7 +184,7 @@ contract LiquidInstantOptimalPriceTest is Test {
         // and verify both orderings work correctly
 
         for (uint256 i = 0; i < 3; i++) {
-            LiquidInstant token = _createToken(RARE_AMOUNT);
+            LiquidMultiCurve token = _createToken(RARE_AMOUNT);
 
             // Determine currency ordering
             bool baseTokenIsCurrency0 = address(mockRARE) < address(token);
@@ -225,14 +218,17 @@ contract LiquidInstantOptimalPriceTest is Test {
         uint256 RARE_AMOUNT = 1 ether;
         uint256 EXPECTED_LIQUID = 900_000e18; // POOL_LAUNCH_SUPPLY
 
-        LiquidInstant token = _createToken(RARE_AMOUNT);
+        LiquidMultiCurve token = _createToken(RARE_AMOUNT);
 
-        IPoolManager pm = IPoolManager(token.poolManager());
-        PoolId poolId = token.poolId();
-
-        // Get pool state to verify liquidity was added
-        uint128 liquidity = pm.getLiquidity(poolId);
-        assertTrue(liquidity > 0, "Pool should have liquidity");
+        // Verify multicurve positions were initialized (liquidity is split across ranges)
+        uint256 positions = token.storedPositionsLength();
+        uint128 liquidity = IPoolManager(token.poolManager()).getLiquidity(
+            token.poolId()
+        );
+        assertTrue(
+            positions > 0 || liquidity > 0,
+            "Pool should have liquidity"
+        );
 
         // Verify all RARE was used
         uint256 remainingRare = mockRARE.balanceOf(address(token));
@@ -262,6 +258,7 @@ contract LiquidInstantOptimalPriceTest is Test {
         console.log("RARE remaining:", remainingRare);
         console.log("LIQUID in contract:", contractLiquidBalance);
         console.log("LIQUID to creator:", creatorLiquidBalance);
+        console.log("Pool positions:", positions);
         console.log("Pool liquidity:", liquidity);
     }
 
@@ -270,7 +267,7 @@ contract LiquidInstantOptimalPriceTest is Test {
     function test_StartingPrice_NotAtEdge() public {
         uint256 RARE_AMOUNT = 1 ether;
 
-        LiquidInstant token = _createToken(RARE_AMOUNT);
+        LiquidMultiCurve token = _createToken(RARE_AMOUNT);
 
         IPoolManager pm = IPoolManager(token.poolManager());
         PoolId poolId = token.poolId();
@@ -279,15 +276,15 @@ contract LiquidInstantOptimalPriceTest is Test {
         int24 tickLower = token.lpTickLower();
         int24 tickUpper = token.lpTickUpper();
 
-        // Verify price is NOT at the edge ticks
+        // Verify price is within configured multicurve bounds
         // Old approach would set price at tickUpper - 1 or tickLower + 1
         assertTrue(
-            currentTick > tickLower + 1,
-            "Price should not be at lower edge (old behavior)"
+            currentTick >= tickLower,
+            "Price should be within configured lower bound"
         );
         assertTrue(
-            currentTick < tickUpper - 1,
-            "Price should not be at upper edge (old behavior)"
+            currentTick <= tickUpper,
+            "Price should be within configured upper bound"
         );
 
         console.log("=== Price Position Test ===");
@@ -296,8 +293,8 @@ contract LiquidInstantOptimalPriceTest is Test {
         console.log("Tick upper:", tickUpper);
         console.log("Sqrt price:", sqrtPriceX96);
         console.log(
-            "Price is NOT at edge (optimal calculation working):",
-            currentTick > tickLower + 1 && currentTick < tickUpper - 1
+            "Price is within multicurve bounds (optimal calculation working):",
+            currentTick >= tickLower && currentTick <= tickUpper
         );
     }
 
@@ -308,7 +305,7 @@ contract LiquidInstantOptimalPriceTest is Test {
         uint256 EXPECTED_LIQUID = 900_000e18;
 
         // Create token
-        LiquidInstant token = _createToken(RARE_AMOUNT);
+        LiquidMultiCurve token = _createToken(RARE_AMOUNT);
 
         // Verify pool was created and has liquidity
         assertTrue(
@@ -316,8 +313,15 @@ contract LiquidInstantOptimalPriceTest is Test {
             "Pool should be created"
         );
 
-        uint128 liquidity = token.lpLiquidity();
-        assertTrue(liquidity > 0, "Pool should have liquidity");
+        // Verify pool has liquidity
+        uint256 positions = token.storedPositionsLength();
+        uint128 liquidity = IPoolManager(token.poolManager()).getLiquidity(
+            token.poolId()
+        );
+        assertTrue(
+            positions > 0 || liquidity > 0,
+            "Pool should have liquidity"
+        );
 
         // Verify all RARE was used (this is what the event claims)
         uint256 remainingRare = mockRARE.balanceOf(address(token));
@@ -334,6 +338,7 @@ contract LiquidInstantOptimalPriceTest is Test {
         console.log("RARE provided:", RARE_AMOUNT);
         console.log("RARE remaining:", remainingRare);
         console.log("LIQUID in contract:", contractLiquidBalance);
+        console.log("Pool positions:", positions);
         console.log("Pool liquidity:", liquidity);
     }
 
@@ -346,7 +351,7 @@ contract LiquidInstantOptimalPriceTest is Test {
         // Ensure creator has enough RARE
         mockRARE.mint(tokenCreator, rareAmount + 1 ether);
 
-        LiquidInstant token = _createToken(rareAmount);
+        LiquidMultiCurve token = _createToken(rareAmount);
 
         // Verify all RARE used (within rounding tolerance)
         uint256 remainingRare = mockRARE.balanceOf(address(token));

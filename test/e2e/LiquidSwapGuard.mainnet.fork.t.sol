@@ -3,10 +3,11 @@ pragma solidity ^0.8.0;
 
 import "forge-std/console.sol";
 import {LiquidSwapGuard} from "liquid-editions/LiquidSwapGuard.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {RoutePolicy} from "liquid-editions/RoutePolicy.sol";
 import {LiquidRouterForkBase} from "liquid-editions-test/helpers/bases/LiquidRouterForkBase.sol";
 import {DeployLiquidSwapGuard} from "script/deployers/DeployLiquidSwapGuard.s.sol";
+import {Curve} from "doppler/libraries/Multicurve.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
@@ -31,7 +32,7 @@ interface IUniversalRouter {
  */
 contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
     LiquidSwapGuard public guard;
-    LiquidInstant public liquidToken;
+    LiquidMultiCurve public liquidToken;
 
     uint8 constant ALLOW_REVERT_FLAG = 0x80;
     bytes1 constant V4_SWAP = 0x10;
@@ -77,14 +78,22 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         vm.startPrank(tokenCreator);
         uint256 minRare = factory.minRareLiquidityWei();
         IERC20(config.rareToken).approve(address(factory), minRare);
-        address tokenAddr = factory.createLiquidToken(
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: factory.lpTickLower(),
+            tickUpper: factory.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+        address tokenAddr = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://guard-fork-test",
             "Guard Fork Test Token",
             "GFT",
-            minRare
+            minRare,
+            curves
         );
-        liquidToken = LiquidInstant(payable(tokenAddr));
+        liquidToken = LiquidMultiCurve(payable(tokenAddr));
         vm.stopPrank();
 
         vm.prank(admin);
@@ -453,7 +462,7 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
             vm.getNonce(address(factory))
         );
 
-        // Build PoolKey same as LiquidInstant would (currencies sorted by address, guard as hooks)
+        // Build PoolKey same as LiquidMultiCurve would (currencies sorted by address, guard as hooks)
         (Currency currency0, Currency currency1) = config.rareToken <
             predictedToken
             ? (Currency.wrap(config.rareToken), Currency.wrap(predictedToken))

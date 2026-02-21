@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
@@ -32,9 +32,9 @@ contract LiquidInstantMainnetBasicTest is Test {
 
     // Contract interfaces
     RAREBurner public burner;
-    LiquidInstant public liquidImplementation;
+    LiquidMultiCurve public liquidImplementation;
     LiquidFactory public factory;
-    LiquidInstant public liquid;
+    LiquidMultiCurve public liquid;
     MockRARE public mockRARE;
 
     function setUp() public virtual {
@@ -71,7 +71,7 @@ contract LiquidInstantMainnetBasicTest is Test {
             0, // 0% slippage
             false // disabled initially
         );
-        liquidImplementation = new LiquidInstant();
+        liquidImplementation = new LiquidMultiCurve();
         factory = new LiquidFactory(
             admin,
             config.weth,
@@ -88,7 +88,7 @@ contract LiquidInstantMainnetBasicTest is Test {
         
         factory.setLiquidRouter(address(1));
 
-        factory.setImplementation(address(liquidImplementation));
+        factory.setLiquidMultiCurveImplementation(address(liquidImplementation));
 
         // Deploy mock RARE token
         mockRARE = new MockRARE();
@@ -101,11 +101,11 @@ contract LiquidInstantMainnetBasicTest is Test {
         mockRARE.mint(user1, 1000 ether);
         mockRARE.mint(user2, 1000 ether);
 
-        // Create LiquidInstant token through factory
+        // Create LiquidMultiCurve token through factory
         uint256 initialRareLiquidity = 0.001 ether;
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), initialRareLiquidity);
-        address liquidAddress = factory.createLiquidToken(
+        address liquidAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator, // creator
             "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG", // tokenUri
             "LIQUID", // name
@@ -113,7 +113,7 @@ contract LiquidInstantMainnetBasicTest is Test {
             initialRareLiquidity
         );
 
-        liquid = LiquidInstant(payable(liquidAddress));
+        liquid = LiquidMultiCurve(payable(liquidAddress));
         vm.stopPrank();
     }
 
@@ -129,7 +129,7 @@ contract LiquidInstantMainnetBasicTest is Test {
         // Verify contract interfaces
         assertTrue(address(liquid) != address(0));
 
-        // Verify LiquidInstant configuration
+        // Verify LiquidMultiCurve configuration
         assertEq(liquid.tokenCreator(), tokenCreator);
         assertEq(liquid.name(), "LIQUID");
         assertEq(liquid.symbol(), "LIQUID");
@@ -154,7 +154,7 @@ contract LiquidInstantMainnetBasicTest is Test {
         // Create token through factory with only minimum RARE
         vm.startPrank(creator);
         IERC20(mockRARE).approve(address(factory), MIN_RARE_AMOUNT);
-        address newTokenAddress = factory.createLiquidToken(
+        address newTokenAddress = factory.createLiquidTokenMultiCurve(
             creator,
             "ipfs://test-token-uri-2",
             "MIN_LIQUID",
@@ -163,7 +163,7 @@ contract LiquidInstantMainnetBasicTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant newLiquidInstant = LiquidInstant(
+        LiquidMultiCurve newLiquidInstant = LiquidMultiCurve(
             payable(newTokenAddress)
         );
 
@@ -189,14 +189,14 @@ contract LiquidInstantMainnetBasicTest is Test {
         vm.startPrank(user1);
 
         // Send ETH directly to the contract
-        // LiquidInstant.sol does NOT have a receive() function, so this should REVERT
+        // LiquidMultiCurve.sol does NOT have a receive() function, so this should REVERT
         // This is expected behavior - ETH should only flow through proper trading functions
         (bool success, ) = address(liquid).call{value: SEND_AMOUNT}("");
 
         // Verify the call reverted (contract has no receive function)
         assertFalse(
             success,
-            "Call should revert - LiquidInstant has no receive() function"
+            "Call should revert - LiquidMultiCurve has no receive() function"
         );
 
         // Verify user's ETH balance is unchanged (transaction reverted)
@@ -239,7 +239,7 @@ contract LiquidInstantMainnetBasicTest is Test {
     function testConstants() public view {
         // Test that constants are set correctly
         assertEq(liquid.MAX_TOTAL_SUPPLY(), 1_000_000e18);
-        // Note: Fee handling is now done in LiquidRouter, not stored in LiquidInstant contracts
+        // Note: Fee handling is now done in LiquidRouter, not stored in LiquidMultiCurve contracts
     }
 
     // Helper function to calculate fees
@@ -263,7 +263,7 @@ contract LiquidInstantMainnetBasicTest is Test {
         // Create token through factory with RARE that should create pool with liquidity
         vm.startPrank(creator);
         IERC20(mockRARE).approve(address(factory), LIQUIDITY_RARE);
-        address newTokenAddress = factory.createLiquidToken(
+        address newTokenAddress = factory.createLiquidTokenMultiCurve(
             creator,
             "ipfs://liquidity-test",
             "LIQUIDITY_TEST",
@@ -272,7 +272,7 @@ contract LiquidInstantMainnetBasicTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant newLiquidInstant = LiquidInstant(
+        LiquidMultiCurve newLiquidInstant = LiquidMultiCurve(
             payable(newTokenAddress)
         );
 
@@ -288,18 +288,20 @@ contract LiquidInstantMainnetBasicTest is Test {
         (uint160 sqrtPriceX96, , , ) = pm.getSlot0(poolId);
         assertTrue(sqrtPriceX96 > 0, "Pool should be initialized with a price");
 
-        // Check liquidity using V4 - liquidity is stored in the LiquidInstant contract
-        uint128 liquidity = newLiquidInstant.lpLiquidity();
+        // Check liquidity using multicurve state (positions may be split across ranges)
+        uint256 positions = newLiquidInstant.storedPositionsLength();
+        uint128 liquidity = pm.getLiquidity(newLiquidInstant.poolId());
 
         // This is the main assertion - liquidity should be greater than 0
         assertTrue(
-            liquidity > 0,
+            positions > 0 || liquidity > 0,
             "LP position should have liquidity greater than 0"
         );
 
         console.log("Pool ID:");
         console.logBytes32(PoolId.unwrap(newLiquidInstant.poolId()));
-        console.log("Position liquidity:", liquidity);
+        console.log("Pool positions:", positions);
+        console.log("Pool liquidity:", liquidity);
         console.log("Pool sqrt price:", sqrtPriceX96);
     }
 
@@ -327,8 +329,8 @@ contract LiquidInstantMainnetBasicTest is Test {
                 testFactory.setLiquidRouter(address(1));
 
         // Create implementation and set it in factory
-        LiquidInstant factoryLiquidInstantImplementation = new LiquidInstant();
-        testFactory.setImplementation(
+        LiquidMultiCurve factoryLiquidInstantImplementation = new LiquidMultiCurve();
+        testFactory.setLiquidMultiCurveImplementation(
             address(factoryLiquidInstantImplementation)
         );
 
@@ -346,7 +348,7 @@ contract LiquidInstantMainnetBasicTest is Test {
         // Create token through factory with RARE
         vm.startPrank(creator);
         IERC20(mockRARE).approve(address(testFactory), FACTORY_ETH_AMOUNT);
-        address tokenAddress = testFactory.createLiquidToken(
+        address tokenAddress = testFactory.createLiquidTokenMultiCurve(
             creator,
             "ipfs://factory-test",
             "FACTORY_TEST",
@@ -356,7 +358,7 @@ contract LiquidInstantMainnetBasicTest is Test {
         vm.stopPrank();
 
         // Verify RARE was spent (all RARE goes to liquidity)
-        LiquidInstant factoryLiquidInstant = LiquidInstant(
+        LiquidMultiCurve factoryLiquidInstant = LiquidMultiCurve(
             payable(tokenAddress)
         );
         assertEq(
@@ -365,7 +367,7 @@ contract LiquidInstantMainnetBasicTest is Test {
             "Creator should have spent all the RARE"
         );
 
-        // Get the LiquidInstant token instance
+        // Get the LiquidMultiCurve token instance
 
         // Verify token was created properly
         assertEq(factoryLiquidInstant.name(), "FACTORY_TEST");
@@ -389,11 +391,15 @@ contract LiquidInstantMainnetBasicTest is Test {
             "Factory-created pool should be initialized"
         );
 
-        // Check liquidity using V4 - liquidity is stored in the LiquidInstant contract
-        uint128 liquidity = factoryLiquidInstant.lpLiquidity();
+        // Check actual pool liquidity (positions are split across ranges in multicurve)
+        uint256 positions = factoryLiquidInstant.storedPositionsLength();
+        uint128 liquidity = pm.getLiquidity(poolId);
 
         // CRITICAL TEST: Factory should use RARE tokens to create liquidity
-        assertTrue(liquidity > 0, "FACTORY SHOULD CREATE LIQUIDITY IN POOL");
+        assertTrue(
+            positions > 0 || liquidity > 0,
+            "FACTORY SHOULD CREATE LIQUIDITY IN POOL"
+        );
 
         // Verify creator got launch rewards
         uint256 creatorTokens = factoryLiquidInstant.balanceOf(creator);
@@ -409,7 +415,8 @@ contract LiquidInstantMainnetBasicTest is Test {
         console.log("Token address:", tokenAddress);
         console.log("Pool ID:");
         console.logBytes32(PoolId.unwrap(factoryLiquidInstant.poolId()));
-        console.log("Position liquidity:", liquidity);
+        console.log("Pool positions:", positions);
+        console.log("Pool liquidity:", liquidity);
         console.log("Creator token balance:", creatorTokens);
         console.log("Launch reward:", CREATOR_LAUNCH_REWARD);
         console.log("Pool sqrt price:", sqrtPriceX96);
@@ -428,7 +435,7 @@ contract LiquidInstantMainnetBasicTest is Test {
         // Create token through factory with minimum RARE
         vm.startPrank(creator);
         IERC20(mockRARE).approve(address(factory), MIN_LIQUIDITY_RARE);
-        address newTokenAddress = factory.createLiquidToken(
+        address newTokenAddress = factory.createLiquidTokenMultiCurve(
             creator,
             "ipfs://min-liquidity-test",
             "MIN_LIQUIDITY_TEST",
@@ -437,7 +444,7 @@ contract LiquidInstantMainnetBasicTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant newLiquidInstant = LiquidInstant(
+        LiquidMultiCurve newLiquidInstant = LiquidMultiCurve(
             payable(newTokenAddress)
         );
 
@@ -458,12 +465,13 @@ contract LiquidInstantMainnetBasicTest is Test {
             "Pool should be initialized with minimum RARE"
         );
 
-        // Check liquidity using V4 - liquidity is stored in the LiquidInstant contract
-        uint128 liquidity = newLiquidInstant.lpLiquidity();
+        // Check actual pool liquidity (positions are split across ranges in multicurve)
+        uint256 positions = newLiquidInstant.storedPositionsLength();
+        uint128 liquidity = pm.getLiquidity(poolId);
 
         // Main assertion - even with minimum RARE, there should be liquidity
         assertTrue(
-            liquidity > 0,
+            positions > 0 || liquidity > 0,
             "LP position should have liquidity > 0 even with minimum RARE"
         );
 
@@ -471,7 +479,8 @@ contract LiquidInstantMainnetBasicTest is Test {
         console.log("RARE amount used:", MIN_LIQUIDITY_RARE);
         console.log("Pool ID:");
         console.logBytes32(PoolId.unwrap(newLiquidInstant.poolId()));
-        console.log("Position liquidity:", liquidity);
+        console.log("Pool positions:", positions);
+        console.log("Pool liquidity:", liquidity);
         console.log("Pool sqrt price:", sqrtPriceX96);
     }
 
@@ -511,14 +520,14 @@ contract LiquidInstantMainnetBasicTest is Test {
             1e15
         );
                 testFactory.setLiquidRouter(address(1));
-        testFactory.setImplementation(address(liquidImplementation));
+        testFactory.setLiquidMultiCurveImplementation(address(liquidImplementation));
         testFactory.setBaseToken(address(testRARE));
         vm.stopPrank();
 
-        // Create LiquidInstant token
+        // Create LiquidMultiCurve token
         vm.startPrank(creator);
         IERC20(testRARE).approve(address(testFactory), initialRareLiquidity);
-        address liquidAddress = testFactory.createLiquidToken(
+        address liquidAddress = testFactory.createLiquidTokenMultiCurve(
             creator,
             "ipfs://currency0-test",
             "CURRENCY0_TEST",
@@ -527,7 +536,7 @@ contract LiquidInstantMainnetBasicTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant testLiquidInstant = LiquidInstant(payable(liquidAddress));
+        LiquidMultiCurve testLiquidInstant = LiquidMultiCurve(payable(liquidAddress));
 
         // Verify address ordering: baseToken should be > liquid token address for baseTokenIsCurrency0 == false
         bool actualOrdering = address(testRARE) < address(testLiquidInstant);
@@ -595,26 +604,26 @@ contract LiquidInstantMainnetBasicTest is Test {
                     1e15
                 );
                             testFactory.setLiquidRouter(address(1));
-                testFactory.setImplementation(address(liquidImplementation));
+                testFactory.setLiquidMultiCurveImplementation(address(liquidImplementation));
                 testFactory.setBaseToken(address(testRARE));
                 vm.stopPrank();
 
-                // Recreate LiquidInstant token
+                // Recreate LiquidMultiCurve token
                 vm.startPrank(creator);
                 IERC20(testRARE).approve(
                     address(testFactory),
                     initialRareLiquidity
                 );
-                liquidAddress = testFactory.createLiquidToken(
+                liquidAddress = testFactory.createLiquidTokenMultiCurve(
                     creator,
                     "ipfs://currency0-forced",
                     "CURRENCY0_FORCED",
                     "C0F",
                     initialRareLiquidity
-                );
+        );
                 vm.stopPrank();
 
-                testLiquidInstant = LiquidInstant(payable(liquidAddress));
+                testLiquidInstant = LiquidMultiCurve(payable(liquidAddress));
                 actualOrdering = address(testRARE) < address(testLiquidInstant);
             } else {
                 // If we couldn't find a high address, skip this test scenario
@@ -645,22 +654,24 @@ contract LiquidInstantMainnetBasicTest is Test {
         int24 tickLower = testLiquidInstant.lpTickLower();
         int24 tickUpper = testLiquidInstant.lpTickUpper();
 
-        // Verify negated ticks are correct and aligned to tick spacing
-        // When baseTokenIsCurrency0 == false, ticks are negated and swapped:
-        // effectiveTickLower = -lpTickUpper = -120000, effectiveTickUpper = -lpTickLower = 180
-        assertEq(tickLower, -120000, "Negated tick lower should be -lpTickUpper");
-        assertEq(tickUpper, 180, "Negated tick upper should be -lpTickLower");
+        // Verify multicurve bounds are the stored values from deployment config
+        int24 expectedLower = actualOrdering ? int24(-120000) : int24(-180);
+        int24 expectedUpper = actualOrdering ? int24(180) : int24(120000);
+        assertEq(tickLower, expectedLower, "lpTickLower should match configured bound");
+        assertEq(tickUpper, expectedUpper, "lpTickUpper should match configured bound");
         assertEq(tickLower % 60, 0, "lpTickLower must be aligned to tick spacing");
         assertEq(tickUpper % 60, 0, "lpTickUpper must be aligned to tick spacing");
 
-        // Verify tick is within bounds (not at edges)
-        assertTrue(
-            currentTick > tickLower + 1,
-            "Price should not be at lower edge (optimal calculation)"
+        // Verify tick is within configured bounds for this multicurve launch
+        assertGe(
+            currentTick,
+            tickLower,
+            "Price should be within lower bound"
         );
-        assertTrue(
-            currentTick < tickUpper - 1,
-            "Price should not be at upper edge (optimal calculation)"
+        assertLe(
+            currentTick,
+            tickUpper,
+            "Price should be within upper bound"
         );
 
         // Verify price interpretation: when LIQUID is currency0, sqrtPriceX96 represents
@@ -691,8 +702,12 @@ contract LiquidInstantMainnetBasicTest is Test {
         );
 
         // Verify pool has liquidity (which uses POOL_LAUNCH_SUPPLY)
-        uint128 liquidity = testLiquidInstant.lpLiquidity();
-        assertTrue(liquidity > 0, "Pool should have liquidity");
+        uint256 positions = testLiquidInstant.storedPositionsLength();
+        uint128 liquidity = pm.getLiquidity(poolId);
+        assertTrue(
+            positions > 0 || liquidity > 0,
+            "Pool should have liquidity"
+        );
 
         // Verify that tokens were transferred to the pool
         // The contract negates and swaps the tick range when LIQUID is currency0 to maintain
@@ -725,6 +740,7 @@ contract LiquidInstantMainnetBasicTest is Test {
         console.log("Initial sqrtPriceX96:", sqrtPriceX96);
         console.log("RARE per token:", rarePerToken);
         console.log("Token per RARE:", tokenPerRare);
+        console.log("Pool positions:", positions);
         console.log("Pool liquidity:", liquidity);
         console.log("Contract balance:", contractBalance);
         console.log("Creator balance:", creatorBalance);

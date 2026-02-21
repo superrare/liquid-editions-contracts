@@ -9,7 +9,7 @@ pragma solidity ^0.8.0;
  */
 
 import {LiquidTokenBehaviorBase} from "liquid-editions-test/helpers/bases/LiquidTokenBehaviorBase.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidGraduated} from "liquid-editions/LiquidGraduated.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";

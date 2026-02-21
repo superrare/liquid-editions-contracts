@@ -1285,6 +1285,260 @@ contract MockLBPStrategyAuctioneer is IDistributionContract, ILBPStrategy {
     }
 }
 
+/// @title LiquidAuctioneer V2/V3 payerIsUser encoding tests
+/// @notice Verifies that V2/V3 swap encoding uses payerIsUser=true for ERC20 inputs
+///         and payerIsUser=false for ETH inputs (where WRAP_ETH deposits to router first).
+contract LiquidAuctioneerPayerIsUserTest is Test {
+    address constant PERMIT2_ADDR = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
+    address owner = makeAddr("owner");
+    address user = makeAddr("user");
+    address protocolFeeRecipient = makeAddr("protocolFeeRecipient");
+    address referrer = makeAddr("referrer");
+
+    PayerCheckingRouter public payerRouter;
+    LiquidAuctioneer public auctioneer;
+    MockRARE public rare;
+    MockERC20 public usdc;
+    MockBurner public burner;
+
+    address constant WETH_ADDR = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+
+    function setUp() public {
+        vm.deal(user, 100 ether);
+        rare = new MockRARE();
+        usdc = new MockERC20();
+        burner = new MockBurner();
+        payerRouter = new PayerCheckingRouter(address(rare));
+        rare.transfer(address(payerRouter), 100e18);
+
+        FunctionalMockPermit2 permit2Impl = new FunctionalMockPermit2();
+        vm.etch(PERMIT2_ADDR, address(permit2Impl).code);
+
+        auctioneer = new LiquidAuctioneer(
+            owner,
+            address(payerRouter),
+            protocolFeeRecipient,
+            address(burner),
+            address(rare),
+            WETH_ADDR,
+            2500,
+            2500,
+            5000
+        );
+    }
+
+    function test_V3Route_ERC20_PayerIsUserTrue() public {
+        // Set up a V3 route for USDC -> RARE
+        bytes memory v3Path = abi.encodePacked(
+            address(usdc),
+            uint24(3000),
+            address(rare)
+        );
+        vm.prank(owner);
+        auctioneer.setTokenRouteV3(address(usdc), v3Path);
+
+        // Setup bid infrastructure
+        address liquidToken = address(
+            new MockLiquidTokenForExit(address(new MockAuctionForBid()))
+        );
+        usdc.mint(user, 100e18);
+
+        // Set expected payerIsUser = true for ERC20
+        payerRouter.setExpectedPayerIsUser(true);
+
+        vm.startPrank(user);
+        usdc.approve(address(auctioneer), 100e18);
+        auctioneer.bid(
+            address(usdc),
+            100e18,
+            liquidToken,
+            1,
+            user,
+            referrer,
+            0,
+            1,
+            block.timestamp + 1 hours
+        );
+        vm.stopPrank();
+
+        assertTrue(payerRouter.payerFlagChecked(), "Router should have checked payerIsUser flag");
+    }
+
+    function test_V3Route_ETH_PayerIsUserFalse() public {
+        // Set up a V3 route for ETH -> RARE (path starts with WETH)
+        bytes memory v3Path = abi.encodePacked(
+            WETH_ADDR,
+            uint24(3000),
+            address(rare)
+        );
+        vm.prank(owner);
+        auctioneer.setTokenRouteV3(address(0), v3Path);
+
+        // Setup bid infrastructure
+        address liquidToken = address(
+            new MockLiquidTokenForExit(address(new MockAuctionForBid()))
+        );
+
+        // Set expected payerIsUser = false for ETH
+        payerRouter.setExpectedPayerIsUser(false);
+
+        vm.prank(user);
+        auctioneer.bid{value: 1 ether}(
+            address(0),
+            0,
+            liquidToken,
+            1,
+            user,
+            referrer,
+            0,
+            1,
+            block.timestamp + 1 hours
+        );
+
+        assertTrue(payerRouter.payerFlagChecked(), "Router should have checked payerIsUser flag");
+    }
+
+    function test_V2Route_ERC20_PayerIsUserTrue() public {
+        // Set up a V2 route for USDC -> RARE
+        address[] memory v2Path = new address[](2);
+        v2Path[0] = address(usdc);
+        v2Path[1] = address(rare);
+        vm.prank(owner);
+        auctioneer.setTokenRouteV2(address(usdc), v2Path);
+
+        // Setup bid infrastructure
+        address liquidToken = address(
+            new MockLiquidTokenForExit(address(new MockAuctionForBid()))
+        );
+        usdc.mint(user, 100e18);
+
+        // Set expected payerIsUser = true for ERC20
+        payerRouter.setExpectedPayerIsUser(true);
+
+        vm.startPrank(user);
+        usdc.approve(address(auctioneer), 100e18);
+        auctioneer.bid(
+            address(usdc),
+            100e18,
+            liquidToken,
+            1,
+            user,
+            referrer,
+            0,
+            1,
+            block.timestamp + 1 hours
+        );
+        vm.stopPrank();
+
+        assertTrue(payerRouter.payerFlagChecked(), "Router should have checked payerIsUser flag");
+    }
+
+    function test_V2Route_ETH_PayerIsUserFalse() public {
+        // Set up a V2 route for ETH -> RARE (path starts with WETH)
+        address[] memory v2Path = new address[](2);
+        v2Path[0] = WETH_ADDR;
+        v2Path[1] = address(rare);
+        vm.prank(owner);
+        auctioneer.setTokenRouteV2(address(0), v2Path);
+
+        // Setup bid infrastructure
+        address liquidToken = address(
+            new MockLiquidTokenForExit(address(new MockAuctionForBid()))
+        );
+
+        // Set expected payerIsUser = false for ETH
+        payerRouter.setExpectedPayerIsUser(false);
+
+        vm.prank(user);
+        auctioneer.bid{value: 1 ether}(
+            address(0),
+            0,
+            liquidToken,
+            1,
+            user,
+            referrer,
+            0,
+            1,
+            block.timestamp + 1 hours
+        );
+
+        assertTrue(payerRouter.payerFlagChecked(), "Router should have checked payerIsUser flag");
+    }
+}
+
+/// @dev Mock router that decodes V2/V3 swap inputs and asserts the payerIsUser flag
+contract PayerCheckingRouter {
+    address public rareToken;
+    bool public expectedPayerIsUser;
+    bool public payerFlagChecked;
+
+    constructor(address _rare) {
+        rareToken = _rare;
+    }
+
+    function setExpectedPayerIsUser(bool _expected) external {
+        expectedPayerIsUser = _expected;
+        payerFlagChecked = false;
+    }
+
+    function execute(
+        bytes calldata commands,
+        bytes[] calldata inputs,
+        uint256
+    ) external payable {
+        // Find the V3 (0x00) or V2 (0x08) swap command and decode payerIsUser
+        for (uint256 i = 0; i < commands.length; i++) {
+            uint8 cmd = uint8(commands[i]);
+            if (cmd == 0x00) {
+                // V3_SWAP_EXACT_IN: (address, uint256, uint256, bytes, bool)
+                (, , , , bool payerIsUser) = abi.decode(
+                    inputs[i],
+                    (address, uint256, uint256, bytes, bool)
+                );
+                require(
+                    payerIsUser == expectedPayerIsUser,
+                    string(
+                        abi.encodePacked(
+                            "V3 payerIsUser mismatch: expected ",
+                            expectedPayerIsUser ? "true" : "false",
+                            " got ",
+                            payerIsUser ? "true" : "false"
+                        )
+                    )
+                );
+                payerFlagChecked = true;
+            } else if (cmd == 0x08) {
+                // V2_SWAP_EXACT_IN: (address, uint256, uint256, address[], bool)
+                (, , , , bool payerIsUser) = abi.decode(
+                    inputs[i],
+                    (address, uint256, uint256, address[], bool)
+                );
+                require(
+                    payerIsUser == expectedPayerIsUser,
+                    string(
+                        abi.encodePacked(
+                            "V2 payerIsUser mismatch: expected ",
+                            expectedPayerIsUser ? "true" : "false",
+                            " got ",
+                            payerIsUser ? "true" : "false"
+                        )
+                    )
+                );
+                payerFlagChecked = true;
+            }
+        }
+        // Transfer RARE to caller to simulate successful swap
+        uint256 bal = IERC20(rareToken).balanceOf(address(this));
+        if (bal > 0) {
+            uint256 toSend = bal > 1e18 ? 1e18 : bal;
+            IERC20(rareToken).transfer(msg.sender, toSend);
+        }
+    }
+
+    receive() external payable {}
+    fallback() external payable {}
+}
+
 contract MockV4PoolManagerAuctioneer {
     function unlock(bytes calldata data) external returns (bytes memory) {
         if (msg.sender.code.length > 0) {

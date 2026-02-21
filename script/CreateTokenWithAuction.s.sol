@@ -8,7 +8,7 @@ import {MigratorParameters} from "liquid-editions/types/MigratorParameters.sol";
 import {ILiquidGraduated} from "liquid-editions/interfaces/ILiquidGraduated.sol";
 
 /// @notice Interface for factory with CCA auction support (createLiquidTokenWithAuction)
-/// @dev Use this so the script compiles even when LiquidFactory only has createLiquidToken.
+/// @dev Use this so the script compiles even when LiquidFactory only has createLiquidTokenMultiCurve.
 ///      Runtime: reverts if the deployed factory does not implement this function.
 interface IFactoryWithAuction {
     function createLiquidTokenWithAuction(

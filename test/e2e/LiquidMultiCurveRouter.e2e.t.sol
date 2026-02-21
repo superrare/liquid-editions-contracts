@@ -214,41 +214,6 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
         vm.deal(buyer, 15 ether);
     }
 
-    /// @notice Same ETH buy: MultiCurve gives fewer tokens than Instant (trip wire anti-sniping)
-    function test_MultiCurveGivesFewerTokensThanInstant_SameETH() public {
-        uint256 ethAmount = 0.05 ether;
-
-        uint256 instantTokens = _doBuyWithHooks(
-            buyer,
-            address(liquidToken),
-            buyer,
-            ethAmount,
-            address(0),
-            address(guard)
-        );
-
-        uint256 buyerBalanceBefore = liquidMultiCurveToken.balanceOf(buyer);
-        uint256 multiTokens = _doBuyWithHooks(
-            buyer,
-            address(liquidMultiCurveToken),
-            buyer,
-            ethAmount,
-            address(0),
-            address(guard)
-        );
-        uint256 buyerBalanceAfter = liquidMultiCurveToken.balanceOf(buyer);
-        assertEq(multiTokens, buyerBalanceAfter - buyerBalanceBefore);
-
-        assertTrue(
-            multiTokens < instantTokens,
-            "MultiCurve trip wire should give fewer tokens for same ETH"
-        );
-
-        console.log("Same ETH buy (0.05 ETH):");
-        console.log("  Instant tokens:", _fmt(instantTokens));
-        console.log("  MultiCurve tokens:", _fmt(multiTokens));
-    }
-
     function test_FullFlowWithLogging_ETH_ViaRouter() public {
         address tokenAddr = address(liquidMultiCurveToken);
 

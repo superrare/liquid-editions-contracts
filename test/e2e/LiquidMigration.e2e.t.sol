@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
@@ -17,7 +17,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 
 /// @title LiquidMigration E2E Tests
-/// @notice Tests removeLiquidity for LiquidInstant and LiquidMultiCurve, plus migration flow
+/// @notice Tests removeLiquidity for LiquidMultiCurve and LiquidMultiCurve, plus migration flow
 contract LiquidMigrationE2ETest is Test {
     using StateLibrary for IPoolManager;
 
@@ -29,7 +29,7 @@ contract LiquidMigrationE2ETest is Test {
     address public attacker = makeAddr("attacker");
 
     LiquidFactory public factory;
-    LiquidInstant public liquidImpl;
+    LiquidMultiCurve public liquidImpl;
     LiquidMultiCurve public multiCurveImpl;
     MockRARE public mockRARE;
 
@@ -48,7 +48,7 @@ contract LiquidMigrationE2ETest is Test {
         mockRARE.mint(tokenCreator, 10_000_000 ether);
         mockRARE.mint(protocolFeeRecipient, 10_000_000 ether);
 
-        liquidImpl = new LiquidInstant();
+        liquidImpl = new LiquidMultiCurve();
         multiCurveImpl = new LiquidMultiCurve();
         factory = new LiquidFactory(
             admin,
@@ -66,7 +66,7 @@ contract LiquidMigrationE2ETest is Test {
         
         factory.setLiquidRouter(address(1));
 
-        factory.setImplementation(address(liquidImpl));
+        factory.setLiquidMultiCurveImplementation(address(liquidImpl));
         factory.setLiquidMultiCurveImplementation(address(multiCurveImpl));
         factory.setBaseToken(address(mockRARE));
         factory.setProtocolFeeRecipient(protocolFeeRecipient);
@@ -78,10 +78,10 @@ contract LiquidMigrationE2ETest is Test {
     // HELPERS
     // ============================================
 
-    function _createInstantToken(uint256 rareLiquidity) internal returns (LiquidInstant) {
+    function _createInstantToken(uint256 rareLiquidity) internal returns (LiquidMultiCurve) {
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), rareLiquidity);
-        address tokenAddr = factory.createLiquidToken(
+        address tokenAddr = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test-instant",
             "Test Instant",
@@ -89,7 +89,7 @@ contract LiquidMigrationE2ETest is Test {
             rareLiquidity
         );
         vm.stopPrank();
-        return LiquidInstant(payable(tokenAddr));
+        return LiquidMultiCurve(payable(tokenAddr));
     }
 
     function _createMultiCurveToken(uint256 rareLiquidity) internal returns (LiquidMultiCurve) {
@@ -134,13 +134,13 @@ contract LiquidMigrationE2ETest is Test {
 
     function test_removeLiquidity_instant() public {
         uint256 rareLiquidity = 1 ether;
-        LiquidInstant token = _createInstantToken(rareLiquidity);
+        LiquidMultiCurve token = _createInstantToken(rareLiquidity);
 
         // Verify pool is live
-        uint128 liq = token.lpLiquidity();
+        IPoolManager pm = IPoolManager(token.poolManager());
+        uint128 liq = pm.getLiquidity(token.poolId());
         assertTrue(liq > 0, "Pool should have liquidity");
 
-        IPoolManager pm = IPoolManager(token.poolManager());
         (uint160 sqrtPrice, , , ) = pm.getSlot0(token.poolId());
         assertTrue(sqrtPrice > 0, "Pool should be initialized");
 
@@ -164,7 +164,7 @@ contract LiquidMigrationE2ETest is Test {
     }
 
     function test_removeLiquidity_instant_onlyProtocolFeeRecipient() public {
-        LiquidInstant token = _createInstantToken(1 ether);
+        LiquidMultiCurve token = _createInstantToken(1 ether);
 
         // Attacker cannot call removeLiquidity
         vm.prank(attacker);
@@ -178,7 +178,7 @@ contract LiquidMigrationE2ETest is Test {
     }
 
     function test_removeLiquidity_instant_cannotCallTwice() public {
-        LiquidInstant token = _createInstantToken(1 ether);
+        LiquidMultiCurve token = _createInstantToken(1 ether);
 
         vm.prank(protocolFeeRecipient);
         token.removeLiquidity(protocolFeeRecipient);
@@ -190,7 +190,7 @@ contract LiquidMigrationE2ETest is Test {
     }
 
     function test_removeLiquidity_instant_recipientCanBeDifferent() public {
-        LiquidInstant token = _createInstantToken(1 ether);
+        LiquidMultiCurve token = _createInstantToken(1 ether);
         address recipient = makeAddr("recipient");
 
         uint256 rareBefore = mockRARE.balanceOf(recipient);
@@ -259,10 +259,14 @@ contract LiquidMigrationE2ETest is Test {
 
     function test_removeLiquidity_and_migrate_instant() public {
         uint256 rareLiquidity = 1 ether;
-        LiquidInstant token1 = _createInstantToken(rareLiquidity);
+        LiquidMultiCurve token1 = _createInstantToken(rareLiquidity);
 
         // Verify first pool is live
-        assertTrue(token1.lpLiquidity() > 0, "Token1 pool should have liquidity");
+        IPoolManager token1Pm = IPoolManager(token1.poolManager());
+        assertTrue(
+            token1Pm.getLiquidity(token1.poolId()) > 0,
+            "Token1 pool should have liquidity"
+        );
 
         // Remove liquidity
         vm.prank(protocolFeeRecipient);
@@ -275,7 +279,7 @@ contract LiquidMigrationE2ETest is Test {
         // Use recovered RARE to create a new token (simulating migration)
         vm.startPrank(protocolFeeRecipient);
         IERC20(mockRARE).approve(address(factory), recoveredRare);
-        address token2Addr = factory.createLiquidToken(
+        address token2Addr = factory.createLiquidTokenMultiCurve(
             tokenCreator, // same creator
             "ipfs://test-migrated",
             "Migrated Token",
@@ -284,12 +288,15 @@ contract LiquidMigrationE2ETest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant token2 = LiquidInstant(payable(token2Addr));
+        LiquidMultiCurve token2 = LiquidMultiCurve(payable(token2Addr));
 
         // Verify new pool is live
-        assertTrue(token2.lpLiquidity() > 0, "Token2 pool should have liquidity");
-        IPoolManager pm = IPoolManager(token2.poolManager());
-        (uint160 sqrtPrice, , , ) = pm.getSlot0(token2.poolId());
+        IPoolManager token2Pm = IPoolManager(token2.poolManager());
+        assertTrue(
+            token2Pm.getLiquidity(token2.poolId()) > 0,
+            "Token2 pool should have liquidity"
+        );
+        (uint160 sqrtPrice, , , ) = token2Pm.getSlot0(token2.poolId());
         assertTrue(sqrtPrice > 0, "Token2 pool should be initialized");
 
         // Verify old pool has no liquidity

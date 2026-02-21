@@ -9,7 +9,7 @@ pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
 import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";

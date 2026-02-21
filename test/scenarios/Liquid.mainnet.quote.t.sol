@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
@@ -13,7 +13,7 @@ import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 import {LiquidPoolSwapHelper} from "liquid-editions-test/helpers/LiquidPoolSwapHelper.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/// @title LiquidInstant Quote → Trade Pattern Tests
+/// @title LiquidMultiCurve Quote → Trade Pattern Tests
 /// @notice Comprehensive tests for quoteBuy() → buy() and quoteSell() → sell() patterns
 /// @dev Tests that quotes accurately predict actual trade outcomes including slippage protection
 contract LiquidInstantQuoteTradeTest is Test {
@@ -30,8 +30,8 @@ contract LiquidInstantQuoteTradeTest is Test {
 
     // Contracts
     LiquidFactory public factory;
-    LiquidInstant public liquidImpl;
-    LiquidInstant public token;
+    LiquidMultiCurve public liquidImpl;
+    LiquidMultiCurve public token;
     RAREBurner public burner;
     MockRARE public mockRARE;
     LiquidPoolSwapHelper public swapHelper;
@@ -78,7 +78,7 @@ contract LiquidInstantQuoteTradeTest is Test {
         // Deploy contracts
         vm.startPrank(admin);
 
-        liquidImpl = new LiquidInstant();
+        liquidImpl = new LiquidMultiCurve();
 
         burner = new RAREBurner(
             admin,
@@ -109,7 +109,7 @@ contract LiquidInstantQuoteTradeTest is Test {
         
         factory.setLiquidRouter(address(1));
 
-        factory.setImplementation(address(liquidImpl));
+        factory.setLiquidMultiCurveImplementation(address(liquidImpl));
 
         // Set base token to MockRARE
         factory.setBaseToken(address(mockRARE));
@@ -124,7 +124,7 @@ contract LiquidInstantQuoteTradeTest is Test {
         // Starting at tickUpper (cheap tokens), minimal RARE is sufficient
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), INITIAL_LIQUIDITY_RARE);
-        address tokenAddr = factory.createLiquidToken(
+        address tokenAddr = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
@@ -132,7 +132,7 @@ contract LiquidInstantQuoteTradeTest is Test {
             INITIAL_LIQUIDITY_RARE
         );
         vm.stopPrank();
-        token = LiquidInstant(payable(tokenAddr));
+        token = LiquidMultiCurve(payable(tokenAddr));
 
         // Verify quoter is configured
         address quoterAddr = factory.v4Quoter();
@@ -174,7 +174,7 @@ contract LiquidInstantQuoteTradeTest is Test {
 
     function _createTokenWithBase(
         MockRARE baseTokenToUse
-    ) internal returns (LiquidInstant createdToken) {
+    ) internal returns (LiquidMultiCurve createdToken) {
         baseTokenToUse.mint(
             tokenCreator,
             INITIAL_LIQUIDITY_RARE + (ORDERING_SWAP_RARE_IN * 2)
@@ -189,7 +189,7 @@ contract LiquidInstantQuoteTradeTest is Test {
             address(factory),
             INITIAL_LIQUIDITY_RARE
         );
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://ordering-test",
             "Ordering Test",
@@ -198,13 +198,13 @@ contract LiquidInstantQuoteTradeTest is Test {
         );
         vm.stopPrank();
 
-        createdToken = LiquidInstant(payable(tokenAddress));
+        createdToken = LiquidMultiCurve(payable(tokenAddress));
         return createdToken;
     }
 
     function _createTokenWithOrdering(
         bool wantBaseTokenIsCurrency0
-    ) internal returns (LiquidInstant createdToken, MockRARE baseToken) {
+    ) internal returns (LiquidMultiCurve createdToken, MockRARE baseToken) {
         address baseAddress = wantBaseTokenIsCurrency0
             ? ORDERING_BASE_TOKEN_LOW
             : ORDERING_BASE_TOKEN_HIGH;
@@ -220,7 +220,7 @@ contract LiquidInstantQuoteTradeTest is Test {
     }
 
     function _assertMarketInversionCorrect(
-        LiquidInstant testedToken
+        LiquidMultiCurve testedToken
     ) internal view {
         (uint256 rarePerTokenPrice, uint256 tokenPerRarePrice) = testedToken
             .getCurrentPrice();
@@ -299,7 +299,7 @@ contract LiquidInstantQuoteTradeTest is Test {
         );
     }
 
-    function _assertQuoteMatchesActualForToken(LiquidInstant testedToken) internal {
+    function _assertQuoteMatchesActualForToken(LiquidMultiCurve testedToken) internal {
         uint256 rareIn = ORDERING_SWAP_RARE_IN;
         MockRARE baseToken = MockRARE(testedToken.baseToken());
 
@@ -426,7 +426,7 @@ contract LiquidInstantQuoteTradeTest is Test {
     }
 
     function test_QuoteOrdering_BaseTokenLessThanToken_QuotesAndMarkets() public {
-        (LiquidInstant orderedToken, MockRARE orderedBaseToken) = _createTokenWithOrdering(
+        (LiquidMultiCurve orderedToken, MockRARE orderedBaseToken) = _createTokenWithOrdering(
             true
         );
 
@@ -440,7 +440,7 @@ contract LiquidInstantQuoteTradeTest is Test {
     }
 
     function test_QuoteOrdering_BaseTokenGreaterThanToken_QuotesAndMarkets() public {
-        (LiquidInstant orderedToken, MockRARE orderedBaseToken) = _createTokenWithOrdering(
+        (LiquidMultiCurve orderedToken, MockRARE orderedBaseToken) = _createTokenWithOrdering(
             false
         );
 

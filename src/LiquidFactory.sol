@@ -5,7 +5,6 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
 import {LiquidGraduated} from "liquid-editions/LiquidGraduated.sol";
 import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
@@ -29,10 +28,6 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     // ============================================
     // STATE VARIABLES
     // ============================================
-
-    /// @notice The LiquidInstant implementation contract address (master clone)
-    /// @dev All new tokens are cloned from this implementation using EIP-1167
-    address public liquidImplementation;
 
     /// @notice The LiquidGraduated implementation (for CCA auction launches)
     address public liquidGraduatedImplementation;
@@ -180,80 +175,40 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     // TOKEN CREATION
     // ============================================
 
-    /// @notice Creates a new Liquid token instance
-    /// @dev Deploys a minimal proxy (clone) of the implementation, initializes it, and stores metadata.
-    ///      Requires implementation and baseToken to be set. Transfers RARE tokens from caller for pool bootstrapping.
-    ///      This function is permissionless - anyone can create a Liquid token.
-    ///      A concierge service can still call this on behalf of users by passing their address as _creator.
+    /// @notice Creates a new Liquid token with single-curve default config
     /// @param _creator The address of the token creator (receives fees and launch reward)
     /// @param _tokenUri The ERC20z token URI (metadata link)
     /// @param _name The token name
     /// @param _symbol The token symbol
     /// @param _initialRareLiquidity The amount of RARE tokens to provide as initial liquidity
     /// @return token The address of the created token
-    function createLiquidToken(
+    function createLiquidTokenMultiCurve(
         address _creator,
         string memory _tokenUri,
         string memory _name,
         string memory _symbol,
         uint256 _initialRareLiquidity
-    ) external returns (address token) {
-        // Ensure implementation is set before creating tokens
-        if (liquidImplementation == address(0)) {
-            revert ImplementationNotSet();
-        }
+    ) public returns (address token) {
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: lpTickLower,
+            tickUpper: lpTickUpper,
+            numPositions: 1,
+            shares: 1e18
+        });
 
-        // Ensure baseToken is set
-        if (baseToken == address(0)) {
-            revert AddressZero();
-        }
-
-        // Validate creator address
-        if (_creator == address(0)) {
-            revert AddressZero();
-        }
-
-        // Validate minimum liquidity requirement
-        if (_initialRareLiquidity < minRareLiquidityWei) {
-            revert InvalidAmount();
-        }
-
-        // Deploy clone using EIP-1167 minimal proxy (gas-efficient, no constructor)
-        address clone = Clones.clone(liquidImplementation);
-
-        // Caller must have approved this factory - transfer RARE to clone for pool bootstrap
-        IERC20(baseToken).safeTransferFrom(
-            msg.sender,
-            clone,
-            _initialRareLiquidity
-        );
-
-        // Whitelist clone as allowed pool initializer BEFORE initialize() is called
-        // This prevents pool pre-initialization DoS attacks (see LiquidSwapGuard.beforeInitialize)
-        if (poolHooks != address(0)) {
-            ILiquidSwapGuard(poolHooks).addInitializer(clone);
-        }
-
-        LiquidInstant liquid = LiquidInstant(payable(clone));
-
-        // Initialize the Liquid token (RARE tokens already transferred to clone)
-        // The clone will call initialize() which sets up ERC20, creates Uniswap V4 pool, etc.
-        liquid.initialize(
-            _creator,
-            _tokenUri,
-            _name,
-            _symbol,
-            minRareLiquidityWei
-        );
-
-        // Emit event for indexing
-        emit LiquidTokenCreated(clone, _creator, _tokenUri);
-        _registerTokenWithRouter(clone, _creator);
-
-        return clone;
+        return
+            _createLiquidTokenMultiCurve(
+                _creator,
+                _tokenUri,
+                _name,
+                _symbol,
+                _initialRareLiquidity,
+                curves
+            );
     }
 
-    /// @notice Creates a new Liquid token with multicurve liquidity (anti-sniping launch)
+    /// @notice Creates a new Liquid token with multicurve liquidity
     /// @dev Deploys a clone of liquidMultiCurveImplementation, distributes liquidity across
     ///      multiple concentrated positions per the provided curves. Uses shared minRareLiquidityWei (250 RARE).
     /// @param _creator The address of the token creator (receives fees and launch reward)
@@ -271,6 +226,25 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
         uint256 _initialRareLiquidity,
         Curve[] calldata _curves
     ) external returns (address token) {
+        return
+            _createLiquidTokenMultiCurve(
+                _creator,
+                _tokenUri,
+                _name,
+                _symbol,
+                _initialRareLiquidity,
+                _curves
+            );
+    }
+
+    function _createLiquidTokenMultiCurve(
+        address _creator,
+        string memory _tokenUri,
+        string memory _name,
+        string memory _symbol,
+        uint256 _initialRareLiquidity,
+        Curve[] memory _curves
+    ) internal returns (address token) {
         if (liquidMultiCurveImplementation == address(0)) {
             revert ImplementationNotSet();
         }
@@ -459,29 +433,6 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     // ============================================
     // ADMIN FUNCTIONS
     // ============================================
-
-    /// @notice Sets or updates the LiquidInstant implementation address
-    /// @dev Can be called multiple times to update the implementation.
-    ///      Warning: Only affects newly created tokens. Existing tokens continue using old implementation.
-    ///      Use with caution. Ensure new implementation is compatible.
-    /// @param _implementation The implementation address (master clone)
-    function setImplementation(
-        address _implementation
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        // Validate implementation address
-        if (_implementation == address(0)) {
-            revert AddressZero();
-        }
-
-        // Store old implementation for event
-        address oldImplementation = liquidImplementation;
-
-        // Set/update implementation for cloning
-        liquidImplementation = _implementation;
-
-        // Emit event (oldImplementation will be address(0) on first call)
-        emit ImplementationUpdated(oldImplementation, _implementation);
-    }
 
     /// @notice Sets the LiquidGraduated implementation (for CCA auction launches)
     /// @param _implementation The implementation address

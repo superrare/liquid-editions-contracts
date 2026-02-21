@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
@@ -18,8 +18,8 @@ import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 
-/// @title LiquidInstant Mainnet Invariant Tests
-/// @notice Critical invariant and integration tests for LiquidInstant token system on Base mainnet fork
+/// @title LiquidMultiCurve Mainnet Invariant Tests
+/// @notice Critical invariant and integration tests for LiquidMultiCurve token system on Base mainnet fork
 contract LiquidInstantMainnetInvariantTest is Test {
     using StateLibrary for IPoolManager;
 
@@ -37,8 +37,8 @@ contract LiquidInstantMainnetInvariantTest is Test {
 
     // Contracts
     LiquidFactory public factory;
-    LiquidInstant public liquidImpl;
-    LiquidInstant public token;
+    LiquidMultiCurve public liquidImpl;
+    LiquidMultiCurve public token;
     RAREBurner public burner;
     MockRARE public mockRARE;
 
@@ -46,7 +46,7 @@ contract LiquidInstantMainnetInvariantTest is Test {
     int24 constant LP_TICK_LOWER = -180; // Max expensive (after price rises) - multiple of 60
     int24 constant LP_TICK_UPPER = 120000; // Starting point - cheap tokens - multiple of 60
 
-    // Fee constants from LiquidInstant.sol
+    // Fee constants from LiquidMultiCurve.sol
     uint256 constant TOTAL_FEE_BPS = 100; // 1% = 100 BPS
     uint256 constant TOKEN_CREATOR_FEE_BPS = 5000; // 50% of total fee
     uint256 constant PROTOCOL_FEE_BPS = 3500; // 35% of total fee
@@ -106,7 +106,7 @@ contract LiquidInstantMainnetInvariantTest is Test {
         // Deploy contracts
         vm.startPrank(admin);
 
-        liquidImpl = new LiquidInstant();
+        liquidImpl = new LiquidMultiCurve();
 
         // Deploy burner (disabled initially for most tests, but fully configured)
         burner = new RAREBurner(
@@ -138,7 +138,7 @@ contract LiquidInstantMainnetInvariantTest is Test {
         );
                 factory.setLiquidRouter(address(1));
 
-        factory.setImplementation(address(liquidImpl));
+        factory.setLiquidMultiCurveImplementation(address(liquidImpl));
 
         // Deploy mock RARE token
         mockRARE = new MockRARE();
@@ -173,7 +173,7 @@ contract LiquidInstantMainnetInvariantTest is Test {
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
                 factoryWithBurn.setLiquidRouter(address(1));
-        factoryWithBurn.setImplementation(address(liquidImpl));
+        factoryWithBurn.setLiquidMultiCurveImplementation(address(liquidImpl));
 
         // Deploy mock RARE token if not already deployed
         if (address(mockRARE) == address(0)) {
@@ -287,7 +287,7 @@ contract LiquidInstantMainnetInvariantTest is Test {
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
                 factoryWithBurn.setLiquidRouter(address(1));
-        factoryWithBurn.setImplementation(address(liquidImpl));
+        factoryWithBurn.setLiquidMultiCurveImplementation(address(liquidImpl));
 
         // Set base token (RARE) in factory
         factoryWithBurn.setBaseToken(address(mockRARE));
@@ -301,7 +301,7 @@ contract LiquidInstantMainnetInvariantTest is Test {
             address(factoryWithBurn),
             initialRareLiquidity
         );
-        address tokenAddr = factoryWithBurn.createLiquidToken(
+        address tokenAddr = factoryWithBurn.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
@@ -309,7 +309,7 @@ contract LiquidInstantMainnetInvariantTest is Test {
             initialRareLiquidity
         );
         vm.stopPrank();
-        token = LiquidInstant(payable(tokenAddr));
+        token = LiquidMultiCurve(payable(tokenAddr));
 
         vm.prank(user1);
         testBurner.depositForBurn{value: 1 ether}();

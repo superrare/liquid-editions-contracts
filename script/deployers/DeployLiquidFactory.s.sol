@@ -26,7 +26,6 @@ library DeployLiquidFactory {
     /// @notice All addresses produced by a full factory deployment
     struct DeployResult {
         address factory;
-        address implementation;
         address multiCurveImplementation;
         address graduatedImplementation;
     }
@@ -82,7 +81,6 @@ library DeployLiquidFactory {
         );
 
         // Deploy all implementations
-        result.implementation = DeployLiquid.deploy();
         result.multiCurveImplementation = DeployLiquidMultiCurve.deploy();
         result.graduatedImplementation = DeployLiquidGraduated.deploy(false);
 
@@ -92,7 +90,6 @@ library DeployLiquidFactory {
         // Register implementations and base token
         _configureFactory(
             result.factory,
-            result.implementation,
             result.multiCurveImplementation,
             result.graduatedImplementation,
             network.rareToken
@@ -141,15 +138,12 @@ library DeployLiquidFactory {
 
     function _configureFactory(
         address factory,
-        address implementation,
         address multiCurveImpl,
         address graduatedImpl,
         address rareToken
     ) private {
         LiquidFactory factoryContract = LiquidFactory(factory);
 
-        console.log("Setting LiquidInstant implementation in factory...");
-        factoryContract.setImplementation(implementation);
         console.log("Setting LiquidMultiCurve implementation in factory...");
         factoryContract.setLiquidMultiCurveImplementation(multiCurveImpl);
         console.log("Setting LiquidGraduated implementation in factory...");

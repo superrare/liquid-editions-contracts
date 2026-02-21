@@ -10,7 +10,7 @@ pragma solidity ^0.8.0;
 import "forge-std/Test.sol";
 import "forge-std/console.sol";
 import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 import {DeployConfig} from "script/config/DeployConfig.sol";
@@ -29,7 +29,7 @@ contract LiquidMultiCurveMainnetTest is Test {
     address public user2 = makeAddr("user2");
 
     LiquidFactory public factory;
-    LiquidInstant public instantImpl;
+    LiquidMultiCurve public instantImpl;
     LiquidMultiCurve public multiCurveImpl;
     LiquidPoolSwapHelper public swapHelper;
     MockRARE public mockRARE;
@@ -97,18 +97,18 @@ contract LiquidMultiCurveMainnetTest is Test {
             MIN_RARE
         );
                 factory.setLiquidRouter(address(1));
-        instantImpl = new LiquidInstant();
+        instantImpl = new LiquidMultiCurve();
         multiCurveImpl = new LiquidMultiCurve();
-        factory.setImplementation(address(instantImpl));
+        factory.setLiquidMultiCurveImplementation(address(instantImpl));
         factory.setLiquidMultiCurveImplementation(address(multiCurveImpl));
         factory.setBaseToken(address(mockRARE));
         swapHelper = new LiquidPoolSwapHelper(IPoolManager(config.uniswapV4PoolManager));
         vm.stopPrank();
 
-        // Create a dummy LiquidInstant token first so multicurve tokens get same address layout as sniper test
+        // Create a dummy LiquidMultiCurve token first so multicurve tokens get same address layout as sniper test
         vm.startPrank(tokenCreator);
         mockRARE.approve(address(factory), MIN_RARE);
-        factory.createLiquidToken(
+        factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://dummy",
             "Dummy",

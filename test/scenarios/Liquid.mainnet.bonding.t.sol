@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "forge-std/console.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
@@ -24,7 +24,7 @@ interface IQuoterV2 {
 }
 
 /**
- * @title LiquidInstant Base Mainnet Bonding Curve Test
+ * @title LiquidMultiCurve Base Mainnet Bonding Curve Test
  * @notice Tests how different tick configurations affect the bonding curve pricing mechanism
  * @dev This test forks Base mainnet to test against real Uniswap V4 contracts
  */
@@ -76,21 +76,23 @@ contract LiquidInstantMainnetBondingTest is LiquidBondingForkBase {
 
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(wideFactory), 0.1 ether);
-        wideFactory.createLiquidToken(
+        wideFactory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://wide-test",
             "WIDE",
             "W",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve(wideFactory)
         );
 
         IERC20(mockRARE).approve(address(narrowFactory), 0.1 ether);
-        narrowFactory.createLiquidToken(
+        narrowFactory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://narrow-test",
             "NARROW",
             "N",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve(narrowFactory)
         );
         vm.stopPrank();
     }
@@ -140,7 +142,7 @@ contract LiquidInstantMainnetBondingTest is LiquidBondingForkBase {
         // Create the liquid token through the factory
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(tempFactory), 0.1 ether);
-        address tokenAddr = tempFactory.createLiquidToken(
+        address tokenAddr = tempFactory.createLiquidTokenMultiCurve(
             tokenCreator,
             string(abi.encodePacked("ipfs://test-", tickConfig.name)),
             string(abi.encodePacked("LIQUID_", tickConfig.name)),
@@ -148,7 +150,7 @@ contract LiquidInstantMainnetBondingTest is LiquidBondingForkBase {
             0.1 ether
         );
         vm.stopPrank();
-        LiquidInstant liquidImpl = LiquidInstant(payable(tokenAddr));
+        LiquidMultiCurve liquidImpl = LiquidMultiCurve(payable(tokenAddr));
 
         // Note: V4 pool state can be queried via StateLibrary.getSlot0() if needed
         // Pool state verification is implicit through successful trades
@@ -350,12 +352,13 @@ contract LiquidInstantMainnetBondingTest is LiquidBondingForkBase {
             // Create token through factory
             vm.startPrank(tokenCreator);
             IERC20(mockRARE).approve(address(tempFactory), 0.1 ether);
-            tempFactory.createLiquidToken(
+            tempFactory.createLiquidTokenMultiCurve(
                 tokenCreator,
                 "ipfs://test-compare",
                 "LIQUID_TEST",
                 "LQT",
-                0.1 ether
+                0.1 ether,
+                _defaultSingleCurve(tempFactory)
             );
             vm.stopPrank();
 
@@ -384,15 +387,16 @@ contract LiquidInstantMainnetBondingTest is LiquidBondingForkBase {
 
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(tempFactory), 0.001 ether);
-        address tokenAddr = tempFactory.createLiquidToken(
+        address tokenAddr = tempFactory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test-supply-percentages",
             "SUPPLY_TEST",
             "SPY",
-            0.001 ether
+            0.001 ether,
+            _defaultSingleCurve(tempFactory)
         );
         vm.stopPrank();
-        LiquidInstant liquidImpl = LiquidInstant(payable(tokenAddr));
+        LiquidMultiCurve liquidImpl = LiquidMultiCurve(payable(tokenAddr));
 
         // Get total supply available for purchase (excludes creator's initial allocation)
         uint256 totalSupply = liquidImpl.totalSupply();
@@ -450,7 +454,7 @@ contract LiquidInstantMainnetBondingTest is LiquidBondingForkBase {
             cumulativeCost += ethCost;
 
             // Calculate effective price per token
-            // Note: Fees are handled by LiquidInstantRouter, not stored in LiquidInstant contract
+            // Note: Fees are handled by LiquidInstantRouter, not stored in LiquidMultiCurve contract
             uint256 pricePerToken = (ethCost * 1e18) / targetTokens;
 
             console.log(
@@ -479,7 +483,7 @@ contract LiquidInstantMainnetBondingTest is LiquidBondingForkBase {
     }
 
     function _findCostForTokenAmount(
-        LiquidInstant liquidImpl,
+        LiquidMultiCurve liquidImpl,
         uint256 targetTokens
     ) internal returns (uint256) {
         // Use binary search to find the ETH cost for the target token amount
@@ -529,12 +533,13 @@ contract LiquidInstantMainnetBondingTest is LiquidBondingForkBase {
 
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(tempFactory), 0.1 ether);
-        tempFactory.createLiquidToken(
+        tempFactory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test-one-token",
             "ONE_TOKEN_TEST",
             "OTT",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve(tempFactory)
         );
         vm.stopPrank();
 
@@ -597,12 +602,13 @@ contract LiquidInstantMainnetBondingTest is LiquidBondingForkBase {
 
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(tempFactory), 0.1 ether);
-        tempFactory.createLiquidToken(
+        tempFactory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://price-impact-test",
             "LIQUID_IMPACT",
             "LQI",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve(tempFactory)
         );
         vm.stopPrank();
 

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.0;
 
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
+import {Curve} from "doppler/libraries/Multicurve.sol";
 import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
 import {LiquidAuctioneer} from "liquid-editions/LiquidAuctioneer.sol";
 import {LiquidRouterForkBase} from "liquid-editions-test/helpers/bases/LiquidRouterForkBase.sol";
@@ -29,8 +30,8 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
     using StateLibrary for IPoolManager;
 
     LiquidAuctioneer public auctioneer;
-    LiquidInstant public liquidToken;
-    LiquidInstant public liquidToken2; // Second token for swap test
+    LiquidMultiCurve public liquidToken;
+    LiquidMultiCurve public liquidToken2; // Second token for swap test
     string internal forkUrlForFFI;
 
     // Universal Router command codes
@@ -98,14 +99,23 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
         vm.startPrank(tokenCreator);
         uint256 minRare = factory.minRareLiquidityWei();
         IERC20(config.rareToken).approve(address(factory), minRare);
-        address tokenAddr = factory.createLiquidToken(
+
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: factory.lpTickLower(),
+            tickUpper: factory.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+        address tokenAddr = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://anvil-fork-test",
             "Anvil Fork Test Token",
             "AFT",
-            minRare
+            minRare,
+            curves
         );
-        liquidToken = LiquidInstant(payable(tokenAddr));
+        liquidToken = LiquidMultiCurve(payable(tokenAddr));
         vm.stopPrank();
 
         vm.prank(admin);

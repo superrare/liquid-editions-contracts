@@ -3,12 +3,11 @@ pragma solidity ^0.8.0;
 
 /**
  * @title LiquidMultiCurve Data Surface Tests
- * @notice ILiquid parity: compare getCurrentPrice, getMarketState, quoteBuy, quoteSell with LiquidInstant
- * @dev Creates LiquidInstant and LiquidMultiCurve with same RARE liquidity (250 each), verifies identical interface.
+ * @notice ILiquid parity: compare getCurrentPrice, getMarketState, quoteBuy, quoteSell with LiquidMultiCurve
+ * @dev Creates LiquidMultiCurve and LiquidMultiCurve with same RARE liquidity (250 each), verifies identical interface.
  */
 
 import "forge-std/Test.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
 import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
@@ -26,11 +25,11 @@ contract LiquidMultiCurveDatasurfaceTest is Test {
     address public tokenCreator = makeAddr("tokenCreator");
 
     LiquidFactory public factory;
-    LiquidInstant public instantImpl;
+    LiquidMultiCurve public instantImpl;
     LiquidMultiCurve public multiCurveImpl;
     MockRARE public mockRARE;
 
-    LiquidInstant public instantToken;
+    LiquidMultiCurve public instantToken;
     LiquidMultiCurve public multiCurveToken;
 
     uint256 constant LIQUIDITY = 250e18;
@@ -76,7 +75,8 @@ contract LiquidMultiCurveDatasurfaceTest is Test {
         mockRARE = new MockRARE();
         mockRARE.mint(tokenCreator, 10_000 ether);
 
-        vm.startPrank(admin);        factory = new LiquidFactory(
+        vm.startPrank(admin);
+        factory = new LiquidFactory(
             admin,
             config.weth,
             config.uniswapV4PoolManager,
@@ -88,10 +88,10 @@ contract LiquidMultiCurveDatasurfaceTest is Test {
             300,
             LIQUIDITY
         );
-                factory.setLiquidRouter(address(1));
-        instantImpl = new LiquidInstant();
+        factory.setLiquidRouter(address(1));
+        instantImpl = new LiquidMultiCurve();
         multiCurveImpl = new LiquidMultiCurve();
-        factory.setImplementation(address(instantImpl));
+        factory.setLiquidMultiCurveImplementation(address(instantImpl));
         factory.setLiquidMultiCurveImplementation(address(multiCurveImpl));
         factory.setBaseToken(address(mockRARE));
         vm.stopPrank();
@@ -99,14 +99,23 @@ contract LiquidMultiCurveDatasurfaceTest is Test {
         vm.startPrank(tokenCreator);
         mockRARE.approve(address(factory), LIQUIDITY * 2);
 
-        instantToken = LiquidInstant(
+        Curve[] memory instantCurves = new Curve[](1);
+        instantCurves[0] = Curve({
+            tickLower: factory.lpTickLower(),
+            tickUpper: factory.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+
+        instantToken = LiquidMultiCurve(
             payable(
-                factory.createLiquidToken(
+                factory.createLiquidTokenMultiCurve(
                     tokenCreator,
                     "ipfs://instant",
                     "Instant",
                     "INST",
-                    LIQUIDITY
+                    LIQUIDITY,
+                    instantCurves
                 )
             )
         );
@@ -132,7 +141,7 @@ contract LiquidMultiCurveDatasurfaceTest is Test {
         (ILiquidBase.LaunchType instantType, , , ) = instantToken.getLaunchState();
         (ILiquidBase.LaunchType multiType, , , ) = multiCurveToken.getLaunchState();
 
-        assertTrue(instantType == ILiquidBase.LaunchType.INSTANT);
+        assertTrue(instantType == ILiquidBase.LaunchType.MULTICURVE);
         assertTrue(multiType == ILiquidBase.LaunchType.MULTICURVE);
     }
 

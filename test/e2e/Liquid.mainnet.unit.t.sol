@@ -2,14 +2,14 @@
 pragma solidity ^0.8.0;
 
 /**
- * @title LiquidInstant Mainnet Unit Tests
+ * @title LiquidMultiCurve Mainnet Unit Tests
  * @notice Comprehensive unit tests for security guards, slippage, fees, and edge cases
  * @dev These tests require Base mainnet fork for real Uniswap interactions
  * @dev Fork is created automatically in setUp()
  */
 
 import "forge-std/Test.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
@@ -31,6 +31,7 @@ import {MockV4Quoter} from "liquid-editions-test/helpers/MockV4Quoter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+import {Curve} from "doppler/libraries/Multicurve.sol";
 
 // Mock ERC721 for testing onERC721Received
 contract MockERC721 {
@@ -122,7 +123,7 @@ contract MockProtocolRewards {
 contract FeeDispersionHelper {
     address public immutable protocolFeeRecipient;
     address public immutable tokenCreator;
-    LiquidInstant public immutable liquidReference;
+    LiquidMultiCurve public immutable liquidReference;
 
     constructor(
         address _protocolFeeRecipient,
@@ -131,11 +132,11 @@ contract FeeDispersionHelper {
     ) {
         protocolFeeRecipient = _protocolFeeRecipient;
         tokenCreator = _tokenCreator;
-        liquidReference = LiquidInstant(payable(_liquidReference));
+        liquidReference = LiquidMultiCurve(payable(_liquidReference));
     }
 
-    // Replicate _disperseFees logic from LiquidInstant.sol exactly (three-tier system)
-    // Read fee values from actual LiquidInstant contract to avoid hardcoding
+    // Replicate _disperseFees logic from LiquidMultiCurve.sol exactly (three-tier system)
+    // Read fee values from actual LiquidMultiCurve contract to avoid hardcoding
     function disperseFeesTest(
         uint256 _fee,
         address _orderReferrer
@@ -147,7 +148,7 @@ contract FeeDispersionHelper {
             _orderReferrer = protocolFeeRecipient;
         }
 
-        // Fees are now handled by LiquidRouter, not stored in LiquidInstant contracts
+        // Fees are now handled by LiquidRouter, not stored in LiquidMultiCurve contracts
         // For test purposes, simulate fee distribution using factory config
         // TIER 2: Beneficiary fee (25% of total fee, matching LiquidRouter's BENEFICIARY_FEE_BPS)
         uint256 BENEFICIARY_FEE_BPS = 2500;
@@ -165,7 +166,7 @@ contract FeeDispersionHelper {
         uint256 dust = _fee - totalCalculatedFees;
         protocolFee += dust; // Protocol gets any rounding dust
 
-        // Direct ETH transfers with fallback pattern (matches LiquidInstant.sol)
+        // Direct ETH transfers with fallback pattern (matches LiquidMultiCurve.sol)
         uint256 protocolTotal = protocolFee;
 
         // Try creator transfer
@@ -299,9 +300,9 @@ contract LiquidInstantMainnetUnitTest is Test {
     address constant RARE_TOKEN =
         address(0x1111111111111111111111111111111111111111);
 
-    LiquidInstant public liquidImplementation;
+    LiquidMultiCurve public liquidImplementation;
     LiquidFactory public factory;
-    LiquidInstant public liquid;
+    LiquidMultiCurve public liquid;
     MockV4PoolManager public mockPoolManager;
     MockV4Quoter public mockQuoter;
     MockRARE public mockRARE;
@@ -330,8 +331,8 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Deploy mock RARE token
         mockRARE = new MockRARE();
 
-        // Deploy LiquidInstant implementation
-        liquidImplementation = new LiquidInstant();
+        // Deploy LiquidMultiCurve implementation
+        liquidImplementation = new LiquidMultiCurve();
 
         // Deploy factory
         factory = new LiquidFactory(
@@ -348,7 +349,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         );
                 factory.setLiquidRouter(address(1));
 
-        factory.setImplementation(address(liquidImplementation));
+        factory.setLiquidMultiCurveImplementation(address(liquidImplementation));
         factory.setBaseToken(address(mockRARE));
 
         // Fund test accounts with RARE tokens
@@ -381,10 +382,21 @@ contract LiquidInstantMainnetUnitTest is Test {
         return PoolId.unwrap(PoolIdLibrary.toId(key));
     }
 
-    /// @notice Helper to create a LiquidInstant clone for direct initialization testing
-    function _createClone() internal returns (LiquidInstant) {
+    function _defaultSingleCurve() internal view returns (Curve[] memory) {
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: factory.lpTickLower(),
+            tickUpper: factory.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+        return curves;
+    }
+
+    /// @notice Helper to create a LiquidMultiCurve clone for direct initialization testing
+    function _createClone() internal returns (LiquidMultiCurve) {
         address clone = Clones.clone(address(liquidImplementation));
-        return LiquidInstant(payable(clone));
+        return LiquidMultiCurve(payable(clone));
     }
 
     // ============================================
@@ -393,59 +405,57 @@ contract LiquidInstantMainnetUnitTest is Test {
 
     /// @notice Test that initialize() reverts when tokenURI is empty
     function test_Initialize_RevertsWhen_TokenURIEmpty() external {
-        LiquidInstant clone = _createClone();
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(factory), 0.1 ether);
+        Curve[] memory curves = _defaultSingleCurve();
 
-        // Transfer RARE to clone first (factory does this)
-        mockRARE.mint(address(clone), 0.1 ether);
-
-        // Call initialize as the factory (msg.sender must be factory)
         vm.expectRevert(ILiquid.InvalidTokenURI.selector);
-        vm.prank(address(factory));
-        clone.initialize(
+        factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "", // Empty tokenURI
             "Test Token",
             "TEST",
-            1e15 // minRareLiquidityWei
+            0.1 ether,
+            curves
         );
+        vm.stopPrank();
     }
 
     /// @notice Test that initialize() reverts when creator is address(0)
     function test_Initialize_RevertsWhen_CreatorAddressZero() external {
-        LiquidInstant clone = _createClone();
+        vm.startPrank(tokenCreator);
+        IERC20(mockRARE).approve(address(factory), 0.1 ether);
+        Curve[] memory curves = _defaultSingleCurve();
 
-        // Transfer RARE to clone first
-        mockRARE.mint(address(clone), 0.1 ether);
-
-        // Call initialize as the factory
-        vm.expectRevert(ILiquid.AddressZero.selector);
-        vm.prank(address(factory));
-        clone.initialize(
-            address(0), // Zero creator
+        vm.expectRevert(ILiquidFactory.AddressZero.selector);
+        factory.createLiquidTokenMultiCurve(
+            address(0),
             "ipfs://test",
             "Test Token",
             "TEST",
-            1e15
+            0.1 ether,
+            curves
         );
+        vm.stopPrank();
     }
 
     /// @notice Test that initialize() reverts when RARE balance is insufficient
     function test_Initialize_RevertsWhen_RAREBalanceInsufficient() external {
-        LiquidInstant clone = _createClone();
+        vm.startPrank(tokenCreator);
+        mockRARE.mint(tokenCreator, 0.1 ether);
+        IERC20(mockRARE).approve(address(factory), 0.1 ether);
+        Curve[] memory curves = _defaultSingleCurve();
 
-        // Transfer less RARE than required
-        mockRARE.mint(address(clone), 1e14); // 0.0001 RARE, less than 1e15
-
-        // Call initialize as the factory
-        vm.expectRevert(ILiquid.RARELiquidityTooSmall.selector);
-        vm.prank(address(factory));
-        clone.initialize(
+        vm.expectRevert(ILiquidFactory.InvalidAmount.selector);
+        factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
             "TEST",
-            1e15 // Requires 0.001 RARE
+            1e14, // 0.0001 RARE, below minimum
+            curves
         );
+        vm.stopPrank();
     }
 
     /// @notice Test that initialize() reverts when baseToken is zero (factory misconfigured)
@@ -465,7 +475,7 @@ contract LiquidInstantMainnetUnitTest is Test {
             1e15
         );
                 badFactory.setLiquidRouter(address(1));
-        badFactory.setImplementation(address(liquidImplementation));
+        badFactory.setLiquidMultiCurveImplementation(address(liquidImplementation));
         // Don't set baseToken - leave it as address(0)
         vm.stopPrank();
 
@@ -473,14 +483,16 @@ contract LiquidInstantMainnetUnitTest is Test {
         vm.startPrank(tokenCreator);
         mockRARE.mint(tokenCreator, 0.1 ether);
         IERC20(mockRARE).approve(address(badFactory), 0.1 ether);
+        Curve[] memory curves = _defaultSingleCurve();
 
         vm.expectRevert(ILiquid.AddressZero.selector);
-        badFactory.createLiquidToken(
+        badFactory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            curves
         );
         vm.stopPrank();
     }
@@ -493,16 +505,19 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Create token through factory normally
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address tokenAddress = factory.createLiquidToken(
+        Curve[] memory curves = _defaultSingleCurve();
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            curves
         );
         vm.stopPrank();
 
-        LiquidInstant token = LiquidInstant(payable(tokenAddress));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
+        Curve[] memory reinitializeCurves = _defaultSingleCurve();
 
         // Try to initialize again - should revert with initializer error
         vm.expectRevert();
@@ -511,7 +526,16 @@ contract LiquidInstantMainnetUnitTest is Test {
             "ipfs://test2",
             "Test Token 2",
             "TEST2",
-            1e15
+            1e15,
+            reinitializeCurves
+        );
+
+        // Re-check immutable launch state did not change after failed re-init attempt
+        assertEq(token.factory(), address(factory), "Factory should remain unchanged");
+        assertEq(
+            token.totalSupply(),
+            token.MAX_TOTAL_SUPPLY(),
+            "Re-initialization should not rebalance supply"
         );
     }
 
@@ -524,7 +548,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Create a token through factory
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
@@ -533,12 +557,12 @@ contract LiquidInstantMainnetUnitTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant token = LiquidInstant(payable(tokenAddress));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
 
         // Try to call unlockCallback from a non-PoolManager address
         bytes memory data = abi.encode(
-            LiquidInstant.UnlockContext({
-                action: LiquidInstant.UnlockAction.QUOTE_SWAP_BUY,
+            LiquidMultiCurve.UnlockContext({
+                action: LiquidMultiCurve.UnlockAction.QUOTE_SWAP_BUY,
                 data: abi.encode(1e18)
             })
         );
@@ -553,7 +577,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Create a token through factory
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
@@ -562,13 +586,13 @@ contract LiquidInstantMainnetUnitTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant token = LiquidInstant(payable(tokenAddress));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
         address poolManagerAddr = token.poolManager();
 
         // Try to call unlockCallback when _unlockExpected is false
         bytes memory data = abi.encode(
-            LiquidInstant.UnlockContext({
-                action: LiquidInstant.UnlockAction.QUOTE_SWAP_BUY,
+            LiquidMultiCurve.UnlockContext({
+                action: LiquidMultiCurve.UnlockAction.QUOTE_SWAP_BUY,
                 data: abi.encode(1e18)
             })
         );
@@ -588,7 +612,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         external
     {
         // Create a clone but don't initialize it
-        LiquidInstant clone = _createClone();
+        LiquidMultiCurve clone = _createClone();
 
         // Try to quote - should revert (pool not initialized)
         // The exact error depends on V4 pool behavior, but it should bubble
@@ -603,7 +627,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Create a token through factory
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
@@ -612,7 +636,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant token = LiquidInstant(payable(tokenAddress));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
 
         // Quote sell with amount larger than total supply
         uint256 hugeAmount = token.MAX_TOTAL_SUPPLY() + 1;
@@ -632,7 +656,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Create a token through factory
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
@@ -641,7 +665,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant token = LiquidInstant(payable(tokenAddress));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
         MockRenderContract renderContract = new MockRenderContract();
 
         // Creator can set render contract
@@ -656,7 +680,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Create a token through factory
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
@@ -665,7 +689,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant token = LiquidInstant(payable(tokenAddress));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
         MockRenderContract renderContract = new MockRenderContract();
 
         // Non-creator cannot set render contract
@@ -679,7 +703,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Create a token through factory
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://stored-uri",
             "Test Token",
@@ -688,7 +712,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant token = LiquidInstant(payable(tokenAddress));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
 
         // Should return stored URI
         assertEq(token.tokenURI(), "ipfs://stored-uri");
@@ -699,7 +723,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Create a token through factory
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://stored-uri",
             "Test Token",
@@ -708,7 +732,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant token = LiquidInstant(payable(tokenAddress));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
         MockRenderContract renderContract = new MockRenderContract();
         renderContract.setReturnValue("ipfs://render-uri");
 
@@ -727,7 +751,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Create a token through factory
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://stored-uri",
             "Test Token",
@@ -736,7 +760,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant token = LiquidInstant(payable(tokenAddress));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
         MockRenderContract renderContract = new MockRenderContract();
         renderContract.setShouldRevert(true);
 
@@ -755,7 +779,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Create a token through factory
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://stored-uri",
             "Test Token",
@@ -764,7 +788,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant token = LiquidInstant(payable(tokenAddress));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
         MockRenderContract renderContract = new MockRenderContract();
         renderContract.setShouldReturnEmpty(true);
 
@@ -785,7 +809,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Create a token through factory
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
@@ -794,7 +818,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant token = LiquidInstant(payable(tokenAddress));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
         uint256 initialSupply = token.totalSupply();
         uint256 burnAmount = 1000e18;
 
@@ -810,7 +834,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Create a token through factory
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
@@ -819,7 +843,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant token = LiquidInstant(payable(tokenAddress));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
         uint256 initialBalance = token.balanceOf(tokenCreator);
         uint256 burnAmount = 1000e18;
 
@@ -834,7 +858,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Create a token through factory
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
@@ -843,7 +867,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant token = LiquidInstant(payable(tokenAddress));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
         uint256 balance = token.balanceOf(tokenCreator);
         uint256 burnAmount = balance + 1; // More than balance
 
@@ -857,7 +881,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Create a token through factory
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
@@ -866,7 +890,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant token = LiquidInstant(payable(tokenAddress));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
         uint256 burnAmount = 1000e18;
         uint256 balanceBefore = token.balanceOf(tokenCreator);
         uint256 supplyBefore = token.totalSupply();
@@ -893,7 +917,7 @@ contract LiquidInstantMainnetUnitTest is Test {
 
         // The mint event happens during createLiquidToken
         // We can verify the event by checking balances after creation
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
@@ -902,7 +926,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant token = LiquidInstant(payable(tokenAddress));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
 
         // Verify creator received launch reward (mint event should have been emitted)
         assertEq(token.balanceOf(tokenCreator), 100_000e18);
@@ -914,7 +938,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Create a token through factory
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
@@ -923,7 +947,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant token = LiquidInstant(payable(tokenAddress));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
         uint256 transferAmount = 1000e18;
         uint256 creatorBalanceBefore = token.balanceOf(tokenCreator);
         uint256 user1BalanceBefore = token.balanceOf(user1);
@@ -948,7 +972,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Create a token through factory
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address tokenAddress = factory.createLiquidToken(
+        address tokenAddress = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test Token",
@@ -957,7 +981,7 @@ contract LiquidInstantMainnetUnitTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant token = LiquidInstant(payable(tokenAddress));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
         uint256 burnAmount = 1000e18;
         uint256 balanceBefore = token.balanceOf(tokenCreator);
         uint256 supplyBefore = token.totalSupply();

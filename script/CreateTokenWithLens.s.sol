@@ -5,6 +5,7 @@ import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {LiquidLensDemoV2} from "liquid-editions/examples/LiquidLensDemoV2.sol";
+import {Curve} from "doppler/libraries/Multicurve.sol";
 import {NetworkConfig} from "./config/NetworkConfig.sol";
 import {console} from "forge-std/console.sol";
 import {Script} from "forge-std/Script.sol";
@@ -204,11 +205,11 @@ contract CreateTokenWithLens is Script {
         }
 
         // Verify factory configuration
-        address factoryImpl = factory.liquidImplementation();
+        address factoryImpl = factory.liquidMultiCurveImplementation();
         address factoryBaseToken = factory.baseToken();
         address factoryPoolManager = factory.poolManager();
 
-        console.log("Factory implementation:");
+        console.log("Factory MultiCurve implementation:");
         console.logAddress(factoryImpl);
         console.log("Factory base token:");
         console.logAddress(factoryBaseToken);
@@ -216,7 +217,7 @@ contract CreateTokenWithLens is Script {
         console.logAddress(factoryPoolManager);
 
         if (factoryImpl == address(0)) {
-            revert("Factory implementation not set");
+            revert("Factory MultiCurve implementation not set");
         }
         if (factoryBaseToken == address(0)) {
             revert("Factory base token not set");
@@ -225,14 +226,24 @@ contract CreateTokenWithLens is Script {
             revert("Factory pool manager not set");
         }
 
+        // Build default single-curve config
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: factory.lpTickLower(),
+            tickUpper: factory.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+
         // Create the token
         console.log("Creating Liquid token...");
-        address newToken = factory.createLiquidToken(
+        address newToken = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             tokenURI,
             tokenName,
             tokenSymbol,
-            initialRareLiquidity
+            initialRareLiquidity,
+            curves
         );
 
         console.log("Token created at:");

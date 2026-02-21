@@ -348,7 +348,7 @@ contract LiquidAuctioneer is
                     amountIn,
                     minRareOut,
                     route.v3Path,
-                    false
+                    true
                 );
             }
             return (commands, inputs);
@@ -374,7 +374,7 @@ contract LiquidAuctioneer is
                     amountIn,
                     minRareOut,
                     route.v2Path,
-                    false
+                    true
                 );
             }
             return (commands, inputs);

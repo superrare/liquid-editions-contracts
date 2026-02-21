@@ -3,13 +3,13 @@ pragma solidity ^0.8.0;
 
 /**
  * @title LiquidGraduated Data Surface Tests
- * @notice After graduating, assert same ILiquid view outputs for LiquidInstant vs LiquidGraduated
+ * @notice After graduating, assert same ILiquid view outputs for LiquidMultiCurve vs LiquidGraduated
  * @dev Uses fork: create one instant and one graduated token, graduate the latter at same price,
  *      then compare getCurrentPrice, getMarketState, quoteBuy, quoteSell for same inputs.
  */
 
 import "forge-std/Test.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidGraduated} from "liquid-editions/LiquidGraduated.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
@@ -83,12 +83,12 @@ contract LiquidGraduatedDatasurfaceTest is Test {
     address migrator = makeAddr("migrator");
 
     LiquidFactory public factory;
-    LiquidInstant public instantImpl;
+    LiquidMultiCurve public instantImpl;
     LiquidGraduated public graduatedImpl;
     MockRARE public rare;
     MockCCAFactoryDS public mockCcaFactory;
 
-    LiquidInstant public instantToken;
+    LiquidMultiCurve public instantToken;
     LiquidGraduated public graduatedToken;
 
     function setUp() public {
@@ -131,9 +131,9 @@ contract LiquidGraduatedDatasurfaceTest is Test {
         );
                 factory.setLiquidRouter(address(1));
         factory.setBaseToken(address(rare));
-        instantImpl = new LiquidInstant();
+        instantImpl = new LiquidMultiCurve();
         graduatedImpl = new LiquidGraduated();
-        factory.setImplementation(address(instantImpl));
+        factory.setLiquidMultiCurveImplementation(address(instantImpl));
         factory.setLiquidGraduatedImplementation(address(graduatedImpl));
         factory.setCcaFactory(address(mockCcaFactory));
         // Set canonical LBP strategy factory (required)
@@ -150,14 +150,14 @@ contract LiquidGraduatedDatasurfaceTest is Test {
     function test_PostGraduation_GetCurrentPrice_NonZero() public {
         vm.startPrank(creator);
         rare.approve(address(factory), 20e18);
-        address instantAddr = factory.createLiquidToken(
+        address instantAddr = factory.createLiquidTokenMultiCurve(
             creator,
             "https://example.com/i",
             "Instant",
             "INST",
             10e18
         );
-        instantToken = LiquidInstant(payable(instantAddr));
+        instantToken = LiquidMultiCurve(payable(instantAddr));
 
         AuctionParameters memory params = AuctionParameters({
             currency: address(rare),

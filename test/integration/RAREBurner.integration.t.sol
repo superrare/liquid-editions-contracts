@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {Test} from "forge-std/Test.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
 import {Currency} from "v4-core/types/Currency.sol";
@@ -36,8 +36,8 @@ contract RAREBurnerIntegrationTest is Test {
 
     // Contracts
     LiquidFactory public factory;
-    LiquidInstant public liquidImpl;
-    LiquidInstant public token;
+    LiquidMultiCurve public liquidImpl;
+    LiquidMultiCurve public token;
     RAREBurner public burner;
     MockRARE public mockRARE;
     MockPoolManager public mockPoolManager;
@@ -117,7 +117,7 @@ contract RAREBurnerIntegrationTest is Test {
         );
 
         // Deploy Liquid implementation
-        liquidImpl = new LiquidInstant();
+        liquidImpl = new LiquidMultiCurve();
 
         // Deploy factory with burner (25% burn fee for integration tests)
         factory = new LiquidFactory(
@@ -135,7 +135,7 @@ contract RAREBurnerIntegrationTest is Test {
                 factory.setLiquidRouter(address(1));
 
         // Set implementation
-        factory.setImplementation(address(liquidImpl));
+        factory.setLiquidMultiCurveImplementation(address(liquidImpl));
         factory.setBaseToken(address(mockRARE));
 
         vm.stopPrank();

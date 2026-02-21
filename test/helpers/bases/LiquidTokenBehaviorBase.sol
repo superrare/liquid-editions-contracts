@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 /**
  * @title LiquidTokenBehaviorBase
- * @notice Abstract base test for shared ILiquid behavior across LiquidInstant, LiquidMultiCurve, LiquidGraduated.
+ * @notice Abstract base test for shared ILiquid behavior across LiquidMultiCurve, LiquidMultiCurve, LiquidGraduated.
  * @dev Concrete subcontracts override _deployFactory(), _deployToken(), _poolLive(), _tokenName(), _tokenSymbol().
  *      Tests that require a live pool are gated by _poolLive().
  */

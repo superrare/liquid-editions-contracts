@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
+import {Curve} from "doppler/libraries/Multicurve.sol";
 import {NetworkConfig} from "./config/NetworkConfig.sol";
 import {console} from "forge-std/console.sol";
 import {Script} from "forge-std/Script.sol";
@@ -66,19 +67,29 @@ contract TestCreateTokenGas is Script {
             console.log("Allowance sufficient, skipping approval");
         }
 
-        // Test createLiquidToken with gas measurement
+        // Test createLiquidTokenMultiCurve with gas measurement
         console.log("");
         console.log("Creating token and measuring gas...");
-        
+
+        // Build default single-curve config
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: factory.lpTickLower(),
+            tickUpper: factory.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+
         vm.startBroadcast(deployerPrivateKey);
-        
+
         uint256 gasStart = gasleft();
-        address newToken = factory.createLiquidToken(
+        address newToken = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             tokenURI,
             tokenName,
             tokenSymbol,
-            initialRareLiquidity
+            initialRareLiquidity,
+            curves
         );
         uint256 gasUsed = gasStart - gasleft();
         

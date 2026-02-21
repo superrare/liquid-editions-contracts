@@ -20,12 +20,13 @@ contract LiquidRarBurnTest is LiquidBondingForkBase {
 
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(tempFactory), 0.1 ether);
-        tempFactory.createLiquidToken(
+        tempFactory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://rare-burn-sell-test",
             "RARE_BURN_SELL",
             "RBS",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve(tempFactory)
         );
     }
 
@@ -39,12 +40,13 @@ contract LiquidRarBurnTest is LiquidBondingForkBase {
 
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(tempFactory), 0.1 ether);
-        address tokenAddr = tempFactory.createLiquidToken(
+        address tokenAddr = tempFactory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://rare-burn-failure-test",
             "RARE_FAILURE",
             "RF",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve(tempFactory)
         );
         vm.stopPrank();
 
@@ -88,7 +90,7 @@ contract LiquidRarBurnTest is LiquidBondingForkBase {
 
             vm.startPrank(tokenCreator);
             IERC20(mockRARE).approve(address(tempFactory), 0.1 ether);
-            tempFactory.createLiquidToken(
+            tempFactory.createLiquidTokenMultiCurve(
                 tokenCreator,
                 string(abi.encodePacked("ipfs://test-", vm.toString(i))),
                 string(abi.encodePacked("TEST_", vm.toString(i))),

@@ -3,8 +3,9 @@ pragma solidity ^0.8.0;
 
 import {Test} from "forge-std/Test.sol";
 import "forge-std/console.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
+import {Curve} from "doppler/libraries/Multicurve.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
@@ -123,13 +124,25 @@ abstract contract LiquidBondingForkBase is Test {
         );
         tempFactory.setLiquidRouter(address(1));
 
-        LiquidInstant liquidImplementation = new LiquidInstant();
-        tempFactory.setImplementation(address(liquidImplementation));
+        LiquidMultiCurve multiCurveImpl = new LiquidMultiCurve();
+        tempFactory.setLiquidMultiCurveImplementation(address(multiCurveImpl));
         tempFactory.setBaseToken(address(mockRARE));
 
         vm.stopPrank();
 
         return tempFactory;
+    }
+
+    /// @notice Returns a default single-curve config for the given factory
+    function _defaultSingleCurve(LiquidFactory f) internal view returns (Curve[] memory) {
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: f.lpTickLower(),
+            tickUpper: f.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+        return curves;
     }
 
     function _formatTokens(uint256 amount) internal pure returns (string memory) {

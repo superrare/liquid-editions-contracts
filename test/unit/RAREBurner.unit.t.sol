@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
-import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
 import {IRAREBurner} from "liquid-editions/interfaces/IRAREBurner.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
@@ -31,7 +31,7 @@ contract RAREBurnerUnitTest is Test {
 
     // Contract interfaces
     RAREBurner public burner;
-    LiquidInstant public liquidImplementation;
+    LiquidMultiCurve public liquidImplementation;
 
     function setUp() public {
         // Fund test accounts
@@ -42,7 +42,7 @@ contract RAREBurnerUnitTest is Test {
 
         // Deploy contracts
         vm.startPrank(admin);
-        liquidImplementation = new LiquidInstant();
+        liquidImplementation = new LiquidMultiCurve();
         vm.stopPrank();
     }
 

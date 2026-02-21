@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
 import "liquid-editions/LiquidFactory.sol";
-import "liquid-editions/LiquidInstant.sol";
+import "liquid-editions/LiquidMultiCurve.sol";
 import "liquid-editions/RAREBurner.sol";
 import "liquid-editions/interfaces/ILiquidFactory.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -38,8 +38,8 @@ contract EventEnhancementsMainnetTest is Test {
 
     // Contracts
     LiquidFactory public factory;
-    LiquidInstant public liquidImpl;
-    LiquidInstant public token;
+    LiquidMultiCurve public liquidImpl;
+    LiquidMultiCurve public token;
     RAREBurner public burner;
     MockERC20 public mockRARE;
     MockPoolManager public mockPoolManager;
@@ -124,8 +124,8 @@ contract EventEnhancementsMainnetTest is Test {
             true // enabled
         );
 
-        // Deploy LiquidInstant implementation
-        liquidImpl = new LiquidInstant();
+        // Deploy LiquidMultiCurve implementation
+        liquidImpl = new LiquidMultiCurve();
 
         // Deploy factory (fee config moved to LiquidRouter)
         factory = new LiquidFactory(
@@ -143,7 +143,7 @@ contract EventEnhancementsMainnetTest is Test {
         factory.setLiquidRouter(address(1));
 
         // Set implementation
-        factory.setImplementation(address(liquidImpl));
+        factory.setLiquidMultiCurveImplementation(address(liquidImpl));
 
         // Set base token (RARE) in factory
         factory.setBaseToken(address(mockRARE));
@@ -213,7 +213,7 @@ contract EventEnhancementsMainnetTest is Test {
         uint256 initialRareLiquidity = 0.1 ether;
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), initialRareLiquidity);
-        address tokenAddr = factory.createLiquidToken(
+        address tokenAddr = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test3",
             "Test Token 3",
@@ -222,7 +222,7 @@ contract EventEnhancementsMainnetTest is Test {
         );
         vm.stopPrank();
 
-        LiquidInstant createdToken = LiquidInstant(payable(tokenAddr));
+        LiquidMultiCurve createdToken = LiquidMultiCurve(payable(tokenAddr));
         (uint256 quoteOut, ) = createdToken.quoteBuy(0.5 ether);
         assertGt(quoteOut, 0, "Quote should work after config change");
     }
