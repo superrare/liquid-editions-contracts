@@ -229,8 +229,13 @@ contract LiquidGraduated is
     }
 
     /// @notice Admin fallback to set poolId (only factory, for edge cases)
+    error InvalidPoolId();
+
     function setPoolId(PoolId _newPoolId) external {
         if (msg.sender != factory) revert NotMigrator();
+        if (PoolId.unwrap(_newPoolId) == bytes32(0)) {
+            revert InvalidPoolId();
+        }
         emit PoolIdUpdated(poolId, _newPoolId);
         poolId = _newPoolId;
     }

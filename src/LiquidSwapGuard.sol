@@ -43,6 +43,9 @@ contract LiquidSwapGuard is IHooks, Ownable {
     /// @notice Thrown when caller is not owner or factory
     error NotOwnerOrFactory();
 
+    /// @notice Thrown when an invalid factory address is passed
+    error InvalidFactoryAddress();
+
     // forge-lint: disable-next-line(screaming-snake-case-immutable) -- matches v4 BaseHook/ImmutableState convention
     IPoolManager public immutable poolManager;
     mapping(address => bool) public verifiedRouters;
@@ -268,6 +271,7 @@ contract LiquidSwapGuard is IHooks, Ownable {
     /// @dev Can be called by owner, or by the factory itself during initial setup (if factory is address(0))
     /// @param _factory The LiquidFactory contract address
     function setFactory(address _factory) external {
+        if (_factory == address(0)) revert InvalidFactoryAddress();
         // Owner can always set factory
         if (msg.sender == owner()) {
             factory = _factory;

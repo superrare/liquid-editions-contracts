@@ -151,6 +151,7 @@ contract LiquidAuctioneer is
 
         uint256 fee = 0;
         uint256 swapAmountIn;
+        uint256 tokenBalanceBefore;
         uint256 ethBalanceBefore = address(this).balance;
 
         if (tokenIn == address(0)) {
@@ -160,14 +161,60 @@ contract LiquidAuctioneer is
             swapAmountIn = msg.value - fee;
             // Exclude msg.value to get pre-call baseline.
             ethBalanceBefore = address(this).balance - msg.value;
+        } else if (tokenIn == BASE_TOKEN) {
+            // Optimized path: BASE token bids can use user-provided RARE directly.
+            if (msg.value != 0) revert ILiquidRouter.InvalidAmount();
+            if (amountIn == 0) revert ILiquidRouter.InvalidAmount();
+            uint256 tokenBalanceBeforeRare = IERC20(tokenIn).balanceOf(address(this));
+            IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+            uint256 tokenBalanceAfterRare = IERC20(tokenIn).balanceOf(address(this));
+            if (tokenBalanceAfterRare < tokenBalanceBeforeRare) {
+                revert ILiquidAuctioneer.UnexpectedTokenBalance();
+            }
+            uint256 rareAmountInput = tokenBalanceAfterRare - tokenBalanceBeforeRare;
+            // Route and swap are bypassed for BASE token bids.
+            if (rareAmountInput < minRareOut) revert SlippageExceeded();
+
+            // Get auction address and set up Permit2 for CCA to pull RARE
+            address auctionRareIn = ILiquidGraduated(liquidToken).auctionAddress();
+            IERC20(BASE_TOKEN).forceApprove(PERMIT2, rareAmountInput);
+            IPermit2(PERMIT2).approve(
+                BASE_TOKEN,
+                auctionRareIn,
+                uint160(rareAmountInput),
+                uint48(block.timestamp + 1 hours)
+            );
+            bidId = _submitBid(
+                auctionRareIn,
+                maxPrice,
+                rareAmountInput,
+                bidOwner,
+                prevTickPrice
+            );
+
+            // Clear Permit2 approvals
+            IERC20(BASE_TOKEN).forceApprove(PERMIT2, 0);
+            IPermit2(PERMIT2).approve(BASE_TOKEN, auctionRareIn, 0, 0);
+
+            // Distribute fees for native ETH bids only (fee value is in ETH).
+            if (fee > 0) {
+                address beneficiary = tokenBeneficiaries[liquidToken];
+                LiquidFeeLib.disperseFees(
+                    fee,
+                    orderReferrer,
+                    beneficiary,
+                    beneficiary,
+                    PROTOCOL_FEE_RECIPIENT,
+                    RARE_BURNER,
+                    RARE_BURN_FEE_BPS,
+                    PROTOCOL_FEE_BPS,
+                    REFERRER_FEE_BPS
+                );
+            }
+            return bidId;
         } else {
             if (msg.value != 0) revert ILiquidRouter.InvalidAmount();
             if (amountIn == 0) revert ILiquidRouter.InvalidAmount();
-            IERC20(tokenIn).safeTransferFrom(
-                msg.sender,
-                address(this),
-                amountIn
-            );
             swapAmountIn = amountIn;
         }
         (bytes memory commands, bytes[] memory inputs) = _buildTokenToRareRoute(
@@ -175,10 +222,25 @@ contract LiquidAuctioneer is
             swapAmountIn,
             minRareOut
         );
+        bool contractFunds = _isContractFundsSwap(tokenIn);
+
+        if (contractFunds) {
+            tokenBalanceBefore = IERC20(tokenIn).balanceOf(address(this));
+            IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+            uint256 tokenBalanceAfter = IERC20(tokenIn).balanceOf(address(this));
+            if (tokenBalanceAfter < tokenBalanceBefore) {
+                revert ILiquidAuctioneer.UnexpectedTokenBalance();
+            }
+            swapAmountIn = tokenBalanceAfter - tokenBalanceBefore;
+            if (swapAmountIn != amountIn) {
+                revert ILiquidAuctioneer.UnexpectedTokenBalance();
+            }
+            tokenBalanceBefore = tokenBalanceAfter;
+        }
 
         // Swap tokenIn -> RARE via Universal Router (use balance delta to avoid counting pre-existing RARE)
         uint256 rareBalanceBefore = IERC20(BASE_TOKEN).balanceOf(address(this));
-        if (tokenIn != address(0)) {
+        if (contractFunds) {
             IERC20(tokenIn).forceApprove(PERMIT2, swapAmountIn);
             IPermit2(PERMIT2).approve(
                 tokenIn,
@@ -199,7 +261,13 @@ contract LiquidAuctioneer is
             deadline,
             false
         );
-        if (tokenIn != address(0)) {
+        if (contractFunds) {
+            if (
+                IERC20(tokenIn).balanceOf(address(this)) !=
+                tokenBalanceBefore - swapAmountIn
+            ) {
+                revert ILiquidAuctioneer.UnexpectedTokenBalance();
+            }
             IERC20(tokenIn).forceApprove(PERMIT2, 0);
             IPermit2(PERMIT2).approve(tokenIn, UNIVERSAL_ROUTER, 0, 0);
         }
@@ -500,6 +568,15 @@ contract LiquidAuctioneer is
         );
         if (!ok) _revertBytes(data);
         return abi.decode(data, (uint256));
+    }
+
+    function _isContractFundsSwap(
+        address tokenIn
+    ) internal view returns (bool) {
+        if (tokenIn == address(0)) return false;
+
+        TokenRoute storage route = tokenToRareRoutes[tokenIn];
+        return route.kind == RouteKind.V4_SINGLE;
     }
 
     /// @notice Returns (maxValidPrice, floorPrice) for "accept any price" bids

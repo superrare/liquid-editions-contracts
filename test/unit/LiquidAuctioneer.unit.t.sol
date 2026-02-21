@@ -1091,6 +1091,14 @@ contract RareConsumingRouter {
 
 contract MockRouter {
     address public rareToken;
+    address constant PERMIT2_ADDR = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
+    struct V4PathKey {
+        address intermediateCurrency;
+        uint24 fee;
+        int24 tickSpacing;
+        address hooks;
+        bytes hookData;
+    }
 
     constructor(address _rare) {
         rareToken = _rare;
@@ -1099,6 +1107,49 @@ contract MockRouter {
     receive() external payable {}
 
     fallback() external payable {
+        bytes memory commands = "";
+        bytes[] memory inputs;
+        if (msg.data.length >= 4) {
+            (commands, inputs, ) = abi.decode(
+                msg.data[4:],
+                (bytes, bytes[], uint256)
+            );
+        }
+        for (uint256 i = 0; i < inputs.length; i++) {
+                if (commands.length > i && commands[i] == 0x10) {
+                    (bytes memory _v4Actions, bytes[] memory params) = abi.decode(
+                        inputs[i],
+                        (bytes, bytes[])
+                    );
+                    _v4Actions;
+                    if (params.length > 0) {
+                    (
+                        address currencyIn,
+                        V4PathKey[] memory _path,
+                        uint128 amountIn,
+                        uint128 minRareOut
+                    ) = abi.decode(
+                        params[0],
+                        (address, V4PathKey[], uint128, uint128)
+                    );
+                    _path;
+                    minRareOut;
+                    if (currencyIn != address(0) && amountIn > 0) {
+                        uint160 consumeAmount = amountIn >
+                            type(uint160).max
+                            ? type(uint160).max
+                            : uint160(amountIn);
+                        FunctionalMockPermit2(PERMIT2_ADDR).transferFrom(
+                            msg.sender,
+                            address(this),
+                            consumeAmount,
+                            currencyIn
+                        );
+                    }
+                }
+            }
+        }
+
         uint256 bal = IERC20(rareToken).balanceOf(address(this));
         if (bal > 0) {
             IERC20(rareToken).transfer(msg.sender, bal);
