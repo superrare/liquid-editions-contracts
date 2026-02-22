@@ -65,7 +65,9 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
             bytes32(0)
         );
         guard = LiquidSwapGuard(guardAddr);
+
         guard.addRouter(config.uniswapUniversalRouter);
+        guard.setFactory(address(factory));
         factory.setPoolHooks(address(guard));
     }
 

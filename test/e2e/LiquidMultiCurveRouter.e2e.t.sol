@@ -180,6 +180,7 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
         );
         guard = LiquidSwapGuard(guardAddr);
         guard.addRouter(config.uniswapUniversalRouter);
+        guard.setFactory(address(factory));
         factory.setPoolHooks(address(guard));
     }
 

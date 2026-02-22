@@ -11,6 +11,7 @@ import "forge-std/Test.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {ILiquidFactory} from "liquid-editions/interfaces/ILiquidFactory.sol";
+import {ILiquidSwapGuard} from "liquid-editions/interfaces/ILiquidSwapGuard.sol";
 import {MockV4PoolManager} from "liquid-editions-test/helpers/MockV4PoolManager.sol";
 import {MockV4Quoter} from "liquid-editions-test/helpers/MockV4Quoter.sol";
 import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
@@ -172,5 +173,74 @@ contract LiquidFactoryUnitTest is Test {
         vm.prank(admin);
         factory.setWeth(newWeth);
         assertEq(factory.weth(), newWeth);
+    }
+
+    function test_SetPoolHooks_WithGuardBoundToDifferentFactory_Reverts() public {
+        address maliciousFactory = makeAddr("maliciousFactory");
+        MockSwapGuardForFactory mockGuard = new MockSwapGuardForFactory(
+            admin,
+            maliciousFactory
+        );
+
+        vm.prank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LiquidFactory.SwapGuardFactoryMismatch.selector,
+                address(mockGuard),
+                maliciousFactory,
+                address(factory)
+            )
+        );
+        factory.setPoolHooks(address(mockGuard));
+    }
+
+    function test_SetPoolHooks_SwallowsFailedGuardFactoryBinding_NoLongerAllowed() public {
+        // This reproduces the prior silent-failure path: old code tried setFactory() and swallowed reverts.
+        // With owner-only setFactory, a guard owned by another actor will not be bindable, and should be rejected.
+        address attacker = makeAddr("attacker");
+        MockSwapGuardForFactory mockGuard = new MockSwapGuardForFactory(
+            attacker,
+            address(0)
+        );
+
+        vm.prank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LiquidFactory.SwapGuardFactoryMismatch.selector,
+                address(mockGuard),
+                address(0),
+                address(factory)
+            )
+        );
+        factory.setPoolHooks(address(mockGuard));
+    }
+}
+
+contract MockSwapGuardForFactory is ILiquidSwapGuard {
+    address public override factory;
+    address public owner;
+
+    constructor(address _owner, address _initialFactory) {
+        owner = _owner;
+        factory = _initialFactory;
+    }
+
+    function setFactory(address _factory) external override {
+        if (msg.sender != owner) revert("NOT_OWNER");
+        factory = _factory;
+    }
+
+    function addInitializer(address) external pure override {
+        revert("UNUSED");
+    }
+
+    function removeInitializer(address) external pure override {
+        revert("UNUSED");
+    }
+
+    function allowedInitializers(
+        address
+    ) external pure override returns (bool) {
+        return false;
     }
 }

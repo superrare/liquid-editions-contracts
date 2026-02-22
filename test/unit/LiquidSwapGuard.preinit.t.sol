@@ -114,6 +114,40 @@ contract LiquidSwapGuardPreInitTest is Test {
         assertTrue(guard.allowedInitializers(tokenContract));
     }
 
+    /// @notice Test that only owner can set factory and factory can be updated
+    function test_SetFactory_OwnerOnlyAndUpdatable() public {
+        address factoryAddr = address(0xBBBB);
+        address anotherFactory = address(0xCCCC);
+        address tokenFromFirstFactory = address(0xDDDD);
+        address tokenFromSecondFactory = address(0xEEEE);
+
+        vm.prank(attacker);
+        vm.expectRevert();
+        guard.setFactory(factoryAddr);
+
+        vm.prank(admin);
+        guard.setFactory(factoryAddr);
+        assertEq(guard.factory(), factoryAddr);
+
+        vm.prank(factoryAddr);
+        guard.addInitializer(tokenFromFirstFactory);
+        assertTrue(guard.allowedInitializers(tokenFromFirstFactory));
+
+        vm.prank(admin);
+        guard.setFactory(anotherFactory);
+        assertEq(guard.factory(), anotherFactory);
+
+        vm.prank(factoryAddr);
+        vm.expectRevert(LiquidSwapGuard.NotOwnerOrFactory.selector);
+        guard.addInitializer(tokenFromSecondFactory);
+
+        vm.prank(admin);
+        guard.setFactory(factoryAddr);
+        vm.prank(factoryAddr);
+        guard.addInitializer(tokenFromSecondFactory);
+        assertTrue(guard.allowedInitializers(tokenFromSecondFactory));
+    }
+
     /// @notice Test that non-factory addresses cannot add initializers
     function test_NonFactoryCannotAddInitializer() public {
         address factoryAddr = address(0xBBBB);

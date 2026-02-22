@@ -51,6 +51,22 @@ interface ILiquidAuctioneer {
     /// @notice Emitted when preset token->RARE route configuration changes
     event TokenRouteUpdated(address indexed tokenIn, RouteKind indexed kind);
 
+    /// @notice Emitted when the Universal Router is updated
+    /// @param oldUniversalRouter Previous Universal Router
+    /// @param newUniversalRouter New Universal Router
+    event UniversalRouterUpdated(
+        address indexed oldUniversalRouter,
+        address indexed newUniversalRouter
+    );
+
+    /// @notice Emitted when the protocol fee recipient is updated
+    /// @param oldProtocolFeeRecipient Previous protocol fee recipient
+    /// @param newProtocolFeeRecipient New protocol fee recipient
+    event ProtocolFeeRecipientUpdated(
+        address indexed oldProtocolFeeRecipient,
+        address indexed newProtocolFeeRecipient
+    );
+
     // ============================================
     // FUNCTIONS
     // ============================================
@@ -94,6 +110,14 @@ interface ILiquidAuctioneer {
 
     /// @notice Clear preset token->RARE route configuration (owner only)
     function removeTokenRoute(address tokenIn) external;
+
+    /// @notice Set the Uniswap Universal Router address used for swaps
+    /// @param _universalRouter New Universal Router address
+    function setUniversalRouter(address _universalRouter) external;
+
+    /// @notice Update protocol fee recipient address
+    /// @param _protocolFeeRecipient New protocol fee recipient
+    function setProtocolFeeRecipient(address _protocolFeeRecipient) external;
 
     /// @notice Exit a fully filled bid and swap refund to ETH
     /// @param liquidToken The Liquid token address

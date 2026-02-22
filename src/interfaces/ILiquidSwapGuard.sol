@@ -5,6 +5,9 @@ pragma solidity ^0.8.0;
 /// @notice Interface for LiquidSwapGuard hook contract
 /// @dev Used by LiquidFactory to whitelist token contracts before pool initialization
 interface ILiquidSwapGuard {
+    /// @notice Returns the currently configured factory
+    function factory() external view returns (address);
+
     /// @notice Sets the factory address that can add initializers
     /// @param _factory The LiquidFactory contract address
     function setFactory(address _factory) external;

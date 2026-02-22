@@ -27,8 +27,8 @@ contract LiquidAuctioneer is
     address private constant PERMIT2 =
         0x000000000022D473030F116dDEE9F6B43aC78BA3;
 
-    address public immutable UNIVERSAL_ROUTER;
-    address public immutable PROTOCOL_FEE_RECIPIENT;
+    address public UNIVERSAL_ROUTER;
+    address public PROTOCOL_FEE_RECIPIENT;
     address public immutable RARE_BURNER;
     /// @dev RARE token address (base token for pools)
     address public immutable BASE_TOKEN;
@@ -377,6 +377,26 @@ contract LiquidAuctioneer is
     function removeTokenRoute(address tokenIn) external onlyOwner {
         delete tokenToRareRoutes[tokenIn];
         emit TokenRouteUpdated(tokenIn, RouteKind.NONE);
+    }
+
+    function setUniversalRouter(address _universalRouter) external onlyOwner {
+        if (_universalRouter == address(0)) revert ILiquidRouter.AddressZero();
+        address oldRouter = UNIVERSAL_ROUTER;
+        UNIVERSAL_ROUTER = _universalRouter;
+        emit UniversalRouterUpdated(oldRouter, _universalRouter);
+    }
+
+    function setProtocolFeeRecipient(
+        address _protocolFeeRecipient
+    ) external onlyOwner {
+        if (_protocolFeeRecipient == address(0))
+            revert ILiquidRouter.AddressZero();
+        address oldRecipient = PROTOCOL_FEE_RECIPIENT;
+        PROTOCOL_FEE_RECIPIENT = _protocolFeeRecipient;
+        emit ProtocolFeeRecipientUpdated(
+            oldRecipient,
+            _protocolFeeRecipient
+        );
     }
 
     function getTokenToRareV2Path(

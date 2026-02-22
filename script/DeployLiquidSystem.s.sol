@@ -297,6 +297,21 @@ contract DeployLiquidSystem is Script {
         // ============================================
         // Step 6: Configure LiquidSwapGuard (addRouter, addCaller) and factory
         // ============================================
+        if (
+            deployConfig.factory.useSwapGuard &&
+            result.guard != address(0) &&
+            result.factory != address(0)
+        ) {
+            LiquidSwapGuard guardContract = LiquidSwapGuard(result.guard);
+            address configuredFactory = guardContract.factory();
+            if (configuredFactory == address(0)) {
+                console.log("  Setting guard factory...");
+                guardContract.setFactory(result.factory);
+            } else if (configuredFactory != result.factory) {
+                revert("DeployLiquidSystem: SwapGuard already bound to another factory");
+            }
+        }
+
         if (deploySwapGuard && result.guard != address(0)) {
             console.log("=== Step 6: Configuring LiquidSwapGuard ===");
             LiquidSwapGuard guardContract = LiquidSwapGuard(result.guard);

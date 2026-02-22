@@ -268,23 +268,11 @@ contract LiquidSwapGuard is IHooks, Ownable {
     }
 
     /// @notice Sets the factory address that can add initializers
-    /// @dev Can be called by owner, or by the factory itself during initial setup (if factory is address(0))
+    /// @dev Can be updated by owner at any time.
     /// @param _factory The LiquidFactory contract address
-    function setFactory(address _factory) external {
+    function setFactory(address _factory) external onlyOwner {
         if (_factory == address(0)) revert InvalidFactoryAddress();
-        // Owner can always set factory
-        if (msg.sender == owner()) {
-            factory = _factory;
-            return;
-        }
-        
-        // Factory can set itself if not already set (one-time initial setup)
-        if (factory == address(0) && msg.sender == _factory) {
-            factory = _factory;
-            return;
-        }
-        
-        revert NotOwnerOrFactory();
+        factory = _factory;
     }
 
     /// @notice Adds an initializer address to the allowed initializers list

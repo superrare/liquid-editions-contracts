@@ -202,6 +202,101 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
         );
     }
 
+    function testOnlyOwnerCanSetUniversalRouter() public {
+        MockUniversalRouterForRouter newRouter = new MockUniversalRouterForRouter(
+            address(token)
+        );
+
+        vm.expectRevert();
+        vm.prank(user1);
+        liquidRouter.setUniversalRouter(address(newRouter));
+    }
+
+    function testOnlyOwnerCanSetProtocolFeeRecipient() public {
+        address newProtocolFeeRecipient = makeAddr(
+            "newProtocolFeeRecipient"
+        );
+
+        vm.expectRevert();
+        vm.prank(user1);
+        liquidRouter.setProtocolFeeRecipient(newProtocolFeeRecipient);
+    }
+
+    function testSetUniversalRouterUpdatesAndEmitsEvent() public {
+        MockUniversalRouterForRouter newRouter = new MockUniversalRouterForRouter(
+            address(token)
+        );
+
+        vm.expectEmit(true, true, false, true);
+        emit ILiquidRouter.UniversalRouterUpdated(
+            address(router),
+            address(newRouter)
+        );
+
+        vm.prank(admin);
+        liquidRouter.setUniversalRouter(address(newRouter));
+        assertEq(liquidRouter.universalRouter(), address(newRouter));
+    }
+
+    function testSetProtocolFeeRecipientUpdatesAndEmitsEvent() public {
+        address newProtocolFeeRecipient = makeAddr(
+            "newProtocolFeeRecipient"
+        );
+
+        vm.expectEmit(true, true, false, true);
+        emit ILiquidRouter.ProtocolFeeRecipientUpdated(
+            protocolFeeRecipient,
+            newProtocolFeeRecipient
+        );
+
+        vm.prank(admin);
+        liquidRouter.setProtocolFeeRecipient(newProtocolFeeRecipient);
+        assertEq(
+            liquidRouter.protocolFeeRecipient(),
+            newProtocolFeeRecipient
+        );
+    }
+
+    function testSetUniversalRouterRevertsOnZeroAddress() public {
+        vm.expectRevert(ILiquidRouter.AddressZero.selector);
+        vm.prank(admin);
+        liquidRouter.setUniversalRouter(address(0));
+    }
+
+    function testSetProtocolFeeRecipientRevertsOnZeroAddress() public {
+        vm.expectRevert(ILiquidRouter.AddressZero.selector);
+        vm.prank(admin);
+        liquidRouter.setProtocolFeeRecipient(address(0));
+    }
+
+    function testOnlyOwnerCanSetRareBurner() public {
+        address newRareBurner = makeAddr("newRareBurner");
+
+        vm.expectRevert();
+        vm.prank(user1);
+        liquidRouter.setRareBurner(newRareBurner);
+    }
+
+    function testSetRareBurnerUpdatesAndEmitsEvent() public {
+        address newRareBurner = makeAddr("newRareBurner");
+
+        vm.expectEmit(true, true, false, true);
+        emit ILiquidRouter.RareBurnerUpdated(
+            address(burner),
+            newRareBurner
+        );
+
+        vm.prank(admin);
+        liquidRouter.setRareBurner(newRareBurner);
+        assertEq(liquidRouter.rareBurner(), newRareBurner);
+    }
+
+    function testSetRareBurnerRevertsOnZeroAddress() public {
+        vm.expectRevert(ILiquidRouter.AddressZero.selector);
+        vm.prank(admin);
+        liquidRouter.setRareBurner(address(0));
+    }
+
     // ============================================
     // PAUSE TESTS
     // ============================================

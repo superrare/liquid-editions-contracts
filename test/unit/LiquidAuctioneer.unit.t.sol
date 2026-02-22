@@ -244,6 +244,51 @@ contract LiquidAuctioneerUnitTest is Test {
         auctioneer.rescueETH(user, 1 ether);
     }
 
+    function test_SetUniversalRouter_RevertsForNonOwner() public {
+        vm.expectRevert();
+        vm.prank(user);
+        auctioneer.setUniversalRouter(makeAddr("notOwnerRouter"));
+    }
+
+    function test_SetProtocolFeeRecipient_RevertsForNonOwner() public {
+        vm.expectRevert();
+        vm.prank(user);
+        auctioneer.setProtocolFeeRecipient(makeAddr("notOwnerRecipient"));
+    }
+
+    function testOnlyOwnerCanSetUniversalRouter() public {
+        address newRouter = address(new MockRouter(address(rare)));
+
+        vm.prank(owner);
+        auctioneer.setUniversalRouter(newRouter);
+
+        assertEq(auctioneer.UNIVERSAL_ROUTER(), newRouter);
+    }
+
+    function testOnlyOwnerCanSetProtocolFeeRecipient() public {
+        address newProtocolFeeRecipient = makeAddr("newProtocolFeeRecipient");
+
+        vm.prank(owner);
+        auctioneer.setProtocolFeeRecipient(newProtocolFeeRecipient);
+
+        assertEq(
+            auctioneer.PROTOCOL_FEE_RECIPIENT(),
+            newProtocolFeeRecipient
+        );
+    }
+
+    function testOnlyOwnerCanSetUniversalRouterRevertsOnZero() public {
+        vm.expectRevert(ILiquidRouter.AddressZero.selector);
+        vm.prank(owner);
+        auctioneer.setUniversalRouter(address(0));
+    }
+
+    function testOnlyOwnerCanSetProtocolFeeRecipientRevertsOnZero() public {
+        vm.expectRevert(ILiquidRouter.AddressZero.selector);
+        vm.prank(owner);
+        auctioneer.setProtocolFeeRecipient(address(0));
+    }
+
     function test_RescueTokens_Success() public {
         uint256 rescueAmount = 100e18;
         rare.mint(address(auctioneer), rescueAmount);

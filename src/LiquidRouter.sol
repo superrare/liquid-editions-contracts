@@ -16,14 +16,14 @@ import {LiquidFeeLib} from "liquid-editions/LiquidFeeLib.sol";
 /// @author SuperRare Labs
 /// @notice A router contract that enables Liquid-style trading (buy/sell with fees) for any existing ERC20 token
 /// @dev Routes swaps through Uniswap's Universal Router while collecting and distributing fees.
-///      Fee configuration is immutable and set at deployment.
+///      Fee split configuration is immutable and set at deployment.
 ///
 /// ## Architecture Overview
 /// LiquidRouter enables fee collection and distribution for any ERC20 token:
 /// - Routes swaps through Uniswap's Universal Router (supports V2/V3/V4 and multi-hop routes)
 /// - Collects trading fees (4% TOTAL_FEE_BPS) and distributes them to beneficiary/protocol/referrer/RARE burn
 /// - Minimal on-chain state: token-to-beneficiary mapping, optional allowlist
-/// - Fee configuration is immutable (set in constructor)
+/// - Fee split configuration is immutable (set in constructor)
 /// - Uses Permit2 for secure token approvals during sell operations
 /// - Supports buy (ETH → token), sell (token → ETH), and swap (any → any via ETH midpoint)
 ///
@@ -68,15 +68,15 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         0x000000000022D473030F116dDEE9F6B43aC78BA3;
 
     // ============================================
-    // IMMUTABLES (set in constructor)
+    // CONFIG (owner-editable + immutable values)
     // ============================================
 
     /// @notice Uniswap Universal Router address
-    /// @dev This is the swap execution engine. Immutable after deployment.
+    /// @dev This is the swap execution engine. Can be updated by owner.
     ///      Universal Router supports multiple DEX protocols and complex multi-hop routes.
     ///      Different networks have different router addresses.
     // forge-lint: disable-next-line(screaming-snake-case-immutable) -- camelCase used for public API consistency
-    address public immutable universalRouter;
+    address public universalRouter;
 
     /// @notice TIER 3 fee splits (must sum to 10000 BPS)
     /// @dev These fees are applied to the remainder after beneficiary takes their cut
@@ -89,14 +89,14 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     uint256 public immutable referrerFeeBPS;
 
     /// @notice Protocol fee recipient address
-    /// @dev Receives protocol fees from trades. Immutable after deployment.
+    /// @dev Receives protocol fees from trades. Can be updated by owner.
     // forge-lint: disable-next-line(screaming-snake-case-immutable) -- camelCase used for public API consistency
-    address public immutable protocolFeeRecipient;
+    address public protocolFeeRecipient;
 
     /// @notice RARE burner contract address
-    /// @dev Receives burn fees from trades. Immutable after deployment.
+    /// @dev Receives burn fees from trades. Can be updated by owner.
     // forge-lint: disable-next-line(screaming-snake-case-immutable) -- camelCase used for public API consistency
-    address public immutable rareBurner;
+    address public rareBurner;
 
     // ============================================
     // STORAGE (mutable)
@@ -168,7 +168,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
             revert InvalidFeeDistribution();
         }
 
-        // Set immutables
+        // Set configuration
         universalRouter = _universalRouter;
         protocolFeeRecipient = _protocolFeeRecipient;
         rareBurner = _rareBurner;
@@ -754,6 +754,42 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         address oldTrustedFactory = trustedFactory;
         trustedFactory = _trustedFactory;
         emit TrustedFactoryUpdated(oldTrustedFactory, _trustedFactory);
+    }
+
+    /// @notice Update Universal Router address
+    /// @param _universalRouter New Universal Router address
+    /// @dev Can only be called by owner. Used to migrate to a different router
+    ///      if the upstream address changes.
+    function setUniversalRouter(address _universalRouter) external onlyOwner {
+        if (_universalRouter == address(0)) revert AddressZero();
+        address oldUniversalRouter = universalRouter;
+        universalRouter = _universalRouter;
+        emit UniversalRouterUpdated(oldUniversalRouter, _universalRouter);
+    }
+
+    /// @notice Update protocol fee recipient address
+    /// @param _protocolFeeRecipient New protocol fee recipient address
+    /// @dev Can only be called by owner.
+    function setProtocolFeeRecipient(
+        address _protocolFeeRecipient
+    ) external onlyOwner {
+        if (_protocolFeeRecipient == address(0)) revert AddressZero();
+        address oldProtocolFeeRecipient = protocolFeeRecipient;
+        protocolFeeRecipient = _protocolFeeRecipient;
+        emit ProtocolFeeRecipientUpdated(
+            oldProtocolFeeRecipient,
+            _protocolFeeRecipient
+        );
+    }
+
+    /// @notice Update RARE burner address
+    /// @param _rareBurner New RARE burner contract address
+    /// @dev Can only be called by owner. Used to migrate burn target.
+    function setRareBurner(address _rareBurner) external onlyOwner {
+        if (_rareBurner == address(0)) revert AddressZero();
+        address oldRareBurner = rareBurner;
+        rareBurner = _rareBurner;
+        emit RareBurnerUpdated(oldRareBurner, _rareBurner);
     }
 
     function _assertFactoryBeneficiary(

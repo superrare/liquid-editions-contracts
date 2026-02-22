@@ -185,6 +185,30 @@ interface ILiquidRouter {
         address indexed newFactory
     );
 
+    /// @notice Emitted when the Universal Router address is updated
+    /// @param oldUniversalRouter Previous Universal Router address
+    /// @param newUniversalRouter New Universal Router address
+    event UniversalRouterUpdated(
+        address indexed oldUniversalRouter,
+        address indexed newUniversalRouter
+    );
+
+    /// @notice Emitted when the protocol fee recipient is updated
+    /// @param oldProtocolFeeRecipient Previous protocol fee recipient
+    /// @param newProtocolFeeRecipient New protocol fee recipient
+    event ProtocolFeeRecipientUpdated(
+        address indexed oldProtocolFeeRecipient,
+        address indexed newProtocolFeeRecipient
+    );
+
+    /// @notice Emitted when the RARE burner address is updated
+    /// @param oldRareBurner Previous RARE burner address
+    /// @param newRareBurner New RARE burner address
+    event RareBurnerUpdated(
+        address indexed oldRareBurner,
+        address indexed newRareBurner
+    );
+
     /// @notice Emitted when the allowlist is enabled/disabled
     /// @param enabled Whether the allowlist is enabled
     event AllowlistEnabledUpdated(bool enabled);
@@ -348,6 +372,18 @@ interface ILiquidRouter {
     /// @notice Configure the trusted factory address for auto-registrations
     /// @param trustedFactory The factory address allowed to register with `beneficiary == tokenCreator`
     function setTrustedFactory(address trustedFactory) external;
+
+    /// @notice Update Universal Router address
+    /// @param _universalRouter New Universal Router address
+    function setUniversalRouter(address _universalRouter) external;
+
+    /// @notice Update protocol fee recipient address
+    /// @param _protocolFeeRecipient New protocol fee recipient address
+    function setProtocolFeeRecipient(address _protocolFeeRecipient) external;
+
+    /// @notice Update RARE burner address
+    /// @param _rareBurner New RARE burner address
+    function setRareBurner(address _rareBurner) external;
 
     /// @notice Get the trusted factory used for auto-registrations
     /// @return trustedFactory The trusted factory address

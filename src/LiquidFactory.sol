@@ -25,6 +25,16 @@ import {ILiquidSwapGuard} from "liquid-editions/interfaces/ILiquidSwapGuard.sol"
 contract LiquidFactory is AccessControl, ILiquidFactory {
     using SafeERC20 for IERC20;
 
+    /// @notice Thrown when pool hooks are configured with a LiquidSwapGuard bound to another factory
+    /// @param poolHooks The hook contract address
+    /// @param configuredFactory The factory already configured on the hook
+    /// @param expectedFactory The factory expected by the liquid factory
+    error SwapGuardFactoryMismatch(
+        address poolHooks,
+        address configuredFactory,
+        address expectedFactory
+    );
+
     // ============================================
     // STATE VARIABLES
     // ============================================
@@ -536,13 +546,21 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
         address _poolHooks
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         poolHooks = _poolHooks;
-        
-        // If hooks is a LiquidSwapGuard, authorize this factory to add initializers
+
+        // If hooks is a LiquidSwapGuard, ensure it is already authorized for this factory
         if (_poolHooks != address(0)) {
-            try ILiquidSwapGuard(_poolHooks).setFactory(address(this)) {
-                // Successfully set factory on guard
+            try ILiquidSwapGuard(_poolHooks).factory() returns (
+                address configuredFactory
+            ) {
+                if (configuredFactory != address(this)) {
+                    revert SwapGuardFactoryMismatch(
+                        _poolHooks,
+                        configuredFactory,
+                        address(this)
+                    );
+                }
             } catch {
-                // Not a LiquidSwapGuard or doesn't implement setFactory - ignore
+                // Not a LiquidSwapGuard implementation (or doesn't expose this view) - ignore
             }
         }
         
