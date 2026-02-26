@@ -7,22 +7,20 @@ pragma solidity ^0.8.0;
  * @dev Forks Base mainnet. Uses MockRARE. Requires 250 RARE minimum.
  */
 
-import "forge-std/Test.sol";
 import "forge-std/console.sol";
-import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 import {DeployConfig} from "script/config/DeployConfig.sol";
-import {NetworkConfig} from "script/config/NetworkConfig.sol";
+import {ForkTestBase} from "liquid-editions-test/helpers/bases/ForkTestBase.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 import {LiquidPoolSwapHelper} from "liquid-editions-test/helpers/LiquidPoolSwapHelper.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-contract LiquidMultiCurveMainnetTest is Test {
-    NetworkConfig.Config internal config;
-
+contract LiquidMultiCurveMainnetTest is ForkTestBase, InitGuardTestHelper {
     address public admin = makeAddr("admin");
     address public tokenCreator = makeAddr("tokenCreator");
     address public user1 = makeAddr("user1");
@@ -65,13 +63,7 @@ contract LiquidMultiCurveMainnetTest is Test {
     }
 
     function setUp() public {
-        string memory forkUrl = vm.envOr(
-            "FORK_URL",
-            string("https://mainnet.base.org")
-        );
-        vm.createSelectFork(forkUrl);
-
-        config = NetworkConfig.getConfig(block.chainid);
+        _setupFork();
 
         vm.deal(admin, 100 ether);
         vm.deal(tokenCreator, 100 ether);
@@ -84,6 +76,7 @@ contract LiquidMultiCurveMainnetTest is Test {
         mockRARE.mint(user2, 10_000 ether);
 
         vm.startPrank(admin);
+        address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factory = new LiquidFactory(
             admin,
             config.weth,
@@ -91,12 +84,13 @@ contract LiquidMultiCurveMainnetTest is Test {
             -180,
             120000,
             config.uniswapV4Quoter,
-            address(0),
+            initGuardAddr,
             60,
             300,
             MIN_RARE
         );
-                factory.setLiquidRouter(address(1));
+        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+                factory.setLiquidRegistry(address(1));
         instantImpl = new LiquidMultiCurve();
         multiCurveImpl = new LiquidMultiCurve();
         factory.setLiquidMultiCurveImplementation(address(instantImpl));

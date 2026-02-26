@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
 import {IRAREBurner} from "liquid-editions/interfaces/IRAREBurner.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 /// @title RARE Burner Fork Tests
 /// @notice Fork tests for RAREBurner on Base mainnet
@@ -20,11 +21,8 @@ contract RAREBurnerForkTest is Test {
     RAREBurner public burner;
 
     function setUp() public {
-        // Fork any chain - use default public RPC if FORK_URL not set
-        string memory forkUrl = vm.envOr(
-            "FORK_URL",
-            string("https://mainnet.base.org")
-        );
+        // Fork configured network via FORK_URL
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
 
         // Get network configuration for the forked chain
@@ -56,11 +54,8 @@ contract RAREBurnerForkTest is Test {
     /// @notice Full happy path: depositForBurn -> flush -> burn on fork
     /// @dev Works on any chain that has the required contracts configured.
     function testFlushHappyPath_OnBaseSepoliaFork() public {
-        // Use default if FORK_URL not set
-        string memory forkUrl = vm.envOr(
-            "FORK_URL",
-            string("https://sepolia.base.org")
-        );
+        // Fork configured network via FORK_URL
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
         config = NetworkConfig.getConfig(block.chainid);
 
@@ -185,11 +180,8 @@ contract RARETokenBurnMechanismTest is Test {
     address public testUser = makeAddr("testUser");
 
     function setUp() public {
-        // Fork any chain - use default public RPC if FORK_URL not set
-        string memory rpcUrl = vm.envOr(
-            "FORK_URL",
-            string("https://mainnet.base.org")
-        );
+        // Fork configured network via FORK_URL
+        string memory rpcUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(rpcUrl);
 
         // Get network configuration for the forked chain

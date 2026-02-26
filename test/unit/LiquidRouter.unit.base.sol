@@ -7,6 +7,9 @@ import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
 import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
+import {IFeeDistributor} from "liquid-editions/interfaces/IFeeDistributor.sol";
+import {FeeDistributor} from "liquid-editions/FeeDistributor.sol";
+import {LiquidRegistry} from "liquid-editions/LiquidRegistry.sol";
 
 /// @title Mock Universal Router for LiquidRouter testing
 contract MockUniversalRouterForRouter {
@@ -151,7 +154,6 @@ contract ReentrantRecipientForRouter {
             router.buy{value: 0.01 ether}(
                 token,
                 beneficiary,
-                address(0),
                 1,
                 hex"10",
                 inputs,
@@ -238,10 +240,6 @@ abstract contract LiquidRouterUnitTestBase is Test {
     address public user2 = makeAddr("user2");
 
     uint256 constant TOTAL_FEE_BPS = 400;
-    uint256 constant BENEFICIARY_FEE_BPS = 2500;
-    uint256 constant RARE_BURN_FEE_BPS = 5000;
-    uint256 constant PROTOCOL_FEE_BPS = 3000;
-    uint256 constant REFERRER_FEE_BPS = 2000;
 
     function _validRoute()
         internal
@@ -260,22 +258,35 @@ abstract contract LiquidRouterUnitTestBase is Test {
     function deployLiquidRouter(
         address universalRouter,
         address _protocolFeeRecipient,
-        address rareBurner,
-        uint256 rareBurnFeeBPS,
-        uint256 protocolFeeBPS,
-        uint256 referrerFeeBPS,
         address owner
     ) internal returns (LiquidRouter) {
-        return
-            new LiquidRouter(
-                owner,
-                universalRouter,
-                _protocolFeeRecipient,
-                rareBurner,
-                rareBurnFeeBPS,
-                protocolFeeBPS,
-                referrerFeeBPS
-            );
+        FeeDistributor feeDistributor = new FeeDistributor(
+            owner,
+            uint16(TOTAL_FEE_BPS),
+            _protocolFeeRecipient
+        );
+        LiquidRegistry registry = new LiquidRegistry(owner);
+        LiquidRouter newLiquidRouter = new LiquidRouter(
+            owner,
+            universalRouter,
+            address(feeDistributor),
+            address(registry)
+        );
+        vm.prank(owner);
+        registry.setWriter(address(newLiquidRouter), true);
+        return newLiquidRouter;
+    }
+
+    function _totalFeeBpsForRouter(
+        LiquidRouter targetRouter
+    ) internal view returns (uint256 totalFeeBps) {
+        return IFeeDistributor(targetRouter.feeDistributor()).totalFeeBPS();
+    }
+
+    function _distributorForRouter(
+        LiquidRouter targetRouter
+    ) internal view returns (IFeeDistributor) {
+        return IFeeDistributor(targetRouter.feeDistributor());
     }
 
     function setUp() public virtual {
@@ -293,10 +304,6 @@ abstract contract LiquidRouterUnitTestBase is Test {
         liquidRouter = deployLiquidRouter(
             address(router),
             protocolFeeRecipient,
-            address(burner),
-            RARE_BURN_FEE_BPS,
-            PROTOCOL_FEE_BPS,
-            REFERRER_FEE_BPS,
             admin
         );
 

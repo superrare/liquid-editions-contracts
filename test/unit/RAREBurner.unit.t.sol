@@ -932,11 +932,11 @@ contract RAREBurnerUnitTestContinued is RAREBurnerUnitTest {
         bytes memory callbackData = mockPoolManager.lastUnlockData();
 
         vm.prank(user1);
-        vm.expectRevert(RAREBurner.OnlyPoolManager.selector);
+        vm.expectRevert(IRAREBurner.OnlyPoolManager.selector);
         burner.unlockCallback(callbackData);
 
         vm.prank(address(mockPoolManager));
-        vm.expectRevert(RAREBurner.UnexpectedUnlock.selector);
+        vm.expectRevert(IRAREBurner.UnexpectedUnlock.selector);
         burner.unlockCallback(callbackData);
     }
 
@@ -975,7 +975,7 @@ contract RAREBurnerUnitTestContinued is RAREBurnerUnitTest {
             address(0x000000000000000000000000000000000000dEaD)
         );
 
-        vm.expectRevert(RAREBurner.UnexpectedUnlock.selector);
+        vm.expectRevert(IRAREBurner.UnexpectedUnlock.selector);
         vm.prank(address(0x1234567890123456789012345678901234567890));
         burner.unlockCallback(data);
     }

@@ -17,8 +17,11 @@ import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 import {LiquidPoolSwapHelper} from "liquid-editions-test/helpers/LiquidPoolSwapHelper.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
-contract LiquidMultiCurveSnipingTest is Test {
+contract LiquidMultiCurveSnipingTest is Test, InitGuardTestHelper {
     NetworkConfig.Config internal config;
 
     address public admin = makeAddr("admin");
@@ -62,10 +65,7 @@ contract LiquidMultiCurveSnipingTest is Test {
     }
 
     function setUp() public {
-        string memory forkUrl = vm.envOr(
-            "FORK_URL",
-            string("https://mainnet.base.org")
-        );
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
 
         config = NetworkConfig.getConfig(block.chainid);
@@ -78,19 +78,22 @@ contract LiquidMultiCurveSnipingTest is Test {
         mockRARE.mint(tokenCreator, 10_000 ether);
         mockRARE.mint(sniper, 10_000 ether);
 
-        vm.startPrank(admin);        factory = new LiquidFactory(
+        vm.startPrank(admin);
+        address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
+        factory = new LiquidFactory(
             admin,
             config.weth,
             config.uniswapV4PoolManager,
             -180,
             120000,
             config.uniswapV4Quoter,
-            address(0),
+            initGuardAddr,
             60,
             300,
             LIQUIDITY
         );
-                factory.setLiquidRouter(address(1));
+        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+                factory.setLiquidRegistry(address(1));
         instantImpl = new LiquidMultiCurve();
         multiCurveImpl = new LiquidMultiCurve();
         factory.setLiquidMultiCurveImplementation(address(instantImpl));

@@ -15,10 +15,13 @@ import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 /// @title LiquidMigration E2E Tests
 /// @notice Tests removeLiquidity for LiquidMultiCurve and LiquidMultiCurve, plus migration flow
-contract LiquidMigrationE2ETest is Test {
+contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
     using StateLibrary for IPoolManager;
 
     NetworkConfig.Config internal config;
@@ -34,7 +37,7 @@ contract LiquidMigrationE2ETest is Test {
     MockRARE public mockRARE;
 
     function setUp() public {
-        string memory forkUrl = vm.envOr("FORK_URL", string("https://mainnet.base.org"));
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
         config = NetworkConfig.getConfig(block.chainid);
 
@@ -50,6 +53,7 @@ contract LiquidMigrationE2ETest is Test {
 
         liquidImpl = new LiquidMultiCurve();
         multiCurveImpl = new LiquidMultiCurve();
+        address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factory = new LiquidFactory(
             admin,
             config.weth,
@@ -57,14 +61,15 @@ contract LiquidMigrationE2ETest is Test {
             -180, // lpTickLower
             120000, // lpTickUpper
             config.uniswapV4Quoter,
-            address(0), // poolHooks
+            initGuardAddr, // poolHooks
             60, // poolTickSpacing
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei
         );
+        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
 
         
-        factory.setLiquidRouter(address(1));
+        factory.setLiquidRegistry(address(1));
 
         factory.setLiquidMultiCurveImplementation(address(liquidImpl));
         factory.setLiquidMultiCurveImplementation(address(multiCurveImpl));

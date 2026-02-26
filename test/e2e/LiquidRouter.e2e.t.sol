@@ -5,11 +5,6 @@ import "forge-std/console.sol";
 import {AnvilForkTestBase} from "liquid-editions-test/AnvilForkTestBase.sol";
 import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
-import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
-import {RAREBurner} from "liquid-editions/RAREBurner.sol";
-import {DeployConfig} from "script/config/DeployConfig.sol";
-import {DeployRAREBurner} from "script/deployers/DeployRAREBurner.s.sol";
-import {DeployLiquidRouter} from "script/deployers/DeployLiquidRouter.s.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
@@ -63,7 +58,6 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         uint256 tokensReceived = router.buy{value: ethAmount}(
             config.rareToken,
             buyer,
-            address(0),
             1,
             commands,
             inputs,
@@ -92,8 +86,7 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             buyer,
             address(liquidToken),
             buyer,
-            ethAmount,
-            address(0)
+            ethAmount
         );
 
         uint256 balanceAfter = liquidToken.balanceOf(buyer);
@@ -113,7 +106,7 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
     // ---------- Router: buy, sell, swap ----------
     function test_Sell_LiquidToken_ViaRouter() public {
         // First buy tokens
-        _doBuy(buyer, address(liquidToken), buyer, 0.01 ether, address(0));
+        _doBuy(buyer, address(liquidToken), buyer, 0.01 ether);
 
         uint256 tokensToSell = liquidToken.balanceOf(buyer) / 2;
         require(tokensToSell > 0, "No tokens to sell");
@@ -123,8 +116,7 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             buyer,
             address(liquidToken),
             tokensToSell,
-            buyer,
-            address(0)
+            buyer
         );
         uint256 ethAfter = buyer.balance;
 
@@ -145,10 +137,9 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             buyer,
             address(liquidToken),
             buyer,
-            0.005 ether,
-            address(0)
+            0.005 ether
         );
-        _doSell(buyer, address(liquidToken), tokensBought, buyer, address(0));
+        _doSell(buyer, address(liquidToken), tokensBought, buyer);
 
         assertEq(
             liquidToken.balanceOf(buyer),
@@ -175,7 +166,6 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         router.buy{value: ethAmount}(
             address(liquidToken),
             buyer,
-            address(0),
             unreasonableMinOut,
             commands,
             inputs,
@@ -186,7 +176,7 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
     /// @notice Sell reverts when minEthOut is unreasonably high (slippage protection)
     /// @dev Revert comes from Universal Router / V4 swap layer (amountOutMinimum), not LiquidRouter
     function test_Sell_RevertsOnSlippage() public {
-        _doBuy(buyer, address(liquidToken), buyer, 0.01 ether, address(0));
+        _doBuy(buyer, address(liquidToken), buyer, 0.01 ether);
         uint256 tokensToSell = liquidToken.balanceOf(buyer) / 2;
         require(tokensToSell > 0, "No tokens to sell");
 
@@ -205,7 +195,6 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             address(liquidToken),
             tokensToSell,
             buyer,
-            address(0),
             unreasonableMinEthOut,
             commands,
             inputs,
@@ -213,60 +202,8 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         );
     }
 
-    function test_Buy_WithReferrer_ReceivesFee() public {
-        // Deploy a second router with referrerFeeBPS > 0 (DeployConfig uses 0)
-        DeployConfig.FeeConfig memory referrerRouterConfig = DeployConfig
-            .FeeConfig({
-                rareBurnFeeBPS: 0,
-                protocolFeeBPS: 9500,
-                referrerFeeBPS: 500
-            });
-        (address referrerRouterAddr, ) = DeployLiquidRouter.deploy(
-            admin,
-            protocolFeeRecipient,
-            referrerRouterConfig,
-            config,
-            address(burner)
-        );
-        LiquidRouter referrerRouter = LiquidRouter(payable(referrerRouterAddr));
-        // admin is already owner (passed to deploy)
-
-        vm.prank(admin);
-        referrerRouter.registerToken(address(liquidToken), tokenCreator);
-
-        address referrer = makeAddr("referrer");
-        uint256 ethAmount = 0.01 ether;
-        uint256 ethForSwap = (ethAmount *
-            (10000 - referrerRouter.TOTAL_FEE_BPS())) / 10000;
-        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRoute(
-            address(liquidToken),
-            ethForSwap,
-            1
-        );
-
-        uint256 referrerEthBefore = referrer.balance;
-
-        vm.prank(buyer);
-        referrerRouter.buy{value: ethAmount}(
-            address(liquidToken),
-            buyer,
-            referrer,
-            1,
-            commands,
-            inputs,
-            block.timestamp + 1 hours
-        );
-
-        uint256 referrerEthAfter = referrer.balance;
-        assertGt(
-            referrerEthAfter,
-            referrerEthBefore,
-            "Referrer should receive fee"
-        );
-    }
-
     function test_Burn_LiquidToken() public {
-        _doBuy(buyer, address(liquidToken), buyer, 0.01 ether, address(0));
+        _doBuy(buyer, address(liquidToken), buyer, 0.01 ether);
 
         uint256 burnAmount = liquidToken.balanceOf(buyer) / 2;
         require(burnAmount > 0, "No tokens to burn");
@@ -295,15 +232,14 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             buyer,
             address(liquidToken),
             buyer,
-            0.01 ether,
-            address(0)
+            0.01 ether
         );
         assertGt(amountOut, 0, "Should receive tokens");
     }
 
     /// @notice Token -> ETH via router (same as sell; swap not in current LiquidRouter)
     function test_Swap_TokenToETH_ViaRouter() public {
-        _doBuy(buyer, address(liquidToken), buyer, 0.01 ether, address(0));
+        _doBuy(buyer, address(liquidToken), buyer, 0.01 ether);
         uint256 tokensToSell = liquidToken.balanceOf(buyer) / 2;
         require(tokensToSell > 0, "No tokens to sell");
         uint256 ethBefore = buyer.balance;
@@ -311,72 +247,10 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             buyer,
             address(liquidToken),
             tokensToSell,
-            buyer,
-            address(0)
+            buyer
         );
         assertGt(amountOut, 0, "Should receive ETH");
         assertGt(buyer.balance, ethBefore, "ETH balance should increase");
-    }
-
-    function test_RAREBurner_ReceivesAndFlushes() public {
-        // Deploy a burner with tryOnDeposit: false so ETH stays in pending (main burner may flush on deposit)
-        DeployConfig.BurnerConfig memory burnerCfg = deployConfig.burner;
-        burnerCfg.tryOnDeposit = false;
-        RAREBurner testBurner = RAREBurner(
-            payable(DeployRAREBurner.deploy(admin, burnerCfg, config))
-        );
-
-        // Deploy router with rareBurnFeeBPS > 0 (DeployConfig uses 0)
-        DeployConfig.FeeConfig memory burnRouterConfig = DeployConfig
-            .FeeConfig({
-                rareBurnFeeBPS: 500,
-                protocolFeeBPS: 9500,
-                referrerFeeBPS: 0
-            });
-        (address burnRouterAddr, ) = DeployLiquidRouter.deploy(
-            admin,
-            protocolFeeRecipient,
-            burnRouterConfig,
-            config,
-            address(testBurner)
-        );
-        LiquidRouter burnRouter = LiquidRouter(payable(burnRouterAddr));
-        // admin is already owner (passed to deploy)
-
-        vm.prank(admin);
-        burnRouter.registerToken(address(liquidToken), tokenCreator);
-
-        uint256 pendingBefore = testBurner.pendingEth();
-
-        uint256 ethAmount = 0.01 ether;
-        uint256 ethForSwap = (ethAmount *
-            (10000 - burnRouter.TOTAL_FEE_BPS())) / 10000;
-        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRoute(
-            address(liquidToken),
-            ethForSwap,
-            1
-        );
-
-        vm.prank(buyer);
-        burnRouter.buy{value: ethAmount}(
-            address(liquidToken),
-            buyer,
-            address(0),
-            1,
-            commands,
-            inputs,
-            block.timestamp + 1 hours
-        );
-
-        uint256 pendingAfter = testBurner.pendingEth();
-        assertGt(
-            pendingAfter,
-            pendingBefore,
-            "RAREBurner should receive ETH from buy fee"
-        );
-
-        // Optionally flush - best-effort, may succeed or fail depending on pool state
-        testBurner.flush();
     }
 
     // ---------- Factory: createLiquidToken (standalone flow) ----------
@@ -408,7 +282,7 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         router.registerToken(token2Addr, tokenCreator);
 
         // Buy liquidToken with ETH
-        _doBuy(buyer, address(liquidToken), buyer, 0.01 ether, address(0));
+        _doBuy(buyer, address(liquidToken), buyer, 0.01 ether);
 
         uint256 tokensToSwap = liquidToken.balanceOf(buyer) / 2;
         require(tokensToSwap > 0, "No tokens to swap");
@@ -418,8 +292,7 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             buyer,
             address(liquidToken),
             tokensToSwap,
-            buyer,
-            address(0)
+            buyer
         );
         assertGt(ethReceived, 0, "Should receive ETH from sell");
 
@@ -428,8 +301,7 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             buyer,
             address(liquidToken2),
             buyer,
-            ethReceived,
-            address(0)
+            ethReceived
         );
         uint256 balanceAfter = liquidToken2.balanceOf(buyer);
 

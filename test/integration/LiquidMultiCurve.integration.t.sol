@@ -26,8 +26,11 @@ import {RAREBurner} from "liquid-editions/RAREBurner.sol";
 import {DeployRAREBurner} from "script/deployers/DeployRAREBurner.s.sol";
 import {DeployLiquidFactory} from "script/deployers/DeployLiquidFactory.s.sol";
 import {DeployLiquidRouter} from "script/deployers/DeployLiquidRouter.s.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
-contract LiquidMultiCurveIntegrationTest is Test {
+contract LiquidMultiCurveIntegrationTest is Test, InitGuardTestHelper {
     using StateLibrary for IPoolManager;
 
     NetworkConfig.Config internal config;
@@ -73,12 +76,7 @@ contract LiquidMultiCurveIntegrationTest is Test {
     }
 
     function setUp() public {
-        string memory forkUrl;
-        try vm.envString("FORK_URL") returns (string memory url) {
-            forkUrl = bytes(url).length > 0 ? url : "https://mainnet.base.org";
-        } catch {
-            forkUrl = "https://mainnet.base.org";
-        }
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
 
         config = NetworkConfig.getConfig(block.chainid);
@@ -101,12 +99,18 @@ contract LiquidMultiCurveIntegrationTest is Test {
         );
         burner = RAREBurner(payable(burnerAddr));
 
+        if (deployConfig.factory.poolHooks == address(0)) {
+            deployConfig.factory.poolHooks = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
+        }
+
         DeployLiquidFactory.DeployResult memory factoryResult = DeployLiquidFactory.deploy(
             admin,
             deployConfig.factory,
             config
         );
         factory = LiquidFactory(factoryResult.factory);
+
+        LiquidInitGuard(deployConfig.factory.poolHooks).setFactory(address(factory));
 
         multiCurveImpl = new LiquidMultiCurve();
         factory.setLiquidMultiCurveImplementation(address(multiCurveImpl));
@@ -115,11 +119,10 @@ contract LiquidMultiCurveIntegrationTest is Test {
             admin,
             protocolFeeRecipient,
             deployConfig.fees,
-            config,
-            burnerAddr
+            config.uniswapUniversalRouter
         );
         router = LiquidRouter(payable(routerAddr));
-        factory.setLiquidRouter(address(1));
+        factory.setLiquidRegistry(address(1));
 
         swapHelper = new LiquidPoolSwapHelper(IPoolManager(config.uniswapV4PoolManager));
 

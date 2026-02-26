@@ -21,6 +21,9 @@ import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {AuctionParameters} from "continuous-clearing-auction/interfaces/IContinuousClearingAuction.sol";
 import {MigratorParameters} from "liquid-editions/types/MigratorParameters.sol";
 import {ILBPStrategy} from "liquid-editions/interfaces/ILBPStrategy.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 contract MockCCAFactorySniping is IDistributionStrategy {
     function initializeDistribution(
@@ -69,15 +72,19 @@ contract MockLBPStrategyFactorySniping is IDistributionStrategy {
 }
 
 contract MockLBPStrategySniping is IDistributionContract, ILBPStrategy {
-    address public immutable override(ILBPStrategy) token;
-    address public immutable poolManager;
-    address public immutable currency;
+    address public immutable TOKEN;
+    address public immutable POOL_MANAGER;
+    address public immutable CURRENCY;
     address public auction;
 
     constructor(address _token, address _poolManager, address _currency) {
-        token = _token;
-        poolManager = _poolManager;
-        currency = _currency;
+        TOKEN = _token;
+        POOL_MANAGER = _poolManager;
+        CURRENCY = _currency;
+    }
+
+    function token() external view override(ILBPStrategy) returns (address) {
+        return TOKEN;
     }
 
     function onTokensReceived()
@@ -87,9 +94,9 @@ contract MockLBPStrategySniping is IDistributionContract, ILBPStrategy {
         if (auction == address(0)) {
             MockAuctionSniping mockAuction = new MockAuctionSniping();
             auction = address(mockAuction);
-            IERC20(token).transfer(
+            IERC20(TOKEN).transfer(
                 auction,
-                IERC20(token).balanceOf(address(this))
+                IERC20(TOKEN).balanceOf(address(this))
             );
             IDistributionContract(auction).onTokensReceived();
         }
@@ -107,7 +114,7 @@ contract MockLBPStrategySniping is IDistributionContract, ILBPStrategy {
     function migrate() external override(ILBPStrategy) {}
 }
 
-contract LiquidGraduatedSnipingTest is Test {
+contract LiquidGraduatedSnipingTest is Test, InitGuardTestHelper {
     NetworkConfig.Config internal config;
     address admin = makeAddr("admin");
     address creator = makeAddr("creator");
@@ -121,24 +128,10 @@ contract LiquidGraduatedSnipingTest is Test {
     MockCCAFactorySniping public mockCcaFactory;
 
     function setUp() public {
-        // Fork Ethereum Sepolia for realistic testing with deployed contracts
-        // Sepolia has all contracts deployed: Factory, Router, RAREBurner, etc.
-        // Check ETH_SEPOLIA, SEPOLIA_RPC_URL, FORK_URL, or use default
-        string memory forkUrl;
-        try vm.envString("ETH_SEPOLIA") returns (string memory url) {
-            forkUrl = url;
-        } catch {
-            try vm.envString("SEPOLIA_RPC_URL") returns (string memory url) {
-                forkUrl = url;
-            } catch {
-                forkUrl = vm.envOr(
-                    "FORK_URL",
-                    string("https://eth-sepolia.g.alchemy.com/v2/demo")
-                );
-            }
-        }
+        // Fork Base mainnet for realistic testing with deployed contracts
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
-        // Get network configuration (Ethereum Sepolia chain ID = 11155111)
+        // Get network configuration from forked chain
         config = NetworkConfig.getConfig(block.chainid);
 
         rare = new MockRARE();
@@ -147,6 +140,8 @@ contract LiquidGraduatedSnipingTest is Test {
         rare.mint(sniper, 1000 ether);
         mockCcaFactory = new MockCCAFactorySniping();
 
+        address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
+
         vm.startPrank(admin);        factory = new LiquidFactory(
             admin,
             config.weth,
@@ -154,12 +149,13 @@ contract LiquidGraduatedSnipingTest is Test {
             -180,
             120000,
             config.uniswapV4Quoter,
-            address(0),
+            initGuardAddr,
             60,
             300,
             1e15
         );
-                factory.setLiquidRouter(address(1));
+        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+                factory.setLiquidRegistry(address(1));
         factory.setBaseToken(address(rare));
         instantImpl = new LiquidMultiCurve();
         graduatedImpl = new LiquidGraduated();

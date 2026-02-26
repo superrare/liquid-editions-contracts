@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 /**
  * @title LiquidGraduated Shared Behavior Tests
  * @notice Runs the parameterized LiquidTokenBehaviorBase suite against LiquidGraduated.
- * @dev Uses Sepolia fork. Graduates the token in _deployToken() so pool-live tests pass.
+ * @dev Uses fork URL from FORK_URL. Graduates the token in _deployToken() so pool-live tests pass.
  *      Also includes a pre-graduation variant where pool-live tests are skipped.
  */
 
@@ -25,6 +25,7 @@ import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 // ---- Mocks (matching LiquidGraduated.datasurface.t.sol pattern) ----
 
@@ -110,15 +111,19 @@ contract MockLBPStrategyFactoryGradBhv is IDistributionStrategy {
 }
 
 contract MockLBPStrategyGradBhv is IDistributionContract, ILBPStrategy {
-    address public immutable override(ILBPStrategy) token;
-    address public immutable poolManager;
-    address public immutable currency;
+    address public immutable TOKEN;
+    address public immutable POOL_MANAGER;
+    address public immutable CURRENCY;
     address public auction;
 
     constructor(address _token, address _poolManager, address _currency) {
-        token = _token;
-        poolManager = _poolManager;
-        currency = _currency;
+        TOKEN = _token;
+        POOL_MANAGER = _poolManager;
+        CURRENCY = _currency;
+    }
+
+    function token() external view override(ILBPStrategy) returns (address) {
+        return TOKEN;
     }
 
     function onTokensReceived()
@@ -126,12 +131,12 @@ contract MockLBPStrategyGradBhv is IDistributionContract, ILBPStrategy {
         override(IDistributionContract, ILBPStrategy)
     {
         if (auction == address(0)) {
-            MockAuctionGradBhv mockAuction = new MockAuctionGradBhv(currency);
-            mockAuction.setToken(token);
+            MockAuctionGradBhv mockAuction = new MockAuctionGradBhv(CURRENCY);
+            mockAuction.setToken(TOKEN);
             auction = address(mockAuction);
-            IERC20(token).transfer(
+            IERC20(TOKEN).transfer(
                 auction,
-                IERC20(token).balanceOf(address(this))
+                IERC20(TOKEN).balanceOf(address(this))
             );
             IDistributionContract(auction).onTokensReceived();
         }
@@ -149,10 +154,10 @@ contract MockLBPStrategyGradBhv is IDistributionContract, ILBPStrategy {
     function migrate() external override(ILBPStrategy) {
         if (auction != address(0)) {
             MockAuctionGradBhv(auction).sweepCurrency();
-            IPoolManager pm = IPoolManager(poolManager);
+            IPoolManager pm = IPoolManager(POOL_MANAGER);
             PoolKey memory key = PoolKey({
-                currency0: Currency.wrap(currency < token ? currency : token),
-                currency1: Currency.wrap(currency < token ? token : currency),
+                currency0: Currency.wrap(CURRENCY < TOKEN ? CURRENCY : TOKEN),
+                currency1: Currency.wrap(CURRENCY < TOKEN ? TOKEN : CURRENCY),
                 fee: 0,
                 tickSpacing: 60,
                 hooks: IHooks(address(0))
@@ -178,19 +183,7 @@ contract LiquidGraduatedBehaviorTest is LiquidTokenBehaviorBase {
         override
         returns (LiquidFactory, MockRARE)
     {
-        string memory forkUrl;
-        try vm.envString("ETH_SEPOLIA") returns (string memory url) {
-            forkUrl = url;
-        } catch {
-            try vm.envString("SEPOLIA_RPC_URL") returns (string memory url) {
-                forkUrl = url;
-            } catch {
-                forkUrl = vm.envOr(
-                    "FORK_URL",
-                    string("https://eth-sepolia.g.alchemy.com/v2/demo")
-                );
-            }
-        }
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
         config = NetworkConfig.getConfig(block.chainid);
 
@@ -211,7 +204,7 @@ contract LiquidGraduatedBehaviorTest is LiquidTokenBehaviorBase {
             300,
             1e15
         );
-        f.setLiquidRouter(address(1));
+        f.setLiquidRegistry(address(1));
         f.setBaseToken(address(rare));
         LiquidGraduated gradImpl = new LiquidGraduated();
         f.setLiquidGraduatedImplementation(address(gradImpl));
@@ -326,19 +319,7 @@ contract LiquidGraduatedPreGradBehaviorTest is LiquidTokenBehaviorBase {
         override
         returns (LiquidFactory, MockRARE)
     {
-        string memory forkUrl;
-        try vm.envString("ETH_SEPOLIA") returns (string memory url) {
-            forkUrl = url;
-        } catch {
-            try vm.envString("SEPOLIA_RPC_URL") returns (string memory url) {
-                forkUrl = url;
-            } catch {
-                forkUrl = vm.envOr(
-                    "FORK_URL",
-                    string("https://eth-sepolia.g.alchemy.com/v2/demo")
-                );
-            }
-        }
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
         config = NetworkConfig.getConfig(block.chainid);
 
@@ -359,7 +340,7 @@ contract LiquidGraduatedPreGradBehaviorTest is LiquidTokenBehaviorBase {
             300,
             1e15
         );
-        f.setLiquidRouter(address(1));
+        f.setLiquidRegistry(address(1));
         f.setBaseToken(address(rare));
         LiquidGraduated gradImpl = new LiquidGraduated();
         f.setLiquidGraduatedImplementation(address(gradImpl));

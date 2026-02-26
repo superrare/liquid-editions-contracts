@@ -31,6 +31,32 @@ interface ILiquidFactory {
     /// @notice Thrown when an invalid amount is provided
     error InvalidAmount();
 
+    /// @notice Thrown when the configured PoolHooks address is already bound to another factory
+    error SwapGuardFactoryMismatch(
+        address poolHooks,
+        address configuredFactory,
+        address expectedFactory
+    );
+
+    /// @notice Thrown when an invalid pool hooks contract is configured for multicurve
+    error InvalidMultiCurvePoolHook(address poolHooks);
+
+    /// @notice Thrown when a configured multicurve pool hook is not a LiquidSwapGuard
+    error MultiCurvePoolHookNotGuard(address poolHooks);
+
+    /// @notice Thrown when multicurve hook flags do not include required permissions
+    /// @param poolHooks The hook address
+    /// @param actualFlags Flags reported by the hook
+    /// @param requiredFlags Minimum required flags mask
+    error MultiCurvePoolHookMissingFlags(
+        address poolHooks,
+        uint160 actualFlags,
+        uint160 requiredFlags
+    );
+
+    /// @notice Thrown when poolHooks is address(0) during token creation
+    error PoolHooksNotSet();
+
     // ============================================
     // EVENTS
     // ============================================
@@ -78,12 +104,12 @@ interface ILiquidFactory {
     /// @param baseToken The base token address (RARE)
     event BaseTokenUpdated(address baseToken);
 
-    /// @notice Emitted when the router used for auto-registration is updated
-    /// @param oldLiquidRouter Previous router address
-    /// @param newLiquidRouter New router address
-    event LiquidRouterUpdated(
-        address indexed oldLiquidRouter,
-        address indexed newLiquidRouter
+    /// @notice Emitted when the registry used for token registration is updated
+    /// @param oldLiquidRegistry Previous registry address
+    /// @param newLiquidRegistry New registry address
+    event LiquidRegistryUpdated(
+        address indexed oldLiquidRegistry,
+        address indexed newLiquidRegistry
     );
 
     // ============================================
@@ -118,8 +144,14 @@ interface ILiquidFactory {
 
     function protocolFeeRecipient() external view returns (address);
 
-    /// @notice Router used by factory for automatic registration
-    function liquidRouter() external view returns (address);
+    /// @notice Registry used by factory for automatic token registration
+    function liquidRegistry() external view returns (address);
+
+    /// @notice Pause token creation in factory
+    function pause() external;
+
+    /// @notice Unpause token creation in factory
+    function unpause() external;
 
     /// @notice Creates a new Liquid token with multicurve liquidity
     /// @param _creator The address of the token creator (receives fees and launch reward)
@@ -138,7 +170,7 @@ interface ILiquidFactory {
         Curve[] calldata _curves
     ) external returns (address token);
 
-    /// @notice Configure the router used for automatic token registration
-    /// @param _liquidRouter Router address
-    function setLiquidRouter(address _liquidRouter) external;
+    /// @notice Configure the registry used for automatic token registration
+    /// @param _liquidRegistry Registry address
+    function setLiquidRegistry(address _liquidRegistry) external;
 }

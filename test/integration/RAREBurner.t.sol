@@ -251,7 +251,7 @@ contract RAREBurnerTest is Test {
 
         // Call from non-PoolManager address (user1)
         vm.prank(user1);
-        vm.expectRevert(RAREBurner.OnlyPoolManager.selector);
+        vm.expectRevert(IRAREBurner.OnlyPoolManager.selector);
         burner.unlockCallback(fakeData);
     }
 

@@ -22,7 +22,6 @@ contract LiquidRouterRoutePolicyRegressionTest is LiquidRouterUnitTestBase {
         liquidRouter.buy{value: 1 ether}(
             address(token),
             user1,
-            referrer,
             1,
             commands,
             inputs,
@@ -47,7 +46,6 @@ contract LiquidRouterRoutePolicyRegressionTest is LiquidRouterUnitTestBase {
         liquidRouter.buy{value: 1 ether}(
             address(token),
             user1,
-            referrer,
             1,
             commands,
             inputs,
@@ -76,7 +74,6 @@ contract LiquidRouterRoutePolicyRegressionTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            referrer,
             1,
             commands,
             inputs,

@@ -78,9 +78,21 @@ contract LiquidMultiCurve is
 
     int24 public lpTickLower;
     int24 public lpTickUpper;
-    uint128 public lpLiquidity; // Always 0 for multicurve (liquidity spread across positions)
+    /// @notice LP liquidity amount (always 0 for multicurve tokens)
+    /// @dev In multicurve architecture, liquidity is distributed across multiple concentrated positions
+    ///      stored in _storedPositions array. Unlike single-curve tokens (LiquidInstant) which store
+    ///      liquidity in a single lpLiquidity value, multicurve tokens spread liquidity across tick ranges
+    ///      for anti-sniping protection. This value remains 0 because we track liquidity per-position.
+    uint128 public lpLiquidity;
 
-    /// @notice Stored positions from initialization (needed for liquidity removal)
+    /// @notice Stored LP positions from initialization (required for liquidity removal)
+    /// @dev When liquidity is added during pool initialization, each position (tick range + liquidity amount)
+    ///      is stored in this array. This is necessary because:
+    ///      1. Multicurve uses multiple positions (unlike single-curve which has one position)
+    ///      2. Each position has its own tickLower, tickUpper, liquidity, and salt
+    ///      3. To remove liquidity later (via removeLiquidity()), we need to know all positions
+    ///      4. Uniswap V4 requires exact position parameters (including salt) to remove liquidity
+    ///      Without storing positions, we cannot remove liquidity because we'd lose the position identifiers.
     Position[] internal _storedPositions;
 
     enum UnlockAction {
@@ -389,22 +401,28 @@ contract LiquidMultiCurve is
         });
         poolId = poolKey.toId();
 
-        // Copy curves to memory (Multicurve library needs memory, not calldata)
+        // Copy curves to memory (Multicurve library requires memory, not calldata)
         Curve[] memory curvesMem = new Curve[](curves.length);
         for (uint256 i; i < curves.length; i++) {
             curvesMem[i] = curves[i];
         }
 
-        // Adjust curves to tick spacing and get bounds
+        // Adjust curves to tick spacing and calculate tick boundaries
+        // Multicurve.adjustCurves() ensures all tick values are multiples of tickSpacing (Uniswap requirement)
+        // and returns the overall lower and upper tick boundaries that encompass all curves
         (
             Curve[] memory adjustedCurves,
             int24 lowerTickBoundary,
             int24 upperTickBoundary
         ) = Multicurve.adjustCurves(curvesMem, 0, tickSpacing, isToken0);
 
-        // Start at boundary where LIQUID is cheap (launch price)
-        // When isToken0: LIQUID=token0, cheap at low tick → use lowerTickBoundary
-        // When !isToken0: LIQUID=token1, cheap at high tick → use upperTickBoundary
+        // Calculate launch tick (starting price) where LIQUID tokens are "cheap"
+        // The launch price depends on token ordering:
+        // - When isToken0 = true: LIQUID is currency0, price = LIQUID/RARE
+        //   → Cheap LIQUID means low price → low tick → use lowerTickBoundary
+        // - When isToken0 = false: LIQUID is currency1, price = RARE/LIQUID
+        //   → Cheap LIQUID means high price → high tick → use upperTickBoundary
+        // This ensures tokens start at the "cheap" end of the bonding curve
         int24 launchTick = isToken0 ? lowerTickBoundary : upperTickBoundary;
         uint160 sqrtPriceX96 = TickMath.getSqrtPriceAtTick(launchTick);
 
@@ -417,9 +435,11 @@ contract LiquidMultiCurve is
             isToken0
         );
 
-        // Store tick bounds; lpLiquidity is 0 for multicurve (spread across positions)
+        // Store tick bounds for reference (used by getMarketState() and other view functions)
         lpTickLower = lowerTickBoundary;
         lpTickUpper = upperTickBoundary;
+        // lpLiquidity is always 0 for multicurve because liquidity is distributed across multiple positions
+        // stored in _storedPositions array, not tracked as a single value
         lpLiquidity = 0;
 
         // Trigger unlock callback to initialize pool and add all positions
@@ -444,6 +464,10 @@ contract LiquidMultiCurve is
     }
 
     /// @notice Simulates buy swap via unlock callback (revert-as-return pattern)
+    /// @dev Uses revert-as-return pattern: triggers unlock callback with QUOTE_SWAP_BUY action,
+    ///      which simulates the swap and reverts with QuoteResult containing the output.
+    ///      This pattern allows gas-free simulation via eth_call while still executing V4 swap logic.
+    ///      If the callback completes without reverting (unexpected), throws QuoteSimulationDidNotRevert.
     /// @param rareAmount Amount of RARE to simulate swapping
     /// @return amountOut Expected LIQUID output
     /// @return sqrtPriceAfter Post-swap sqrt price
@@ -470,6 +494,10 @@ contract LiquidMultiCurve is
     }
 
     /// @notice Simulates sell swap via unlock callback (revert-as-return pattern)
+    /// @dev Uses revert-as-return pattern: triggers unlock callback with QUOTE_SWAP_SELL action,
+    ///      which simulates the swap and reverts with QuoteResult containing the output.
+    ///      This pattern allows gas-free simulation via eth_call while still executing V4 swap logic.
+    ///      If the callback completes without reverting (unexpected), throws QuoteSimulationDidNotRevert.
     /// @param tokenAmount Amount of LIQUID tokens to simulate swapping
     /// @return amountOut Expected RARE output
     /// @return sqrtPriceAfter Post-swap sqrt price
@@ -548,7 +576,11 @@ contract LiquidMultiCurve is
     }
 
     /// @notice Initializes pool and adds all multicurve positions
+    /// @dev Called during unlock callback. Initializes pool at launch price, then adds liquidity
+    ///      to each position in the multicurve configuration. Settles token debts for each position,
+    ///      stores positions for future removal, and returns excess RARE to creator.
     /// @param data Encoded (sqrtPriceX96, positions)
+    /// @return Empty bytes on success
     function _unlockInitializePool(
         bytes memory data
     ) internal returns (bytes memory) {
@@ -626,44 +658,64 @@ contract LiquidMultiCurve is
         return "";
     }
 
-    /// @notice Remove all multicurve LP positions and send tokens to recipient
-    /// @param data Encoded recipient address
+    /// @notice Remove all multicurve LP positions and send underlying tokens to recipient
+    /// @dev This function is called during unlock callback when removeLiquidity() is invoked.
+    ///      It removes liquidity from all stored positions and sends the resulting tokens to recipient.
+    ///      Process:
+    ///      1. Decode recipient address from data
+    ///      2. Iterate through all stored positions
+    ///      3. For each position, call modifyLiquidity() with negative liquidity delta (removes liquidity)
+    ///      4. Accumulate token amounts received from each position removal
+    ///      5. Clear stored positions array (liquidity fully removed)
+    ///      6. Claim accumulated tokens from PoolManager to recipient
+    ///      7. Emit event with total amounts removed
+    /// @param data Encoded recipient address (address)
+    /// @return Empty bytes (required by unlock callback interface)
     function _unlockRemoveLiquidity(
         bytes memory data
     ) internal returns (bytes memory) {
+        // Decode recipient address (where tokens will be sent)
         address recipient = abi.decode(data, (address));
 
         IPoolManager pm = IPoolManager(poolManager);
 
+        // Track total amounts of currency0 and currency1 to be received
         uint256 totalAmount0;
         uint256 totalAmount1;
 
-        // Remove liquidity from each stored position
+        // Step 1: Remove liquidity from each stored position
+        // Each position must be removed individually because Uniswap V4 tracks positions separately
         for (uint256 i; i < _storedPositions.length; i++) {
             Position memory pos = _storedPositions[i];
 
+            // Remove liquidity by calling modifyLiquidity with negative delta
+            // Negative delta removes liquidity, positive delta adds liquidity
             (BalanceDelta delta, ) = pm.modifyLiquidity(
                 poolKey,
                 IPoolManager.ModifyLiquidityParams({
-                    tickLower: pos.tickLower,
-                    tickUpper: pos.tickUpper,
-                    liquidityDelta: -int128(uint128(pos.liquidity)),
-                    salt: pos.salt
+                    tickLower: pos.tickLower,      // Exact tick range from when position was created
+                    tickUpper: pos.tickUpper,      // Must match original position
+                    liquidityDelta: -int128(uint128(pos.liquidity)), // Negative = remove all liquidity
+                    salt: pos.salt                 // Must match original position salt
                 }),
                 ""
             );
 
+            // Extract token amounts received from this position removal
+            // Positive deltas mean we receive tokens (negative deltas mean we owe tokens, but we're removing so we receive)
             int128 delta0 = delta.amount0();
             int128 delta1 = delta.amount1();
 
+            // Accumulate positive deltas (tokens we receive)
             if (delta0 > 0) totalAmount0 += uint128(delta0);
             if (delta1 > 0) totalAmount1 += uint128(delta1);
         }
 
-        // Clear stored positions
+        // Step 2: Clear stored positions (all liquidity has been removed)
         delete _storedPositions;
 
-        // Claim all accumulated tokens to recipient
+        // Step 3: Claim accumulated tokens from PoolManager and send to recipient
+        // PoolManager holds tokens after modifyLiquidity() calls - we must explicitly take them
         if (totalAmount0 > 0) {
             pm.take(poolKey.currency0, recipient, totalAmount0);
         }
@@ -671,13 +723,18 @@ contract LiquidMultiCurve is
             pm.take(poolKey.currency1, recipient, totalAmount1);
         }
 
+        // Emit event with total amounts removed (for off-chain tracking)
         emit LiquidityRemoved(recipient, totalAmount0, totalAmount1);
 
         return "";
     }
 
     /// @notice Quote helper for RARE -> LIQUID swaps (reverts with QuoteResult)
-    /// @param data Encoded rareAmount
+    /// @dev Called during unlock callback to simulate buy swap. Executes V4 swap, validates delta signs,
+    ///      extracts LIQUID output, and reverts with QuoteResult containing output and post-swap price.
+    ///      Handles currency ordering (baseToken can be currency0 or currency1).
+    /// @param data Encoded rareAmount (uint256)
+    /// @return Empty bytes (never reached - always reverts with QuoteResult)
     function _unlockQuoteSwapBuy(
         bytes memory data
     ) internal returns (bytes memory) {
@@ -723,7 +780,11 @@ contract LiquidMultiCurve is
     }
 
     /// @notice Quote helper for LIQUID -> RARE swaps (reverts with QuoteResult)
-    /// @param data Encoded tokenAmount
+    /// @dev Called during unlock callback to simulate sell swap. Executes V4 swap, validates delta signs,
+    ///      extracts RARE output, and reverts with QuoteResult containing output and post-swap price.
+    ///      Handles currency ordering (baseToken can be currency0 or currency1).
+    /// @param data Encoded tokenAmount (uint256)
+    /// @return Empty bytes (never reached - always reverts with QuoteResult)
     function _unlockQuoteSwapSell(
         bytes memory data
     ) internal returns (bytes memory) {
@@ -768,13 +829,21 @@ contract LiquidMultiCurve is
         revert QuoteResult(rareReceived, sqrtPriceAfter);
     }
 
-    /// @notice Safe cast: int128 positive to uint128
+    /// @notice Converts positive BalanceDelta amount to uint128
+    /// @dev Safe cast helper for BalanceDelta conversions. Validates x >= 0 before casting.
+    ///      Used to extract output amounts from swap deltas.
+    /// @param x Positive int128 delta value
+    /// @return uint128 representation of x
     function _toUint128Pos(int128 x) internal pure returns (uint128) {
         if (x < 0) revert NegativeValue(x);
         return uint128(uint256(int256(x)));
     }
 
-    /// @notice Safe cast: int128 negative to uint128 (absolute value)
+    /// @notice Converts negative BalanceDelta amount to uint128 (absolute value)
+    /// @dev Safe cast helper for BalanceDelta conversions. Validates x <= 0, negates in 256-bit space
+    ///      to avoid int128.min overflow, then casts to uint128. Used to extract input amounts from swap deltas.
+    /// @param x Negative int128 delta value
+    /// @return uint128 absolute value of x
     function _toUint128Neg(int128 x) internal pure returns (uint128) {
         if (x > 0) revert PositiveValue(x);
         int256 y = -int256(x);

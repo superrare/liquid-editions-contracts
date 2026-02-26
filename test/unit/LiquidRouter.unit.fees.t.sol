@@ -7,13 +7,12 @@ import {GasHogRecipientForRouter, LiquidRouterUnitTestBase, MockUniversalRouterF
 import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
 
 /// @title LiquidRouter Fees Unit Tests
-/// @notice Fee rounding, referrer, beneficiary
+/// @notice Fee rounding, beneficiary
 contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
     function _buyWithValidRoute(
         LiquidRouter targetRouter,
         address tradeToken,
         address recipient,
-        address referrer_,
         uint256 minTokensOut,
         uint256 ethAmount
     ) internal returns (uint256 tokensReceived) {
@@ -22,7 +21,6 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
             targetRouter.buy{value: ethAmount}(
                 tradeToken,
                 recipient,
-                referrer_,
                 minTokensOut,
                 commands,
                 inputs,
@@ -35,7 +33,6 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         address tradeToken,
         uint256 tokenAmount,
         address recipient,
-        address referrer_,
         uint256 minEthOut
     ) internal returns (uint256 ethReceived) {
         (bytes memory commands, bytes[] memory inputs) = _validRoute();
@@ -44,7 +41,6 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
                 tradeToken,
                 tokenAmount,
                 recipient,
-                referrer_,
                 minEthOut,
                 commands,
                 inputs,
@@ -56,85 +52,37 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         uint256 totalFee = 1 ether;
         (
             uint256 beneficiaryFee,
-            uint256 protocolFee,
-            uint256 referrerFee,
-            uint256 burnFee
+            uint256 protocolFee
         ) = liquidRouter.quoteFeeBreakdown(totalFee);
 
-        assertEq(beneficiaryFee, (totalFee * 2500) / 10000);
-
-        uint256 remainder = totalFee - beneficiaryFee;
-        assertEq(burnFee, (remainder * RARE_BURN_FEE_BPS) / 10000);
-        assertEq(referrerFee, (remainder * REFERRER_FEE_BPS) / 10000);
-        assertTrue(protocolFee >= (remainder * PROTOCOL_FEE_BPS) / 10000);
+        assertEq(beneficiaryFee + protocolFee, totalFee);
+        assertGt(beneficiaryFee, 0);
+        assertGt(protocolFee, 0);
     }
 
     function testFeeConfigUpdatedOnRouter() public {
         LiquidRouter customRouter = deployLiquidRouter(
             address(router),
             protocolFeeRecipient,
-            address(burner),
-            4000, // rareBurnFeeBPS (40%)
-            4000, // protocolFeeBPS (40%)
-            2000, // referrerFeeBPS (20%)
             admin
         );
         vm.prank(admin);
         customRouter.registerToken(address(token), beneficiary);
 
         uint256 ethAmount = 1 ether;
-        uint256 totalFee = (ethAmount * TOTAL_FEE_BPS) / 10000; // 4%
 
         uint256 protocolBalBefore = protocolFeeRecipient.balance;
-        uint256 burnerBalBefore = burner.deposited();
 
         vm.prank(user1);
         _buyWithValidRoute(
             customRouter,
             address(token),
             user1,
-            referrer,
             1,
             ethAmount
         );
 
-        uint256 beneficiaryFee = (totalFee * 2500) / 10000; // 25%
-        uint256 remainingFee = totalFee - beneficiaryFee;
-        uint256 expectedBurnFee = (remainingFee * 4000) / 10000; // 40% of remainder
-
-        assertEq(burner.deposited() - burnerBalBefore, expectedBurnFee);
         assertTrue(protocolFeeRecipient.balance > protocolBalBefore);
-    }
-
-    function testBurnerFailureFallsBackToProtocol() public {
-        burner.setShouldFail(true);
-
-        uint256 protocolBalBefore = protocolFeeRecipient.balance;
-
-        vm.prank(user1);
-        _buyWithValidRoute(
-            liquidRouter,
-            address(token),
-            user1,
-            referrer,
-            1,
-            1 ether
-        );
-
-        assertTrue(protocolFeeRecipient.balance > protocolBalBefore);
-    }
-
-    function testNoBurnerConfiguredReverts() public {
-        vm.expectRevert(ILiquidRouter.AddressZero.selector);
-        deployLiquidRouter(
-            address(router),
-            protocolFeeRecipient,
-            address(0), // No burner - contract requires non-zero
-            RARE_BURN_FEE_BPS,
-            PROTOCOL_FEE_BPS,
-            REFERRER_FEE_BPS,
-            admin
-        );
     }
 
     function testNoBeneficiaryReverts() public {
@@ -145,10 +93,6 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         LiquidRouter newLiquidRouter = deployLiquidRouter(
             address(newRouter),
             protocolFeeRecipient,
-            address(burner),
-            RARE_BURN_FEE_BPS,
-            PROTOCOL_FEE_BPS,
-            REFERRER_FEE_BPS,
             admin
         );
 
@@ -169,10 +113,6 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         LiquidRouter newLiquidRouter = deployLiquidRouter(
             address(newRouter),
             protocolFeeRecipient,
-            address(burner),
-            RARE_BURN_FEE_BPS,
-            PROTOCOL_FEE_BPS,
-            REFERRER_FEE_BPS,
             admin
         );
 
@@ -188,7 +128,6 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
             newLiquidRouter,
             address(newToken),
             user1,
-            referrer,
             1,
             1 ether
         );
@@ -203,15 +142,13 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         liquidRouter.updateBeneficiary(address(token), address(gasHog));
 
         uint256 ethAmount = 1 ether;
-        uint256 totalFee = (ethAmount * liquidRouter.TOTAL_FEE_BPS()) /
+        uint256 totalFee = (ethAmount * _totalFeeBpsForRouter(liquidRouter)) /
             10000;
         (
             uint256 beneficiaryFee,
-            uint256 protocolFee,
-            uint256 referrerFee,
-            uint256 burnFee
+            uint256 protocolFee
         ) = liquidRouter.quoteFeeBreakdown(totalFee);
-        uint256 feeSum = beneficiaryFee + protocolFee + referrerFee + burnFee;
+        uint256 feeSum = beneficiaryFee + protocolFee;
 
         uint256 protocolBalBefore = protocolFeeRecipient.balance;
         uint256 routerBalBefore = address(liquidRouter).balance;
@@ -221,13 +158,12 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
             liquidRouter,
             address(token),
             user1,
-            address(0),
             1,
             ethAmount
         );
 
         uint256 protocolBalAfter = protocolFeeRecipient.balance;
-        uint256 expectedProtocolShare = protocolFee + beneficiaryFee + referrerFee;
+        uint256 expectedProtocolShare = protocolFee + beneficiaryFee;
 
         assertEq(protocolBalAfter - protocolBalBefore, expectedProtocolShare);
         assertEq(feeSum, totalFee);
@@ -236,139 +172,6 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
             routerBalBefore,
             "No ETH should remain in router after trade"
         );
-    }
-
-    function testReferrerTransferGasHogFallsBackToProtocol() public {
-        GasHogRecipientForRouter gasHog = new GasHogRecipientForRouter();
-
-        MockERC20 customToken = new MockERC20();
-        MockUniversalRouterForRouter customRouter = new MockUniversalRouterForRouter(
-            address(customToken)
-        );
-        vm.deal(address(customRouter), 100 ether);
-
-        LiquidRouter referrerFallbackRouter = deployLiquidRouter(
-            address(customRouter),
-            protocolFeeRecipient,
-            address(burner),
-            5000, // all remaining fee goes to burn + referrer split
-            0, // protocol gets redirected referrer share on failure
-            5000,
-            admin
-        );
-
-        vm.prank(admin);
-        referrerFallbackRouter.registerToken(address(customToken), beneficiary);
-
-        uint256 ethAmount = 1 ether;
-        uint256 totalFee = (ethAmount * liquidRouter.TOTAL_FEE_BPS()) / 10000;
-        uint256 ignoredBeneficiary;
-        uint256 ignoredProtocol;
-        uint256 ignoredBurn;
-        uint256 expectedRedirectedReferrerFee;
-        (
-            ignoredBeneficiary,
-            ignoredProtocol,
-            expectedRedirectedReferrerFee,
-            ignoredBurn
-        ) = referrerFallbackRouter.quoteFeeBreakdown(totalFee);
-        uint256 referrerFeeComponents = ignoredBeneficiary +
-            ignoredProtocol +
-            expectedRedirectedReferrerFee +
-            ignoredBurn;
-
-        uint256 protocolBalBefore = protocolFeeRecipient.balance;
-        uint256 routerBalBefore = address(referrerFallbackRouter).balance;
-
-        vm.prank(user1);
-        _buyWithValidRoute(
-            referrerFallbackRouter,
-            address(customToken),
-            user1,
-            address(gasHog),
-            1,
-            ethAmount
-        );
-
-        uint256 protocolBalAfter = protocolFeeRecipient.balance;
-
-        assertEq(
-            protocolBalAfter - protocolBalBefore,
-            expectedRedirectedReferrerFee,
-            "protocol should receive referrer share when referrer is gas-hog"
-        );
-        assertEq(referrerFeeComponents, totalFee);
-        assertEq(
-            address(referrerFallbackRouter).balance,
-            routerBalBefore,
-            "No ETH should remain in router after trade"
-        );
-    }
-
-    function testReferrerTransferFailureFallsBackToProtocol() public {
-        RejectingRecipientForRouter rejecter = new RejectingRecipientForRouter();
-
-        uint256 protocolBalBefore = protocolFeeRecipient.balance;
-
-        vm.prank(user1);
-        _buyWithValidRoute(
-            liquidRouter,
-            address(token),
-            user1,
-            address(rejecter),
-            1,
-            1 ether
-        );
-
-        assertTrue(protocolFeeRecipient.balance > protocolBalBefore);
-    }
-
-    function testZeroReferrerDefaultsToProtocol() public {
-        uint256 protocolBalBefore = protocolFeeRecipient.balance;
-
-        vm.prank(user1);
-        _buyWithValidRoute(
-            liquidRouter,
-            address(token),
-            user1,
-            address(0), // No referrer
-            1,
-            1 ether
-        );
-
-        assertTrue(protocolFeeRecipient.balance > protocolBalBefore);
-    }
-
-    function testNoDoubleTransferWhenReferrerIsZero() public {
-        uint256 protocolBalBefore = protocolFeeRecipient.balance;
-
-        vm.prank(user1);
-        _buyWithValidRoute(
-            liquidRouter,
-            address(token),
-            user1,
-            address(0),
-            1,
-            1 ether
-        );
-
-        assertTrue(protocolFeeRecipient.balance > protocolBalBefore);
-    }
-
-    function testNoDoubleTransferWhenReferrerIsProtocol() public {
-        uint256 protocolBalBefore = protocolFeeRecipient.balance;
-
-        vm.prank(user1);
-        _buyWithValidRoute(
-            liquidRouter,
-            address(token),
-            user1,
-            protocolFeeRecipient,
-            1,
-            1 ether
-        );
-
-        assertTrue(protocolFeeRecipient.balance > protocolBalBefore);
     }
 
     function testRouterBalanceZeroAfterBuy() public {
@@ -380,7 +183,6 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
             liquidRouter,
             address(token),
             user1,
-            referrer,
             1,
             ethAmount
         );
@@ -400,7 +202,6 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            referrer,
             1
         );
 
@@ -412,49 +213,11 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
             uint256 totalFee = (uint256(1 + i) * 1 ether * TOTAL_FEE_BPS) / 10000;
             (
                 uint256 beneficiaryFee,
-                uint256 protocolFee,
-                uint256 referrerFee,
-                uint256 burnFee
+                uint256 protocolFee
             ) = liquidRouter.quoteFeeBreakdown(totalFee);
 
-            uint256 sumOfFees = beneficiaryFee + protocolFee + referrerFee + burnFee;
+            uint256 sumOfFees = beneficiaryFee + protocolFee;
             assertEq(sumOfFees, totalFee, "Sum of fees must equal totalFee");
-        }
-    }
-
-    function testFeeAccountingInvariant_RandomFeeSplits() public {
-        uint256[] memory rareBurnBPS = new uint256[](3);
-        rareBurnBPS[0] = 3000;
-        rareBurnBPS[1] = 5000;
-        rareBurnBPS[2] = 7000;
-
-        for (uint256 i = 0; i < rareBurnBPS.length; i++) {
-            uint256 rb = rareBurnBPS[i];
-            uint256 pp = (10000 - rb) / 2;
-            uint256 rf = 10000 - rb - pp;
-
-            LiquidRouter testRouter = deployLiquidRouter(
-                address(router),
-                protocolFeeRecipient,
-                address(burner),
-                rb,
-                pp,
-                rf,
-                admin
-            );
-            vm.prank(admin);
-            testRouter.registerToken(address(token), beneficiary);
-
-            uint256 totalFee = 1 ether;
-            (
-                uint256 beneficiaryFee,
-                uint256 protocolFee,
-                uint256 referrerFee,
-                uint256 burnFee
-            ) = testRouter.quoteFeeBreakdown(totalFee);
-
-            uint256 sumOfFees = beneficiaryFee + protocolFee + referrerFee + burnFee;
-            assertEq(sumOfFees, totalFee, "Sum of fees must equal totalFee for all configs");
         }
     }
 
@@ -464,21 +227,19 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
 
         (
             uint256 beneficiaryFee,
-            uint256 protocolFee,
-            uint256 referrerFee,
-            uint256 burnFee
+            uint256 protocolFee
         ) = liquidRouter.quoteFeeBreakdown(smallTotalFee);
 
-        uint256 sumOfFees = beneficiaryFee + protocolFee + referrerFee + burnFee;
+        uint256 sumOfFees = beneficiaryFee + protocolFee;
         assertEq(sumOfFees, smallTotalFee, "Fee accounting must work for very small amounts");
 
         uint256 largeAmount = 1000 ether;
         uint256 largeTotalFee = (largeAmount * TOTAL_FEE_BPS) / 10000;
 
-        (beneficiaryFee, protocolFee, referrerFee, burnFee) = liquidRouter
+        (beneficiaryFee, protocolFee) = liquidRouter
             .quoteFeeBreakdown(largeTotalFee);
 
-        sumOfFees = beneficiaryFee + protocolFee + referrerFee + burnFee;
+        sumOfFees = beneficiaryFee + protocolFee;
         assertEq(sumOfFees, largeTotalFee, "Fee accounting must work for very large amounts");
     }
 
@@ -493,7 +254,6 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
             liquidRouter,
             address(token),
             user1,
-            referrer,
             1,
             msgValue
         );
@@ -506,16 +266,14 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
 
         uint256 totalFee = (msgValue * TOTAL_FEE_BPS) / 10000;
 
-        if (totalFee < 4) return;
+        if (totalFee < 2) return;
 
         (
             uint256 beneficiaryFee,
-            uint256 protocolFee,
-            uint256 referrerFee,
-            uint256 burnFee
+            uint256 protocolFee
         ) = liquidRouter.quoteFeeBreakdown(totalFee);
 
-        uint256 sumOfFees = beneficiaryFee + protocolFee + referrerFee + burnFee;
+        uint256 sumOfFees = beneficiaryFee + protocolFee;
 
         assertLe(sumOfFees, totalFee, "Sum of fees should not exceed total fee");
 
@@ -527,42 +285,35 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
         );
     }
 
-    function test_Buy_WhenReferrerIsProtocolFeeRecipient_NoDoubleTransfer() public {
-        address referrerAsProtocol = protocolFeeRecipient;
-
-        uint256 protocolBalanceBefore = referrerAsProtocol.balance;
+    function test_Buy_ProtocolReceivesFees() public {
+        uint256 protocolBalanceBefore = protocolFeeRecipient.balance;
 
         vm.prank(user1);
         _buyWithValidRoute(
             liquidRouter,
             address(token),
             user1,
-            referrerAsProtocol,
             1,
             1 ether
         );
 
-        uint256 protocolBalanceAfter = referrerAsProtocol.balance;
+        uint256 protocolBalanceAfter = protocolFeeRecipient.balance;
         uint256 received = protocolBalanceAfter - protocolBalanceBefore;
 
         uint256 totalFee = (1 ether * TOTAL_FEE_BPS) / 10000;
-        (, uint256 protocolFee, uint256 referrerFee, ) = liquidRouter
+        (, uint256 protocolFee) = liquidRouter
             .quoteFeeBreakdown(totalFee);
 
-        uint256 expected = protocolFee + referrerFee;
-
-        assertGe(received, expected - 3, "Should receive protocol + referrer fees");
-        assertLe(received, expected + 3, "Should receive protocol + referrer fees");
+        assertGe(received, protocolFee - 3, "Should receive protocol fees");
+        assertLe(received, protocolFee + 3, "Should receive protocol fees");
     }
 
-    function test_Sell_WhenReferrerIsProtocolFeeRecipient_ProtocolGetsShare() public {
-        address referrerAsProtocol = protocolFeeRecipient;
-
+    function test_Sell_ProtocolGetsShare() public {
         uint256 tokenAmount = 1000e18;
         vm.prank(user1);
         token.approve(address(liquidRouter), tokenAmount);
 
-        uint256 protocolBalanceBefore = referrerAsProtocol.balance;
+        uint256 protocolBalanceBefore = protocolFeeRecipient.balance;
 
         vm.prank(user1);
         _sellWithValidRoute(
@@ -570,21 +321,18 @@ contract LiquidRouterUnitFeesTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            referrerAsProtocol,
             1
         );
 
-        uint256 protocolBalanceAfter = referrerAsProtocol.balance;
+        uint256 protocolBalanceAfter = protocolFeeRecipient.balance;
         uint256 received = protocolBalanceAfter - protocolBalanceBefore;
 
         uint256 ethReceived = (tokenAmount * 1e18) / router.tokenPerEth();
         uint256 totalFee = (ethReceived * TOTAL_FEE_BPS) / 10000;
-        (, uint256 protocolFee, uint256 referrerFee, ) = liquidRouter
+        (, uint256 protocolFee) = liquidRouter
             .quoteFeeBreakdown(totalFee);
 
-        uint256 expected = protocolFee + referrerFee;
-
-        assertGe(received, expected - 3, "Should receive protocol + referrer fees");
-        assertLe(received, expected + 3, "Should receive protocol + referrer fees");
+        assertGe(received, protocolFee - 3, "Should receive protocol fees");
+        assertLe(received, protocolFee + 3, "Should receive protocol fees");
     }
 }

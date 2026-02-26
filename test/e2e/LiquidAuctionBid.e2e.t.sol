@@ -41,7 +41,6 @@ contract AnvilForkAuctionBidIntegrationTest is AnvilForkAuctionBase {
             graduatedToken,
             0,
             buyer,
-            address(0),
             0,
             1,
             block.timestamp + 1 hours

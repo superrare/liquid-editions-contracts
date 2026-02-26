@@ -533,45 +533,8 @@ async function discoverUsdcRareTemplate(
     });
   }
 
-  const alpha = await getAlphaRouteQuote(
-    provider,
-    chainId,
-    new Token(chainId, usdc, usdcDecimals, "USDC", "USD Coin"),
-    new Token(chainId, rare, 18, "RARE", "RARE"),
-    probeUsdcIn
-  );
-  if (alpha) {
-    if (alpha.protocol === "V3") {
-      const { path, fees } = extractV3Path(alpha.route);
-      candidates.push({
-        amountOut: alpha.amountOut,
-        label: "alpha-v3",
-        template: {
-          pair: "USDC_RARE",
-          kind: "v3",
-          path,
-          fees,
-          quoteProbeIn: probeUsdcIn.toString(),
-          quoteProbeOut: alpha.amountOut.toString(),
-        },
-      });
-    } else {
-      candidates.push({
-        amountOut: alpha.amountOut,
-        label: "alpha-v2",
-        template: {
-          pair: "USDC_RARE",
-          kind: "v2",
-          path: extractV2Path(alpha.route),
-          quoteProbeIn: probeUsdcIn.toString(),
-          quoteProbeOut: alpha.amountOut.toString(),
-        },
-      });
-    }
-  }
-
-  if (!candidates.length) throw new Error("No viable USDC->RARE route candidate found");
-  const best = candidates.reduce((a, b) => (b.amountOut.gt(a.amountOut) ? b : a));
+  if (!candidates.length) throw new Error("No viable USDC->RARE V4 route candidate found. ERC20 routes in LiquidAuctioneer require V4 pools.");
+  const best = candidates[0];
   console.log(`  Selected USDC->RARE: ${best.label} (${best.amountOut.toString()} out @ probe)`);
   return best.template;
 }

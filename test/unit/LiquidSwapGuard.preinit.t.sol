@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import {LiquidSwapGuard} from "liquid-editions/LiquidSwapGuard.sol";
 import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
+import {ILiquidSwapGuard} from "liquid-editions/interfaces/ILiquidSwapGuard.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
@@ -61,7 +62,7 @@ contract LiquidSwapGuardPreInitTest is Test {
         // In real scenario, attacker calls pm.initialize(), then PoolManager calls hook.beforeInitialize(attacker, ...)
         vm.expectRevert(
             abi.encodeWithSelector(
-                LiquidSwapGuard.UnauthorizedInitializer.selector,
+                ILiquidSwapGuard.UnauthorizedInitializer.selector,
                 attacker
             )
         );
@@ -138,7 +139,7 @@ contract LiquidSwapGuardPreInitTest is Test {
         assertEq(guard.factory(), anotherFactory);
 
         vm.prank(factoryAddr);
-        vm.expectRevert(LiquidSwapGuard.NotOwnerOrFactory.selector);
+        vm.expectRevert(ILiquidSwapGuard.NotOwnerOrFactory.selector);
         guard.addInitializer(tokenFromSecondFactory);
 
         vm.prank(admin);
@@ -160,7 +161,7 @@ contract LiquidSwapGuardPreInitTest is Test {
 
         // Random address cannot add initializers
         vm.prank(randomAddr);
-        vm.expectRevert(LiquidSwapGuard.NotOwnerOrFactory.selector);
+        vm.expectRevert(ILiquidSwapGuard.NotOwnerOrFactory.selector);
         guard.addInitializer(tokenContract);
     }
 
@@ -201,7 +202,7 @@ contract LiquidSwapGuardPreInitTest is Test {
         // In real scenario, attacker calls pm.initialize(), then PoolManager calls hook.beforeInitialize(attacker, ...)
         vm.expectRevert(
             abi.encodeWithSelector(
-                LiquidSwapGuard.UnauthorizedInitializer.selector,
+                ILiquidSwapGuard.UnauthorizedInitializer.selector,
                 attacker
             )
         );

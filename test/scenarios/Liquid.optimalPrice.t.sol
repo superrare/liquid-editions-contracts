@@ -11,10 +11,13 @@ import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 /// @title LiquidMultiCurve Optimal Price Calculation Tests
 /// @notice Tests that verify optimal starting price calculation uses all provided RARE and LIQUID tokens
-contract LiquidInstantOptimalPriceTest is Test {
+contract LiquidInstantOptimalPriceTest is Test, InitGuardTestHelper {
     using StateLibrary for IPoolManager;
 
     // Network configuration
@@ -35,10 +38,7 @@ contract LiquidInstantOptimalPriceTest is Test {
 
     function setUp() public {
         // Fork Base mainnet for realistic testing
-        string memory forkUrl = vm.envOr(
-            "FORK_URL",
-            string("https://mainnet.base.org")
-        );
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
 
         // Get network configuration
@@ -53,6 +53,9 @@ contract LiquidInstantOptimalPriceTest is Test {
 
         liquidImpl = new LiquidMultiCurve();
 
+        // Deploy init guard for pool hooks
+        address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
+
         // Deploy factory
         factory = new LiquidFactory(
             admin,
@@ -61,12 +64,13 @@ contract LiquidInstantOptimalPriceTest is Test {
             LP_TICK_LOWER,
             LP_TICK_UPPER,
             config.uniswapV4Quoter,
-            address(0), // poolHooks
+            initGuardAddr, // poolHooks
             60, // poolTickSpacing
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-                factory.setLiquidRouter(address(1));
+        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+                factory.setLiquidRegistry(address(1));
 
         factory.setLiquidMultiCurveImplementation(address(liquidImpl));
 

@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
+import {IRAREBurner} from "liquid-editions/interfaces/IRAREBurner.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {ILiquidFactory} from "liquid-editions/interfaces/ILiquidFactory.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
@@ -17,10 +18,13 @@ import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 /// @title LiquidMultiCurve Mainnet Invariant Tests
 /// @notice Critical invariant and integration tests for LiquidMultiCurve token system on Base mainnet fork
-contract LiquidInstantMainnetInvariantTest is Test {
+contract LiquidInstantMainnetInvariantTest is Test, InitGuardTestHelper {
     using StateLibrary for IPoolManager;
 
     // Network configuration
@@ -87,10 +91,7 @@ contract LiquidInstantMainnetInvariantTest is Test {
 
     function setUp() public {
         // Fork Base mainnet for realistic testing
-        string memory forkUrl = vm.envOr(
-            "FORK_URL",
-            string("https://mainnet.base.org")
-        );
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
 
         // Get network configuration (Base mainnet chain ID = 8453)
@@ -123,7 +124,8 @@ contract LiquidInstantMainnetInvariantTest is Test {
             false // disabled initially
         );
 
-        // Deploy factory with 0% burn fee initially
+        // Deploy init guard and factory
+        address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factory = new LiquidFactory(
             admin,
             config.weth,
@@ -131,12 +133,13 @@ contract LiquidInstantMainnetInvariantTest is Test {
             LP_TICK_LOWER,
             LP_TICK_UPPER,
             config.uniswapV4Quoter, // Use wrapper instead of raw quoter
-            address(0), // poolHooks (no hooks)
+            initGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-                factory.setLiquidRouter(address(1));
+        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+                factory.setLiquidRegistry(address(1));
 
         factory.setLiquidMultiCurveImplementation(address(liquidImpl));
 
@@ -160,19 +163,22 @@ contract LiquidInstantMainnetInvariantTest is Test {
         internal
         returns (LiquidFactory factoryWithBurn)
     {
-        vm.startPrank(admin);        factoryWithBurn = new LiquidFactory(
+        vm.startPrank(admin);
+        address burnInitGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
+        factoryWithBurn = new LiquidFactory(
             admin,
             config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
             LP_TICK_LOWER,
             LP_TICK_UPPER,
             config.uniswapV4Quoter, // Use wrapper instead of raw quoter
-            address(0), // poolHooks (no hooks)
+            burnInitGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
             300, // internalMaxSlippageBps
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-                factoryWithBurn.setLiquidRouter(address(1));
+        LiquidInitGuard(burnInitGuardAddr).setFactory(address(factoryWithBurn));
+                factoryWithBurn.setLiquidRegistry(address(1));
         factoryWithBurn.setLiquidMultiCurveImplementation(address(liquidImpl));
 
         // Deploy mock RARE token if not already deployed
@@ -236,7 +242,7 @@ contract LiquidInstantMainnetInvariantTest is Test {
 
         // Attempt hostile direct call from user
         vm.prank(user1);
-        vm.expectRevert(RAREBurner.OnlyPoolManager.selector);
+        vm.expectRevert(IRAREBurner.OnlyPoolManager.selector);
         testBurner.unlockCallback(fakeCallbackData);
 
         console.log(
@@ -274,6 +280,7 @@ contract LiquidInstantMainnetInvariantTest is Test {
         );
 
         // Create new factory with configured burner
+        address reentryInitGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factoryWithBurn = new LiquidFactory(
             admin,
             config.weth,
@@ -281,12 +288,13 @@ contract LiquidInstantMainnetInvariantTest is Test {
             LP_TICK_LOWER,
             LP_TICK_UPPER,
             config.uniswapV4Quoter, // Use wrapper instead of raw quoter
-            address(0), // poolHooks (no hooks)
+            reentryInitGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
             300, // internalMaxSlippageBps
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-                factoryWithBurn.setLiquidRouter(address(1));
+        LiquidInitGuard(reentryInitGuardAddr).setFactory(address(factoryWithBurn));
+                factoryWithBurn.setLiquidRegistry(address(1));
         factoryWithBurn.setLiquidMultiCurveImplementation(address(liquidImpl));
 
         // Set base token (RARE) in factory
@@ -338,7 +346,7 @@ contract LiquidInstantMainnetInvariantTest is Test {
 
         // Should revert when called from attacker address
         vm.prank(user1);
-        vm.expectRevert(RAREBurner.OnlyPoolManager.selector);
+        vm.expectRevert(IRAREBurner.OnlyPoolManager.selector);
         burner.unlockCallback(callbackData);
 
         console.log(

@@ -119,19 +119,6 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
     bool public paused;
 
     // ============================================
-    // ERRORS (internal implementation only - public errors in IRAREBurner)
-    // ============================================
-
-    /// @notice Thrown when caller is not the V4 PoolManager
-    error OnlyPoolManager();
-
-    /// @notice Thrown when unlock callback is called unexpectedly
-    error UnexpectedUnlock();
-
-    /// @notice Thrown when swap returns unexpected delta signs
-    error UnexpectedSwapDirection();
-
-    // ============================================
     // CONSTRUCTOR
     // ============================================
 
@@ -465,8 +452,19 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
         }
     }
 
-    /// @notice Executes V4 swap via unlock callback mechanism
-    /// @dev External to enable try/catch in _tryFlush. Must be called by self.
+    /// @notice Executes V4 swap via unlock callback mechanism (self-call pattern)
+    /// @dev This function uses a self-call pattern for error isolation:
+    ///      - Function is external (not internal) to enable try/catch in _tryFlush()
+    ///      - Must be called by this contract itself (msg.sender == address(this))
+    ///      - Sets one-shot context guard (_v4BurnCtx) before calling unlock()
+    ///      - unlock() triggers unlockCallback() which executes the swap
+    ///      - Context guard is cleared in unlockCallback() if swap succeeds
+    ///      - If swap fails, context guard remains set and _executeV4Swap() reverts
+    ///
+    ///      **Why self-call?** This pattern isolates swap failures from affecting the caller.
+    ///      If the swap fails (e.g., slippage exceeded, pool not initialized), the error is caught
+    ///      in _tryFlush() and funds remain pending for retry. Without this isolation, swap failures
+    ///      would revert the entire depositForBurn() transaction.
     /// @param ethAmount Amount of ETH to swap
     /// @param _V4_POOL_MANAGER V4 PoolManager address
     /// @param key Pool key for the swap
@@ -483,6 +481,7 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
         Currency rareC,
         address _burnAddress
     ) external {
+        // Self-call guard: only this contract can call this function
         if (msg.sender != address(this)) revert IRAREBurner.OnlySelf();
 
         bytes memory data = abi.encode(
@@ -585,7 +584,8 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
         return "";
     }
 
-    /// @dev Safe cast from uint256 to uint128 with overflow check
+    /// @notice Safe cast from uint256 to uint128 with overflow check
+    /// @dev Used for V4 Quoter params which require uint128 amounts. Reverts if value exceeds uint128.max.
     /// @param value The uint256 value to cast
     /// @return The value as uint128
     function _toUint128Safe(uint256 value) internal pure returns (uint128) {
@@ -596,8 +596,15 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
         return uint128(value);
     }
 
-    /// @notice Helper function to parse quote amount from revert reason
-    /// @dev External function to enable try-catch in _tryFlush
+    /// @notice Helper function to parse quote amount from revert reason (external for try-catch)
+    /// @dev This function is external (not internal) to enable try-catch error handling in _tryFlush().
+    ///      V4 Quoter uses revert-as-return pattern: it reverts with encoded quote data instead of returning it.
+    ///      When _tryFlush() calls the quoter and catches the revert, it needs to parse the quote amount
+    ///      from the revert reason bytes. However, Solidity's try-catch can only catch external function calls,
+    ///      not internal function calls. By making this function external, we can call it with try-catch
+    ///      to handle parsing failures gracefully (if the revert reason doesn't match expected format).
+    /// @param reason Revert reason bytes from V4 Quoter call (contains encoded quote data)
+    /// @return Parsed quote amount (uint256) extracted from revert reason
     function _parseQuoteAmount(
         bytes memory reason
     ) external pure returns (uint256) {

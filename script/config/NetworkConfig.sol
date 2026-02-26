@@ -10,6 +10,12 @@ library NetworkConfig {
         address auctioneer;
         /// @notice LiquidSwapGuard hook for Instant/MultiCurve/Graduated pools; restricts swaps to LiquidRouter
         address swapGuard;
+        /// @notice LiquidInitGuard hook (init-only protection); default poolHooks when swapGuard is not used
+        address initGuard;
+        /// @notice Shared FeeDistributor module used by router and auctioneer
+        address feeDistributor;
+        /// @notice Shared LiquidRegistry module used by router and auctioneer
+        address liquidRegistry;
     }
 
     struct Config {
@@ -42,7 +48,7 @@ library NetworkConfig {
                 Config({
                     rareToken: 0xba5BDe662c17e2aDFF1075610382B9B691296350,
                     usdc: 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48,
-                    rareBurner: 0x0000000000000000000000000000000000000000, // not yet deployed
+                    rareBurner: address(0), // not yet deployed
                     weth: 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2,
                     rareEthPoolId: 0xc5e82ff54924a7232a3e91ca252d505f4e4417afa2b6a8507dfb691182cd0b16,
                     uniswapV4PoolManager: 0x000000000004444c5dc75cB358380D2e3dE08A90,
@@ -56,7 +62,10 @@ library NetworkConfig {
                         factory: address(0), // not yet deployed
                         router: address(0), // not yet deployed
                         auctioneer: address(0), // not yet deployed
-                        swapGuard: address(0) // not yet deployed
+                        swapGuard: address(0), // not yet deployed
+                        initGuard: address(0), // not yet deployed
+                        feeDistributor: address(0), // not yet deployed
+                        liquidRegistry: address(0) // not yet deployed
                     })
                 });
         } else if (chainId == 8453) {
@@ -65,21 +74,24 @@ library NetworkConfig {
                 Config({
                     rareToken: 0x691077C8e8de54EA84eFd454630439F99bd8C92f,
                     usdc: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913,
-                    rareBurner: 0x0000000000000000000000000000000000000000,
+                    rareBurner: address(0),
                     weth: 0x4200000000000000000000000000000000000006,
                     rareEthPoolId: 0x0000000000000000000000000000000000000000000000000000000000000000,
                     uniswapV4PoolManager: 0x498581fF718922c3f8e6A244956aF099B2652b2b,
                     uniswapV4PositionManager: 0x7C5f5A4bBd8fD63184577525326123B519429bDc,
                     uniswapV4Quoter: 0x0d5e0F971ED27FBfF6c2837bf31316121532048D,
                     uniswapUniversalRouter: 0x6fF5693b99212Da76ad316178A184AB56D299b43,
-                    ccaFactory: 0x0000000000000000000000000000000000000000,
+                    ccaFactory: address(0), // need to add this before actual mainnet deployment
                     lbpStrategyFactory: 0x39E5eB34dD2c8082Ee1e556351ae660F33B04252,
-                    protocolFeeRecipient: 0x0000000000000000000000000000000000000000,
+                    protocolFeeRecipient: address(0), // need to know what this is before actual mainnet deployment
                     liquid: LiquidAddresses({
                         factory: address(0),
                         router: address(0),
                         auctioneer: address(0),
-                        swapGuard: address(0)
+                        swapGuard: address(0),
+                        initGuard: address(0),
+                        feeDistributor: address(0),
+                        liquidRegistry: address(0)
                     })
                 });
         } else if (chainId == 84532) {
@@ -95,14 +107,17 @@ library NetworkConfig {
                     uniswapV4PositionManager: 0x4B2C77d209D3405F41a037Ec6c77F7F5b8e2ca80,
                     uniswapV4Quoter: 0x4A6513c898fe1B2d0E78d3b0e0A4a151589B1cBa,
                     uniswapUniversalRouter: 0x95273d871c8156636e114b63797d78D7E1720d81,
-                    ccaFactory: 0x0000000000000000000000000000000000000000,
-                    lbpStrategyFactory: 0x0000000000000000000000000000000000000000,
+                    ccaFactory: address(0), // need to add this before actual mainnet deployment
+                    lbpStrategyFactory: address(0), // need to add this before actual mainnet deployment
                     protocolFeeRecipient: 0xBa68422A154e459f7b4992a95Ad358d412b6bd1d,
                     liquid: LiquidAddresses({
                         factory: 0xc265a84Dc7EeC0fc15f5F91B61C6C094e7De7116,
                         router: 0x137A81F1C8cC11B69179F8Bf6ACb7e53D7DBC50F,
                         auctioneer: address(0),
-                        swapGuard: address(0)
+                        swapGuard: address(0),
+                        initGuard: address(0),
+                        feeDistributor: address(0),
+                        liquidRegistry: address(0)
                     })
                 });
         } else if (chainId == 11155111) {
@@ -125,7 +140,10 @@ library NetworkConfig {
                         factory: 0xcA94DC0001929E9BB2aB6a053f61411Ab8E62879,
                         router: 0x7E0e7cF5514705ff7E91d6bEA4Cd633d55fB1184,
                         auctioneer: 0x6D9cDe40169Beb1e819395B8b62ad2b1a07b4754,
-                        swapGuard: 0x69E682bde73c1906CCcE0B0aA0587D63B4C4E080
+                        swapGuard: 0x69E682bde73c1906CCcE0B0aA0587D63B4C4E080,
+                        initGuard: address(0),
+                        feeDistributor: address(0),
+                        liquidRegistry: address(0)
                     })
                 });
         }

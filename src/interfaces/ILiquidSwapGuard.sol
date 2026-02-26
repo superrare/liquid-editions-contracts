@@ -5,6 +5,31 @@ pragma solidity ^0.8.0;
 /// @notice Interface for LiquidSwapGuard hook contract
 /// @dev Used by LiquidFactory to whitelist token contracts before pool initialization
 interface ILiquidSwapGuard {
+    // ============================================
+    // ERRORS
+    // ============================================
+
+    /// @notice Thrown when the swap router has not been registered as verified
+    error UnverifiedRouter(address router);
+
+    /// @notice Thrown when the router-provided caller is not whitelisted
+    error UnauthorizedCaller(address caller);
+
+    /// @notice Thrown when the router does not implement the expected msg-sender callback
+    error RouterDoesNotImplementMsgSender(address router);
+
+    /// @notice Thrown when an initializer is not allowed to initialize a pool
+    error UnauthorizedInitializer(address sender);
+
+    /// @notice Thrown when a call is not from the PoolManager
+    error NotPoolManager();
+
+    /// @notice Thrown when an admin function caller is neither owner nor factory
+    error NotOwnerOrFactory();
+
+    /// @notice Thrown when an invalid factory address is configured
+    error InvalidFactoryAddress();
+
     /// @notice Returns the currently configured factory
     function factory() external view returns (address);
 

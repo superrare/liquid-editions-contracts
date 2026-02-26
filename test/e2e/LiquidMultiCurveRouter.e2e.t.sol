@@ -17,6 +17,7 @@ import {LiquidSwapGuard} from "liquid-editions/LiquidSwapGuard.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 import {DeployConfig} from "script/config/DeployConfig.sol";
 import {DeployLiquidSwapGuard} from "script/deployers/DeployLiquidSwapGuard.s.sol";
+import {IFeeDistributor} from "liquid-editions/interfaces/IFeeDistributor.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
@@ -284,7 +285,7 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
 
         for (uint256 i = 0; i < ethAmounts.length; i++) {
             uint256 ethIn = ethAmounts[i];
-            uint256 ethForSwap = (ethIn * (10000 - router.TOTAL_FEE_BPS())) /
+            uint256 ethForSwap = (ethIn * (10000 - _totalFeeBpsForRouter())) /
                 10000;
             (uint256 priceBefore, ) = liquidMultiCurveToken.getCurrentPrice();
             (bool ethRareOkLoop, uint256 rarePerEthLoop) = _getEthRarePrice();
@@ -294,7 +295,6 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
                 tokenAddr,
                 buyer,
                 ethIn,
-                address(0),
                 address(guard)
             );
 
@@ -389,7 +389,6 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
             tokenAddr,
             sellAmount1,
             buyer,
-            address(0),
             address(guard)
         );
         console.log(
@@ -404,7 +403,6 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
             tokenAddr,
             sellAmount2,
             buyer,
-            address(0),
             address(guard)
         );
         console.log(
@@ -441,10 +439,9 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
         address token,
         address recipient,
         uint256 ethAmount,
-        address referrer,
         address poolHooks
     ) internal returns (uint256 tokensReceived) {
-        uint256 ethForSwap = (ethAmount * (10000 - router.TOTAL_FEE_BPS())) /
+        uint256 ethForSwap = (ethAmount * (10000 - _totalFeeBpsForRouter())) /
             10000;
         (bytes memory commands, bytes[] memory inputs) = _encodeBuyRouteWithHooks(
             token,
@@ -457,7 +454,6 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
             router.buy{value: ethAmount}(
                 token,
                 recipient,
-                referrer,
                 1,
                 commands,
                 inputs,
@@ -465,12 +461,15 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
             );
     }
 
+    function _totalFeeBpsForRouter() internal view returns (uint256) {
+        return IFeeDistributor(router.feeDistributor()).totalFeeBPS();
+    }
+
     function _doSellWithHooks(
         address asUser,
         address token,
         uint256 tokenAmount,
         address recipient,
-        address referrer,
         address poolHooks
     ) internal returns (uint256 ethReceived) {
         vm.startPrank(asUser);
@@ -485,7 +484,6 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
             token,
             tokenAmount,
             recipient,
-            referrer,
             1,
             commands,
             inputs,

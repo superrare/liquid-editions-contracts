@@ -46,11 +46,9 @@ library DeployConfig {
     }
 
     /// @notice Fee distribution config shared by LiquidRouter and LiquidAuctioneer.
-    /// The three BPS fields must sum to 10,000 (100% of the remainder after beneficiary cut).
+    /// totalFeeBPS is the full gross fee on ETH side (e.g., 400 = 4%).
     struct FeeConfig {
-        uint16 rareBurnFeeBPS;
-        uint16 protocolFeeBPS;
-        uint16 referrerFeeBPS;
+        uint16 totalFeeBPS;
     }
 
     enum AuctionRouteKind {
@@ -108,9 +106,7 @@ library DeployConfig {
                 minRareLiquidityWei: 250000000000000000000 // 250 RARE (shared by Instant and MultiCurve)
             }),
             fees: FeeConfig({
-                protocolFeeBPS: 10000, // 100% of remainder after creator fee
-                rareBurnFeeBPS: 0, // 0% of remainder after creator fee
-                referrerFeeBPS: 0 // 0% of remainder after creator fee
+                totalFeeBPS: 400 // 4% gross fees
             }),
             auctioneerRoutes: AuctioneerRoutesConfig({
                 ethToRare: AuctionRouteConfig({

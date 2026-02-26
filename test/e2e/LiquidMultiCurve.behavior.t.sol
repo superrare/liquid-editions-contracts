@@ -16,8 +16,11 @@ import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {DeployConfig} from "script/config/DeployConfig.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
-contract LiquidMultiCurveBehaviorTest is LiquidTokenBehaviorBase {
+contract LiquidMultiCurveBehaviorTest is LiquidTokenBehaviorBase, InitGuardTestHelper {
     NetworkConfig.Config internal config;
 
     string constant TOKEN_NAME = "MultiCurveBehavior";
@@ -56,16 +59,14 @@ contract LiquidMultiCurveBehaviorTest is LiquidTokenBehaviorBase {
         override
         returns (LiquidFactory, MockRARE)
     {
-        string memory forkUrl = vm.envOr(
-            "FORK_URL",
-            string("https://mainnet.base.org")
-        );
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
         config = NetworkConfig.getConfig(block.chainid);
 
         MockRARE rare = new MockRARE();
         rare.mint(tokenCreator, 10_000 ether);
 
+        address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         vm.startPrank(admin);
         LiquidFactory f = new LiquidFactory(
             admin,
@@ -74,12 +75,13 @@ contract LiquidMultiCurveBehaviorTest is LiquidTokenBehaviorBase {
             -180,
             120000,
             config.uniswapV4Quoter,
-            address(0),
+            initGuardAddr,
             60,
             300,
             LIQUIDITY
         );
-        f.setLiquidRouter(address(1));
+        LiquidInitGuard(initGuardAddr).setFactory(address(f));
+        f.setLiquidRegistry(address(1));
         LiquidMultiCurve impl = new LiquidMultiCurve();
         f.setLiquidMultiCurveImplementation(address(impl));
         f.setBaseToken(address(rare));

@@ -135,33 +135,77 @@ library RoutePolicy {
 
     }
 
+    /// @notice Extracts command type from raw command byte by masking out flags
+    /// @dev Universal Router command bytes have a two-part structure:
+    ///      - Lower 6 bits (0x3f): Command type (e.g., V3_SWAP_EXACT_IN = 0x00)
+    ///      - Upper 2 bits (0xc0): Flags (allow-revert bit, reserved bits)
+    ///      This function extracts only the command type by masking with COMMAND_TYPE_MASK (0x3f),
+    ///      effectively stripping the upper 2 bits. This allows validation to focus on command type
+    ///      regardless of flag settings (flags are validated separately in validateRoute()).
+    /// @param rawCommand Raw command byte with potential flags in upper bits
+    /// @return Command type byte with flags stripped (lower 6 bits only)
     function _commandType(bytes1 rawCommand) private pure returns (bytes1) {
         return bytes1(uint8(rawCommand) & COMMAND_TYPE_MASK);
     }
 
+    /// @notice Decodes recipient address from Universal Router command input
+    /// @dev Universal Router command inputs are ABI-encoded tuples. For V2/V3 swap commands,
+    ///      the first parameter is always the recipient address. This function:
+    ///      1. Validates input length is at least 32 bytes (minimum for ABI-encoded address)
+    ///      2. Decodes the first address from the ABI-encoded input
+    ///      3. Returns the recipient address for validation against allowed recipients (MSG_SENDER, ROUTER_ADDRESS)
+    ///      Used to extract and validate recipient addresses from swap command inputs to prevent
+    ///      unauthorized token redirection.
+    /// @param command Command byte (used for error reporting if input is invalid)
+    /// @param input ABI-encoded command input bytes (must contain at least one address parameter)
+    /// @return recipient Decoded recipient address (first address in the ABI-encoded input)
     function _decodeRecipient(
         bytes1 command,
         bytes memory input
     ) private pure returns (address recipient) {
+        // Validate input has at least 32 bytes (minimum for ABI-encoded address)
         if (input.length < 32) revert InvalidCommandInput(command);
+        // Decode first address from ABI-encoded input (ignores additional parameters)
         recipient = abi.decode(input, (address));
     }
 
+    /// @notice Validates V4 swap actions are allowlisted and properly sequenced
+    /// @dev V4 swaps use an actions array that specifies the sequence of operations to perform.
+    ///      This function validates that:
+    ///      1. Only explicitly allowlisted actions are present (SWAP_EXACT_IN, SETTLE_ALL, TAKE_ALL)
+    ///      2. TAKE_ALL action is present (required to claim output tokens)
+    ///      3. No unauthorized actions are included (default-reject security model)
+    ///
+    ///      **Allowed Actions:**
+    ///      - SWAP_EXACT_IN (0x07): Executes the swap with exact input amount
+    ///      - SETTLE_ALL (0x0c): Settles all token debts to the pool (pays input tokens)
+    ///      - TAKE_ALL (0x0f): Claims all output tokens from the pool (required for token output)
+    ///
+    ///      **Security Rationale:**
+    ///      - TAKE_ALL is mandatory because without it, output tokens remain in PoolManager and cannot be accessed
+    ///      - Other V4 actions (e.g., TAKE, SETTLE, DONATE) are blocked to prevent token redirection or unauthorized operations
+    ///      - Default-reject model: any action not explicitly allowlisted is blocked
+    /// @param input Encoded V4 swap input (ABI-encoded tuple: actions bytes, params bytes[])
     function _validateV4Actions(bytes memory input) private pure {
+        // Decode V4 swap input: (actions: bytes, params: bytes[])
         (bytes memory actions, ) = abi.decode(input, (bytes, bytes[]));
 
         bool hasTakeAll;
         uint256 actionCount = actions.length;
+        // Iterate through each action byte in the actions array
         for (uint256 i; i < actionCount; ) {
             uint8 action = uint8(actions[i]);
             if (action == SWAP_EXACT_IN) {
-                // Explicitly permitted action.
+                // Explicitly permitted: executes the swap
             } else if (action == SETTLE_ALL) {
-                // Explicitly permitted action.
+                // Explicitly permitted: settles token debts to pool
             } else if (action == TAKE_ALL) {
+                // Explicitly permitted: claims output tokens (required)
                 hasTakeAll = true;
             } else {
-                // Default-reject: any V4 action not explicitly allowlisted is blocked.
+                // Default-reject: block any action not explicitly allowlisted
+                // This prevents unauthorized actions like TAKE (selective token claim),
+                // SETTLE (selective debt settlement), DONATE, etc.
                 revert BlockedV4Action(action);
             }
 
@@ -170,6 +214,7 @@ library RoutePolicy {
             }
         }
 
+        // Require TAKE_ALL to be present - without it, output tokens remain stuck in PoolManager
         if (!hasTakeAll) revert MissingV4TakeAll();
     }
 }

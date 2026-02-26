@@ -23,6 +23,7 @@ import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 contract MockCCAFactoryFork is IDistributionStrategy {
     address public rareToken;
@@ -89,24 +90,10 @@ contract LiquidGraduatedMainnetForkTest is Test {
     uint256 constant AUCTION_SUPPLY = 900_000e18;
 
     function setUp() public {
-        // Fork Ethereum Sepolia for realistic testing with deployed contracts
-        // Sepolia has all contracts deployed: Factory, Router, RAREBurner, etc.
-        // Check ETH_SEPOLIA, SEPOLIA_RPC_URL, FORK_URL, or use default
-        string memory forkUrl;
-        try vm.envString("ETH_SEPOLIA") returns (string memory url) {
-            forkUrl = url;
-        } catch {
-            try vm.envString("SEPOLIA_RPC_URL") returns (string memory url) {
-                forkUrl = url;
-            } catch {
-                forkUrl = vm.envOr(
-                    "FORK_URL",
-                    string("https://eth-sepolia.g.alchemy.com/v2/demo")
-                );
-            }
-        }
+        // Fork Base mainnet for realistic testing with deployed contracts
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
-        // Get network configuration (Ethereum Sepolia chain ID = 11155111)
+        // Get network configuration from forked chain
         config = NetworkConfig.getConfig(block.chainid);
 
         rare = new MockRARE();
@@ -127,7 +114,7 @@ contract LiquidGraduatedMainnetForkTest is Test {
             300,
             1e15
         );
-                factory.setLiquidRouter(address(1));
+                factory.setLiquidRegistry(address(1));
         factory.setBaseToken(address(rare));
         implementation = new LiquidGraduated();
         factory.setLiquidGraduatedImplementation(address(implementation));
@@ -237,15 +224,19 @@ contract MockLBPStrategyFactoryFork is IDistributionStrategy {
 }
 
 contract MockLBPStrategyFork is IDistributionContract, ILBPStrategy {
-    address public immutable override(ILBPStrategy) token;
-    address public immutable poolManager;
-    address public immutable currency;
+    address public immutable TOKEN;
+    address public immutable POOL_MANAGER;
+    address public immutable CURRENCY;
     address public auction;
 
     constructor(address _token, address _poolManager, address _currency) {
-        token = _token;
-        poolManager = _poolManager;
-        currency = _currency;
+        TOKEN = _token;
+        POOL_MANAGER = _poolManager;
+        CURRENCY = _currency;
+    }
+
+    function token() external view override(ILBPStrategy) returns (address) {
+        return TOKEN;
     }
 
     function onTokensReceived()
@@ -253,12 +244,12 @@ contract MockLBPStrategyFork is IDistributionContract, ILBPStrategy {
         override(IDistributionContract, ILBPStrategy)
     {
         if (auction == address(0)) {
-            MockAuctionFork mockAuction = new MockAuctionFork(currency);
-            mockAuction.setToken(token);
+            MockAuctionFork mockAuction = new MockAuctionFork(CURRENCY);
+            mockAuction.setToken(TOKEN);
             auction = address(mockAuction);
-            IERC20(token).transfer(
+            IERC20(TOKEN).transfer(
                 auction,
-                IERC20(token).balanceOf(address(this))
+                IERC20(TOKEN).balanceOf(address(this))
             );
             IDistributionContract(auction).onTokensReceived();
         }
@@ -276,11 +267,11 @@ contract MockLBPStrategyFork is IDistributionContract, ILBPStrategy {
     function migrate() external override(ILBPStrategy) {
         if (auction != address(0)) {
             MockAuctionFork(auction).sweepCurrency();
-            IPoolManager pm = IPoolManager(poolManager);
+            IPoolManager pm = IPoolManager(POOL_MANAGER);
             // Real PoolManager rejects non-registered hooks; use address(0) for mock
             PoolKey memory key = PoolKey({
-                currency0: Currency.wrap(currency < token ? currency : token),
-                currency1: Currency.wrap(currency < token ? token : currency),
+                currency0: Currency.wrap(CURRENCY < TOKEN ? CURRENCY : TOKEN),
+                currency1: Currency.wrap(CURRENCY < TOKEN ? TOKEN : CURRENCY),
                 fee: 0,
                 tickSpacing: 60,
                 hooks: IHooks(address(0))

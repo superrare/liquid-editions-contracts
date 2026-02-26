@@ -77,7 +77,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            referrer,
             1, // minEthOut (must be > 0)
             commands,
             inputs,
@@ -96,16 +95,13 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
         token.approve(address(liquidRouter), tokenAmount);
 
         uint256 protocolBalBefore = protocolFeeRecipient.balance;
-        uint256 referrerBalBefore = referrer.balance;
         uint256 beneficiaryBalBefore = beneficiary.balance;
-        uint256 burnerBalBefore = burner.deposited();
 
         vm.prank(user1);
         liquidRouter.sell(
             address(token),
             tokenAmount,
             user1,
-            referrer,
             1, // minTokensOut (must be > 0)
             commands,
             inputs,
@@ -113,8 +109,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
         );
 
         assertTrue(beneficiary.balance > beneficiaryBalBefore);
-        assertTrue(burner.deposited() > burnerBalBefore);
-        assertTrue(referrer.balance > referrerBalBefore);
         assertTrue(protocolFeeRecipient.balance > protocolBalBefore);
     }
 
@@ -125,7 +119,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             address(token),
             0,
             user1,
-            referrer,
             1, // minTokensOut (must be > 0)
             "",
             new bytes[](0),
@@ -146,7 +139,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            referrer,
             1000 ether, // Unreasonably high min out
             commands,
             inputs,
@@ -177,7 +169,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            referrer,
             1, // minEthOut (must be > 0)
             commands,
             inputs,
@@ -195,10 +186,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
         LiquidRouter fotLiquidRouter = deployLiquidRouter(
             address(fotRouter),
             protocolFeeRecipient,
-            address(burner),
-            RARE_BURN_FEE_BPS,
-            PROTOCOL_FEE_BPS,
-            REFERRER_FEE_BPS,
             admin
         );
 
@@ -227,7 +214,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             address(fot),
             tokenAmount,
             user1,
-            referrer,
             1, // minEthOut (must be > 0)
             commands,
             inputs,
@@ -250,7 +236,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            referrer,
             1, // minEthOut (must be > 0)
             commands,
             inputs,
@@ -277,7 +262,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            referrer,
             1, // minEthOut (must be > 0)
             commands,
             inputs,
@@ -300,7 +284,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            referrer,
             1, // minEthOut (must be > 0)
             "", // Empty routeData
             new bytes[](0),
@@ -321,7 +304,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user2, // recipient is user2
-            referrer,
             1,
             commands,
             inputs,
@@ -345,7 +327,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            referrer,
             minEthOut,
             commands,
             inputs,
@@ -371,7 +352,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            referrer,
             minEthOut,
             commands,
             inputs,
@@ -401,7 +381,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            referrer,
             1,
             commands,
             inputs,
@@ -431,7 +410,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            referrer,
             1,
             commands,
             inputs,
@@ -461,7 +439,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            referrer,
             1,
             commands,
             inputs,
@@ -499,7 +476,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            referrer,
             grossEthOut,
             commands,
             inputs,
@@ -520,10 +496,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
         LiquidRouter refundRouterInstance = deployLiquidRouter(
             address(refundRouter),
             protocolFeeRecipient,
-            address(burner),
-            RARE_BURN_FEE_BPS,
-            PROTOCOL_FEE_BPS,
-            REFERRER_FEE_BPS,
             admin
         );
 
@@ -556,7 +528,6 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            referrer,
             expectedGross,
             commands,
             inputs,

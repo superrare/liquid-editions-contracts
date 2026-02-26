@@ -32,6 +32,9 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 // Mock ERC721 for testing onERC721Received
 contract MockERC721 {
@@ -121,18 +124,18 @@ contract MockProtocolRewards {
 
 // Helper contract to test fee dispersion logic without LP fees
 contract FeeDispersionHelper {
-    address public immutable protocolFeeRecipient;
-    address public immutable tokenCreator;
-    LiquidMultiCurve public immutable liquidReference;
+    address public immutable PROTOCOL_FEE_RECIPIENT;
+    address public immutable TOKEN_CREATOR;
+    LiquidMultiCurve public immutable LIQUID_REFERENCE;
 
     constructor(
         address _protocolFeeRecipient,
         address _tokenCreator,
         address _liquidReference
     ) {
-        protocolFeeRecipient = _protocolFeeRecipient;
-        tokenCreator = _tokenCreator;
-        liquidReference = LiquidMultiCurve(payable(_liquidReference));
+        PROTOCOL_FEE_RECIPIENT = _protocolFeeRecipient;
+        TOKEN_CREATOR = _tokenCreator;
+        LIQUID_REFERENCE = LiquidMultiCurve(payable(_liquidReference));
     }
 
     // Replicate _disperseFees logic from LiquidMultiCurve.sol exactly (three-tier system)
@@ -145,7 +148,7 @@ contract FeeDispersionHelper {
 
         // Default referrer to protocol recipient if none provided
         if (_orderReferrer == address(0)) {
-            _orderReferrer = protocolFeeRecipient;
+            _orderReferrer = PROTOCOL_FEE_RECIPIENT;
         }
 
         // Fees are now handled by LiquidRouter, not stored in LiquidMultiCurve contracts
@@ -170,7 +173,7 @@ contract FeeDispersionHelper {
         uint256 protocolTotal = protocolFee;
 
         // Try creator transfer
-        (bool creatorOk, ) = tokenCreator.call{value: tokenCreatorFee}("");
+        (bool creatorOk, ) = TOKEN_CREATOR.call{value: tokenCreatorFee}("");
         if (!creatorOk) {
             protocolTotal += tokenCreatorFee;
         }
@@ -182,7 +185,7 @@ contract FeeDispersionHelper {
         }
 
         // Final protocol transfer (accumulates all failures)
-        (bool protocolOk, ) = protocolFeeRecipient.call{value: protocolTotal}(
+        (bool protocolOk, ) = PROTOCOL_FEE_RECIPIENT.call{value: protocolTotal}(
             ""
         );
         require(protocolOk, "Protocol transfer failed");
@@ -229,7 +232,7 @@ contract MockRenderContract {
 contract TestERC20 {
     string public name;
     string public symbol;
-    uint8 public constant decimals = 18;
+    uint8 public constant DECIMALS = 18;
     uint256 public totalSupply;
 
     mapping(address => uint256) public balanceOf;
@@ -281,7 +284,7 @@ contract TestERC20 {
     }
 }
 
-contract LiquidInstantMainnetUnitTest is Test {
+contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
     using StateLibrary for IPoolManager;
 
     address public admin = makeAddr("admin");
@@ -310,10 +313,7 @@ contract LiquidInstantMainnetUnitTest is Test {
 
     function setUp() public {
         // Fork Base mainnet for realistic testing
-        string memory forkUrl = vm.envOr(
-            "FORK_URL",
-            string("https://mainnet.base.org")
-        );
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
 
         // Get network configuration
@@ -334,7 +334,8 @@ contract LiquidInstantMainnetUnitTest is Test {
         // Deploy LiquidMultiCurve implementation
         liquidImplementation = new LiquidMultiCurve();
 
-        // Deploy factory
+        // Deploy init guard and factory
+        address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factory = new LiquidFactory(
             admin,
             config.weth,
@@ -342,12 +343,13 @@ contract LiquidInstantMainnetUnitTest is Test {
             -180, // lpTickLower
             120000, // lpTickUpper
             config.uniswapV4Quoter,
-            address(0), // poolHooks
+            initGuardAddr, // poolHooks
             60, // poolTickSpacing
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-                factory.setLiquidRouter(address(1));
+        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+                factory.setLiquidRegistry(address(1));
 
         factory.setLiquidMultiCurveImplementation(address(liquidImplementation));
         factory.setBaseToken(address(mockRARE));
@@ -462,6 +464,7 @@ contract LiquidInstantMainnetUnitTest is Test {
     function test_Initialize_RevertsWhen_BaseTokenZero() external {
         // Create a factory with baseToken not set
         vm.startPrank(admin);
+        address badInitGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         LiquidFactory badFactory = new LiquidFactory(
             admin,
             config.weth,
@@ -469,12 +472,13 @@ contract LiquidInstantMainnetUnitTest is Test {
             -180,
             120000,
             config.uniswapV4Quoter,
-            address(0),
+            badInitGuardAddr,
             60,
             300,
             1e15
         );
-                badFactory.setLiquidRouter(address(1));
+        LiquidInitGuard(badInitGuardAddr).setFactory(address(badFactory));
+                badFactory.setLiquidRegistry(address(1));
         badFactory.setLiquidMultiCurveImplementation(address(liquidImplementation));
         // Don't set baseToken - leave it as address(0)
         vm.stopPrank();

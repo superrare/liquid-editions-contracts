@@ -10,10 +10,13 @@ import {DeployLiquidFactory} from "./deployers/DeployLiquidFactory.s.sol";
 import {DeployLiquidRouter} from "./deployers/DeployLiquidRouter.s.sol";
 import {DeployLiquidAuctioneer} from "./deployers/DeployLiquidAuctioneer.s.sol";
 import {DeployLiquidSwapGuard} from "./deployers/DeployLiquidSwapGuard.s.sol";
+import {DeployLiquidInitGuard} from "./deployers/DeployLiquidInitGuard.s.sol";
 import {LiquidSwapGuard} from "liquid-editions/LiquidSwapGuard.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
-import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
 import {LiquidAuctioneer} from "liquid-editions/LiquidAuctioneer.sol";
+import {FeeDistributor} from "liquid-editions/FeeDistributor.sol";
+import {LiquidRegistry} from "liquid-editions/LiquidRegistry.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 
 /**
@@ -27,11 +30,16 @@ import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
  *
  * Environment Variables Optional:
  * - CHAIN_ID: Target chain ID (defaults to block.chainid)
+ * - DEPLOY_FEE_DISTRIBUTOR: Set true to deploy FeeDistributor module (default: false, uses NetworkConfig / env overrides)
+ * - DEPLOY_LIQUID_REGISTRY: Set true to deploy LiquidRegistry module (default: false, uses NetworkConfig / env overrides)
  * - DEPLOY_BURNER: Set true to deploy RAREBurner (default: false, uses NetworkConfig)
  * - DEPLOY_FACTORY: Set true to deploy LiquidFactory + implementations (default: false)
  * - DEPLOY_ROUTER: Set true to deploy LiquidRouter (default: false)
  * - DEPLOY_AUCTIONEER: Set true to deploy LiquidAuctioneer (default: false)
  * - DEPLOY_SWAP_GUARD: Set true to deploy LiquidSwapGuard (default: false)
+ * - DEPLOY_INIT_GUARD: Set true to deploy LiquidInitGuard (default: false)
+ * - FEE_DISTRIBUTOR: Optional override address for existing FeeDistributor module
+ * - LIQUID_REGISTRY: Optional override address for existing LiquidRegistry module
  *
  * When the chain has ccaFactory and lbpStrategyFactory in NetworkConfig (e.g. mainnet, Sepolia),
  * the factory is automatically configured for Graduated (CCA) tokens on first run.
@@ -64,12 +72,26 @@ contract DeployLiquidSystem is Script {
     struct DeploymentResult {
         address burner;
         address guard;
+        address initGuard;
         address factory;
         address multiCurveImplementation;
         address graduatedImplementation;
         address router;
         address routerImplementation;
         address auctioneer;
+    }
+
+    function _resolveModuleAddress(
+        string memory envKey,
+        address fallbackAddress
+    ) private view returns (address) {
+        address resolved = fallbackAddress;
+        try vm.envAddress(envKey) returns (address envAddress) {
+            resolved = envAddress;
+        } catch {
+            // Keep fallback when env var is not set.
+        }
+        return resolved;
     }
 
     function run() external {
@@ -94,13 +116,29 @@ contract DeployLiquidSystem is Script {
         );
 
         // Load deployment flags (default to false — set to true explicitly for each component to deploy)
+        bool deployFeeDistributor = vm.envOr("DEPLOY_FEE_DISTRIBUTOR", false);
+        bool deployLiquidRegistry = vm.envOr(
+            "DEPLOY_LIQUID_REGISTRY",
+            false
+        );
         bool deployBurner = vm.envOr("DEPLOY_BURNER", false);
         bool deployFactory = vm.envOr("DEPLOY_FACTORY", false);
         bool deployRouter = vm.envOr("DEPLOY_ROUTER", false);
         bool deployAuctioneer = vm.envOr("DEPLOY_AUCTIONEER", false);
         bool deploySwapGuard = vm.envOr("DEPLOY_SWAP_GUARD", false);
+        bool deployInitGuard = vm.envOr("DEPLOY_INIT_GUARD", false);
 
         address deployer = vm.addr(deployerPrivateKey);
+        FeeDistributor sharedFeeDistributor;
+        LiquidRegistry sharedLiquidRegistry;
+        address feeDistributorAddress = _resolveModuleAddress(
+            "FEE_DISTRIBUTOR",
+            networkConfig.liquid.feeDistributor
+        );
+        address liquidRegistryAddress = _resolveModuleAddress(
+            "LIQUID_REGISTRY",
+            networkConfig.liquid.liquidRegistry
+        );
 
         console.log("========================================");
         console.log("Deploying Liquid System");
@@ -113,16 +151,60 @@ contract DeployLiquidSystem is Script {
         console.logAddress(protocolFeeRecipient);
         console.log("");
         console.log("Deployment Flags:");
+        console.log("  DEPLOY_FEE_DISTRIBUTOR:", deployFeeDistributor);
+        console.log(
+            "  DEPLOY_LIQUID_REGISTRY:",
+            deployLiquidRegistry
+        );
         console.log("  DEPLOY_BURNER:", deployBurner);
         console.log("  DEPLOY_FACTORY:", deployFactory);
         console.log("  DEPLOY_ROUTER:", deployRouter);
         console.log("  DEPLOY_AUCTIONEER:", deployAuctioneer);
         console.log("  DEPLOY_SWAP_GUARD:", deploySwapGuard);
+        console.log("  DEPLOY_INIT_GUARD:", deployInitGuard);
         console.log("");
 
         vm.startBroadcast(deployerPrivateKey);
 
         DeploymentResult memory result;
+
+        if (deployFeeDistributor) {
+            console.log("=== Step 0: Deploying FeeDistributor ===");
+            sharedFeeDistributor = new FeeDistributor(
+                deployer,
+                deployConfig.fees.totalFeeBPS,
+                protocolFeeRecipient
+            );
+            feeDistributorAddress = address(sharedFeeDistributor);
+            console.log("FeeDistributor:");
+            console.logAddress(address(sharedFeeDistributor));
+            console.log("");
+        } else if (feeDistributorAddress != address(0)) {
+            sharedFeeDistributor = FeeDistributor(feeDistributorAddress);
+            console.log("=== Step 0: Using existing FeeDistributor ===");
+            console.log("FeeDistributor:");
+            console.logAddress(feeDistributorAddress);
+            console.log("");
+        }
+
+        if (deployLiquidRegistry) {
+            console.log("=== Step 0: Deploying LiquidRegistry ===");
+            sharedLiquidRegistry = new LiquidRegistry(deployer);
+            liquidRegistryAddress = address(sharedLiquidRegistry);
+            console.log("LiquidRegistry:");
+            console.logAddress(address(sharedLiquidRegistry));
+            console.log("");
+        } else if (liquidRegistryAddress != address(0)) {
+            sharedLiquidRegistry = LiquidRegistry(
+                liquidRegistryAddress
+            );
+            console.log(
+                "=== Step 0: Using existing LiquidRegistry ==="
+            );
+            console.log("LiquidRegistry:");
+            console.logAddress(liquidRegistryAddress);
+            console.log("");
+        }
 
         // ============================================
         // Step 1: RAREBurner - deploy or use existing
@@ -178,10 +260,41 @@ contract DeployLiquidSystem is Script {
         }
         console.log("");
 
-        // Resolve poolHooks for factory: use guard when useSwapGuard and guard exists
-        address effectivePoolHooks = address(0);
+        // ============================================
+        // Step 2a: LiquidInitGuard - deploy or use existing (before factory)
+        // ============================================
+        if (deployInitGuard) {
+            console.log("=== Step 2a: Deploying LiquidInitGuard ===");
+            bytes32 initGuardSalt;
+            try vm.envBytes32("LIQUID_INIT_GUARD_SALT") returns (bytes32 s) {
+                initGuardSalt = s;
+            } catch {
+                initGuardSalt = bytes32(0);
+            }
+            result.initGuard = DeployLiquidInitGuard.deploy(
+                IPoolManager(networkConfig.uniswapV4PoolManager),
+                deployer,
+                initGuardSalt
+            );
+        } else {
+            result.initGuard = networkConfig.liquid.initGuard;
+            if (result.initGuard != address(0)) {
+                console.log("=== Step 2a: Using existing LiquidInitGuard ===");
+                console.log("LiquidInitGuard address:");
+                console.logAddress(result.initGuard);
+            }
+        }
+        console.log("");
+
+        // Resolve poolHooks for factory:
+        //   1. SwapGuard replaces InitGuard when useSwapGuard is enabled
+        //   2. Otherwise use InitGuard as default (init-only protection)
+        //   3. Fallback to explicit poolHooks from DeployConfig
+        address effectivePoolHooks;
         if (deployConfig.factory.useSwapGuard && result.guard != address(0)) {
             effectivePoolHooks = result.guard;
+        } else if (result.initGuard != address(0)) {
+            effectivePoolHooks = result.initGuard;
         } else {
             effectivePoolHooks = deployConfig.factory.poolHooks;
         }
@@ -223,13 +336,20 @@ contract DeployLiquidSystem is Script {
         // ============================================
         if (deployRouter) {
             console.log("=== Step 4: Deploying LiquidRouter ===");
+            require(
+                address(sharedFeeDistributor) != address(0),
+                "DEPLOY_ROUTER requires a FeeDistributor module. Set DEPLOY_FEE_DISTRIBUTOR=true or provide FEE_DISTRIBUTOR in env / NetworkConfig."
+            );
+            require(
+                address(sharedLiquidRegistry) != address(0),
+                "DEPLOY_ROUTER requires a LiquidRegistry module. Set DEPLOY_LIQUID_REGISTRY=true or provide LIQUID_REGISTRY in env / NetworkConfig."
+            );
             (result.router, result.routerImplementation) = DeployLiquidRouter
-                .deploy(
+                .deployWithModules(
                     deployer,
-                    protocolFeeRecipient,
-                    deployConfig.fees,
-                    networkConfig,
-                    result.burner
+                    sharedFeeDistributor,
+                    sharedLiquidRegistry,
+                    networkConfig.uniswapUniversalRouter
                 );
         } else {
             result.router = networkConfig.liquid.router;
@@ -249,12 +369,19 @@ contract DeployLiquidSystem is Script {
         // ============================================
         if (deployAuctioneer) {
             console.log("=== Step 5: Deploying LiquidAuctioneer ===");
-            result.auctioneer = DeployLiquidAuctioneer.deploy(
+            require(
+                address(sharedFeeDistributor) != address(0),
+                "DEPLOY_AUCTIONEER requires a FeeDistributor module. Set DEPLOY_FEE_DISTRIBUTOR=true or provide FEE_DISTRIBUTOR in env / NetworkConfig."
+            );
+            require(
+                address(sharedLiquidRegistry) != address(0),
+                "DEPLOY_AUCTIONEER requires a LiquidRegistry module. Set DEPLOY_LIQUID_REGISTRY=true or provide LIQUID_REGISTRY in env / NetworkConfig."
+            );
+            result.auctioneer = DeployLiquidAuctioneer.deployWithModules(
                 deployer,
-                protocolFeeRecipient,
-                deployConfig.fees,
+                sharedFeeDistributor,
+                sharedLiquidRegistry,
                 networkConfig.uniswapUniversalRouter,
-                result.burner,
                 networkConfig.rareToken,
                 networkConfig.weth,
                 false
@@ -345,6 +472,27 @@ contract DeployLiquidSystem is Script {
             LiquidSwapGuard(result.guard).addCaller(result.auctioneer);
             console.log("  addCaller(liquidAuctioneer)");
         }
+
+        // ============================================
+        // Step 6d: Configure LiquidInitGuard (setFactory)
+        // ============================================
+        if (result.initGuard != address(0) && result.factory != address(0)) {
+            LiquidInitGuard initGuardContract = LiquidInitGuard(result.initGuard);
+            address igFactory = initGuardContract.factory();
+            if (igFactory == address(0)) {
+                console.log("=== Step 6d: Configuring LiquidInitGuard ===");
+                console.log("  Setting initGuard factory...");
+                initGuardContract.setFactory(result.factory);
+            } else if (igFactory != result.factory) {
+                revert("DeployLiquidSystem: InitGuard already bound to another factory");
+            }
+            // If factory exists but wasn't deployed this run and we're not using swap guard, update poolHooks
+            if (deployInitGuard && !deployFactory && !deployConfig.factory.useSwapGuard) {
+                console.log("  Updating existing factory poolHooks to initGuard...");
+                LiquidFactory(result.factory).setPoolHooks(result.initGuard);
+            }
+        }
+
         // Configure factory for Graduated (CCA) tokens when chain supports it
         if (
             result.factory != address(0) &&
@@ -369,15 +517,58 @@ contract DeployLiquidSystem is Script {
                 );
             }
         }
-        // Link factory and router so creation auto-registers beneficiary in one tx.
-        if (result.factory != address(0) && result.router != address(0)) {
+        // Link factory to registry so creation auto-registers tokens.
+        if (result.factory != address(0) && address(sharedLiquidRegistry) != address(0)) {
             LiquidFactory factoryContract = LiquidFactory(result.factory);
-            LiquidRouter routerContract = LiquidRouter(payable(result.router));
-            factoryContract.setLiquidRouter(result.router);
-            routerContract.setTrustedFactory(result.factory);
+            factoryContract.setLiquidRegistry(address(sharedLiquidRegistry));
             console.log("=== Step 6e: Configuring auto-registration ===");
-            console.log("  factory.setLiquidRouter(router)");
-            console.log("  router.setTrustedFactory(factory)");
+            console.log("  factory.setLiquidRegistry(sharedLiquidRegistry)");
+        }
+        if (
+            (deployRouter || deployAuctioneer || deployFactory) &&
+            address(sharedLiquidRegistry) != address(0)
+        ) {
+            console.log("=== Step 6f: Shared module readiness ===");
+            if (
+                sharedLiquidRegistry.owner() == deployer
+            ) {
+                if (deployRouter && !sharedLiquidRegistry.isWriter(result.router)) {
+                    sharedLiquidRegistry.setWriter(result.router, true);
+                    console.log(
+                        "  registry writer assigned to router"
+                    );
+                }
+                if (
+                    deployAuctioneer &&
+                    !sharedLiquidRegistry.isWriter(result.auctioneer)
+                ) {
+                    sharedLiquidRegistry.setWriter(result.auctioneer, true);
+                    console.log(
+                        "  registry writer assigned to auctioneer"
+                    );
+                }
+                if (
+                    deployFactory &&
+                    !sharedLiquidRegistry.isWriter(result.factory)
+                ) {
+                    sharedLiquidRegistry.setWriter(result.factory, true);
+                    console.log(
+                        "  registry writer assigned to factory"
+                    );
+                }
+            } else {
+                console.log(
+                    "  Warning: registry owner is different; skip writer setup."
+                );
+                console.log(
+                    "           Ensure LiquidRegistry writer permissions are configured for new modules manually."
+                );
+            }
+            if (deployRouter || deployAuctioneer || deployFactory) {
+                console.log(
+                    "  router / auctioneer / factory writes will use shared registry."
+                );
+            }
         }
         console.log("");
 
@@ -420,6 +611,20 @@ contract DeployLiquidSystem is Script {
         console.log("LiquidAuctioneer:");
         console.logAddress(result.auctioneer);
         console.log(deployAuctioneer ? "  (deployed)" : "  (existing)");
+        if (address(sharedFeeDistributor) != address(0)) {
+            console.log("Shared FeeDistributor:");
+            console.logAddress(address(sharedFeeDistributor));
+            console.log(
+                deployFeeDistributor ? "  (deployed)" : "  (existing)"
+            );
+        }
+        if (address(sharedLiquidRegistry) != address(0)) {
+            console.log("Shared LiquidRegistry:");
+            console.logAddress(address(sharedLiquidRegistry));
+            console.log(
+                deployLiquidRegistry ? "  (deployed)" : "  (existing)"
+            );
+        }
         if (result.guard != address(0)) {
             console.log("LiquidSwapGuard:");
             console.logAddress(result.guard);
@@ -448,7 +653,9 @@ contract DeployLiquidSystem is Script {
             deployFactory ||
             deployRouter ||
             deployAuctioneer ||
-            deploySwapGuard
+            deploySwapGuard ||
+            deployFeeDistributor ||
+            deployLiquidRegistry
         ) {
             console.log("========================================");
             console.log("UPDATE NetworkConfig.sol");
@@ -460,6 +667,18 @@ contract DeployLiquidSystem is Script {
             if (deployBurner) {
                 console.log("rareBurner:");
                 console.logAddress(result.burner);
+                console.log(",");
+            }
+            if (deployFeeDistributor || feeDistributorAddress != address(0)) {
+                console.log("feeDistributor:");
+                console.logAddress(feeDistributorAddress);
+                console.log(",");
+            }
+            if (
+                deployLiquidRegistry || liquidRegistryAddress != address(0)
+            ) {
+                console.log("liquidRegistry:");
+                console.logAddress(liquidRegistryAddress);
                 console.log(",");
             }
             if (deployFactory) {

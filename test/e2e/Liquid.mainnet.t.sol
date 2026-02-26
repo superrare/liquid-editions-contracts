@@ -19,8 +19,11 @@ import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 import {MockBurner} from "liquid-editions-test/helpers/MockBurner.sol";
 import {LiquidPoolSwapHelper} from "liquid-editions-test/helpers/LiquidPoolSwapHelper.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
-contract LiquidInstantBaseMainnetTest is Test {
+contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
     using StateLibrary for IPoolManager;
     // Network configuration
     NetworkConfig.Config internal config;
@@ -61,10 +64,7 @@ contract LiquidInstantBaseMainnetTest is Test {
 
     function setUp() public {
         // Fork Base mainnet for contract address verification
-        string memory forkUrl = vm.envOr(
-            "FORK_URL",
-            string("https://mainnet.base.org")
-        );
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
 
         // Get network configuration (Base mainnet chain ID = 8453)
@@ -98,6 +98,7 @@ contract LiquidInstantBaseMainnetTest is Test {
         );
 
         liquidImplementation = new LiquidMultiCurve();
+        address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factory = new LiquidFactory(
             admin,
             config.weth,
@@ -105,14 +106,15 @@ contract LiquidInstantBaseMainnetTest is Test {
             -180, // lpTickLower - max expensive (after price rises) - multiple of 60
             120000, // lpTickUpper - starting point (cheap tokens)
             config.uniswapV4Quoter, // Use wrapper instead of raw quoter
-            address(0), // poolHooks (no hooks)
+            initGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
+        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
 
         
-        factory.setLiquidRouter(address(1));
+        factory.setLiquidRegistry(address(1));
 
         // Set the implementation in the factory
         factory.setLiquidMultiCurveImplementation(address(liquidImplementation));

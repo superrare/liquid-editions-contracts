@@ -409,17 +409,15 @@ contract LiquidInstant is
         }
     }
 
-    /**
-     * @notice Returns all market state for rendering in a single call
-     * @dev Useful for render contracts and frontends that need multiple data points.
-     *      Combines price, pool state, and supply info to minimize RPC calls.
-     * @return rarePerToken Current price (RARE per 1e18 LIQUID tokens)
-     * @return tokenPerRare Inverse price (LIQUID tokens per 1e18 RARE)
-     * @return sqrtPriceX96 Raw Uniswap pool price (Q64.96 format)
-     * @return currentTick Current tick position in the pool
-     * @return liquidity Current total pool liquidity
-     * @return currentSupply Total tokens in circulation (totalSupply())
-     */
+    /// @notice Returns all market state for rendering in a single call
+    /// @dev Useful for render contracts and frontends that need multiple data points.
+    ///      Combines price, pool state, and supply info to minimize RPC calls.
+    /// @return rarePerToken Current price (RARE per 1e18 LIQUID tokens)
+    /// @return tokenPerRare Inverse price (LIQUID tokens per 1e18 RARE)
+    /// @return sqrtPriceX96 Raw Uniswap pool price (Q64.96 format)
+    /// @return currentTick Current tick position in the pool
+    /// @return liquidity Current total pool liquidity
+    /// @return currentSupply Total tokens in circulation (totalSupply())
     function getMarketState()
         external
         view
@@ -477,32 +475,28 @@ contract LiquidInstant is
         }
     }
 
-    /**
-     * @notice Simulates a RARE to LIQUID swap (buy direction).
-     * @dev Simulates the swap via unlock callback. Uses revert-as-return pattern for gas-free simulation.
-     *      Not marked `view` (simulation reverts-to-return); use via eth_call.
-     *      Note: This quotes a direct RARE→LIQUID swap. For ETH→RARE→LIQUID routes, use LiquidRouter or client-side quoter.
-     *      Fees are handled by LiquidRouter during actual trades.
-     * @param rareIn Amount of RARE to swap
-     * @return liquidOut LIQUID tokens that would be received from the swap
-     * @return sqrtPriceX96After Post-swap sqrt price (useful for price impact calculations)
-     */
+    /// @notice Simulates a RARE to LIQUID swap (buy direction)
+    /// @dev Simulates the swap via unlock callback. Uses revert-as-return pattern for gas-free simulation.
+    ///      Not marked `view` (simulation reverts-to-return); use via eth_call.
+    ///      Note: This quotes a direct RARE→LIQUID swap. For ETH→RARE→LIQUID routes, use LiquidRouter or client-side quoter.
+    ///      Fees are handled by LiquidRouter during actual trades.
+    /// @param rareIn Amount of RARE to swap
+    /// @return liquidOut LIQUID tokens that would be received from the swap
+    /// @return sqrtPriceX96After Post-swap sqrt price (useful for price impact calculations)
     function quoteBuy(
         uint256 rareIn
     ) external returns (uint256 liquidOut, uint160 sqrtPriceX96After) {
         return _simulateQuoteBuy(rareIn);
     }
 
-    /**
-     * @notice Simulates a LIQUID to RARE swap (sell direction).
-     * @dev Simulates the swap via unlock callback. Uses revert-as-return pattern for gas-free simulation.
-     *      Not marked `view` (simulation reverts-to-return); use via eth_call.
-     *      Note: This quotes a direct LIQUID→RARE swap. For LIQUID→RARE→ETH routes, use LiquidRouter or client-side quoter.
-     *      Fees are handled by LiquidRouter during actual trades.
-     * @param liquidIn Amount of LIQUID tokens to swap
-     * @return rareOut RARE that would be received from the swap
-     * @return sqrtPriceX96After Post-swap sqrt price (useful for price impact calculations)
-     */
+    /// @notice Simulates a LIQUID to RARE swap (sell direction)
+    /// @dev Simulates the swap via unlock callback. Uses revert-as-return pattern for gas-free simulation.
+    ///      Not marked `view` (simulation reverts-to-return); use via eth_call.
+    ///      Note: This quotes a direct LIQUID→RARE swap. For LIQUID→RARE→ETH routes, use LiquidRouter or client-side quoter.
+    ///      Fees are handled by LiquidRouter during actual trades.
+    /// @param liquidIn Amount of LIQUID tokens to swap
+    /// @return rareOut RARE that would be received from the swap
+    /// @return sqrtPriceX96After Post-swap sqrt price (useful for price impact calculations)
     function quoteSell(
         uint256 liquidIn
     ) external returns (uint256 rareOut, uint160 sqrtPriceX96After) {
@@ -806,6 +800,11 @@ contract LiquidInstant is
     }
 
     /// @notice Initialize pool and add initial liquidity
+    /// @dev Called during unlock callback. Initializes pool at optimal starting price, adds liquidity
+    ///      to the configured tick range, settles token debts, and returns excess RARE to creator if any.
+    ///      Uses internal transfer for LIQUID tokens to avoid external self-call.
+    /// @param data Encoded sqrtPriceX96 (uint160)
+    /// @return Empty bytes on success
     function _unlockInitializePool(
         bytes memory data
     ) internal returns (bytes memory) {
@@ -882,7 +881,10 @@ contract LiquidInstant is
     }
 
     /// @notice Remove all LP liquidity and send tokens to recipient
+    /// @dev Called during unlock callback. Removes all liquidity from the stored position,
+    ///      claims accumulated tokens via take(), and sends them to recipient. Clears stored liquidity.
     /// @param data Encoded recipient address
+    /// @return Empty bytes on success
     function _unlockRemoveLiquidity(
         bytes memory data
     ) internal returns (bytes memory) {
@@ -929,6 +931,11 @@ contract LiquidInstant is
     }
 
     /// @notice Quote helper for RARE -> LIQUID swaps (always reverts with QuoteResult)
+    /// @dev Called during unlock callback to simulate buy swap. Executes V4 swap, validates delta signs,
+    ///      extracts LIQUID output, and reverts with QuoteResult containing output and post-swap price.
+    ///      Handles currency ordering (baseToken can be currency0 or currency1).
+    /// @param data Encoded rareAmount (uint256)
+    /// @return Empty bytes (never reached - always reverts with QuoteResult)
     function _unlockQuoteSwapBuy(
         bytes memory data
     ) internal returns (bytes memory) {
@@ -975,6 +982,11 @@ contract LiquidInstant is
     }
 
     /// @notice Quote helper for LIQUID -> RARE swaps (always reverts with QuoteResult)
+    /// @dev Called during unlock callback to simulate sell swap. Executes V4 swap, validates delta signs,
+    ///      extracts RARE output, and reverts with QuoteResult containing output and post-swap price.
+    ///      Handles currency ordering (baseToken can be currency0 or currency1).
+    /// @param data Encoded tokenAmount (uint256)
+    /// @return Empty bytes (never reached - always reverts with QuoteResult)
     function _unlockQuoteSwapSell(
         bytes memory data
     ) internal returns (bytes memory) {
@@ -1034,7 +1046,11 @@ contract LiquidInstant is
         return uint128(value);
     }
 
-    /// @dev Safe cast helpers for BalanceDelta conversions
+    /// @notice Converts positive BalanceDelta amount to uint128
+    /// @dev Safe cast helper for BalanceDelta conversions. Validates x >= 0 before casting.
+    ///      Used to extract output amounts from swap deltas.
+    /// @param x Positive int128 delta value
+    /// @return uint128 representation of x
     function _toUint128Pos(int128 x) internal pure returns (uint128) {
         if (x < 0) revert NegativeValue(x);
         // Casting to uint128 is safe because we verified x >= 0
@@ -1042,6 +1058,11 @@ contract LiquidInstant is
         return uint128(uint256(int256(x)));
     }
 
+    /// @notice Converts negative BalanceDelta amount to uint128 (absolute value)
+    /// @dev Safe cast helper for BalanceDelta conversions. Validates x <= 0, negates in 256-bit space
+    ///      to avoid int128.min overflow, then casts to uint128. Used to extract input amounts from swap deltas.
+    /// @param x Negative int128 delta value
+    /// @return uint128 absolute value of x
     function _toUint128Neg(int128 x) internal pure returns (uint128) {
         if (x > 0) revert PositiveValue(x);
         int256 y = -int256(x); // negate in 256-bit space to avoid int128.min overflow

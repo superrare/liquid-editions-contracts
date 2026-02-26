@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
 import {LiquidSwapGuard} from "liquid-editions/LiquidSwapGuard.sol";
+import {ILiquidSwapGuard} from "liquid-editions/interfaces/ILiquidSwapGuard.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
@@ -131,7 +132,7 @@ contract LiquidSwapGuardUnitTest is Test {
 
         vm.prank(address(mockPoolManager));
         vm.expectRevert(
-            abi.encodeWithSelector(LiquidSwapGuard.UnverifiedRouter.selector, unverifiedRouter)
+            abi.encodeWithSelector(ILiquidSwapGuard.UnverifiedRouter.selector, unverifiedRouter)
         );
         guard.beforeSwap(unverifiedRouter, poolKey, swapParams, "");
     }
@@ -140,7 +141,7 @@ contract LiquidSwapGuardUnitTest is Test {
         mockRouter.setMsgSender(randomCaller);
         vm.prank(address(mockPoolManager));
         vm.expectRevert(
-            abi.encodeWithSelector(LiquidSwapGuard.UnauthorizedCaller.selector, randomCaller)
+            abi.encodeWithSelector(ILiquidSwapGuard.UnauthorizedCaller.selector, randomCaller)
         );
         guard.beforeSwap(address(mockRouter), poolKey, swapParams, "");
     }
@@ -152,7 +153,7 @@ contract LiquidSwapGuardUnitTest is Test {
         vm.prank(address(mockPoolManager));
         vm.expectRevert(
             abi.encodeWithSelector(
-                LiquidSwapGuard.RouterDoesNotImplementMsgSender.selector,
+                ILiquidSwapGuard.RouterDoesNotImplementMsgSender.selector,
                 address(mockRouterNoMsgSender)
             )
         );
@@ -165,7 +166,7 @@ contract LiquidSwapGuardUnitTest is Test {
 
         vm.prank(address(mockPoolManager));
         vm.expectRevert(
-            abi.encodeWithSelector(LiquidSwapGuard.UnverifiedRouter.selector, address(mockRouter))
+            abi.encodeWithSelector(ILiquidSwapGuard.UnverifiedRouter.selector, address(mockRouter))
         );
         guard.beforeSwap(address(mockRouter), poolKey, swapParams, "");
     }
@@ -177,7 +178,7 @@ contract LiquidSwapGuardUnitTest is Test {
         mockRouter.setMsgSender(liquidRouter);
         vm.prank(address(mockPoolManager));
         vm.expectRevert(
-            abi.encodeWithSelector(LiquidSwapGuard.UnauthorizedCaller.selector, liquidRouter)
+            abi.encodeWithSelector(ILiquidSwapGuard.UnauthorizedCaller.selector, liquidRouter)
         );
         guard.beforeSwap(address(mockRouter), poolKey, swapParams, "");
     }
@@ -209,7 +210,7 @@ contract LiquidSwapGuardUnitTest is Test {
     function test_revert_whenNotPoolManager() public {
         mockRouter.setMsgSender(liquidRouter);
         vm.prank(randomCaller);
-        vm.expectRevert(LiquidSwapGuard.NotPoolManager.selector);
+        vm.expectRevert(ILiquidSwapGuard.NotPoolManager.selector);
         guard.beforeSwap(address(mockRouter), poolKey, swapParams, "");
     }
 }

@@ -8,7 +8,7 @@ Liquid Edition Contracts is a smart contract suite that enables:
 - **Token Creation**: Launch ERC-20 tokens with immediate Uniswap V4 liquidity
 - **Bonding Curve**: Simulated bonding curve via constant-product AMM (900K tokens + 0.001 ETH)
 - **Automated Market Making**: Direct Uniswap V4 PoolManager integration for all trades
-- **Protocol Rewards**: Configurable three-tier fee distribution (creator, protocol, referrer, RARE burn)
+- **Protocol Rewards**: Configurable fee distribution between beneficiaries and protocol (with RARE burn support)
 - **RARE Token Integration**: Support for RARE token burning via V4 pools
 
 ## Core Contracts
@@ -19,20 +19,83 @@ The main factory contract for deploying new Liquid token instances. Manages prot
 - Integration with RAREBurner
 - Token deployment and tracking
 
-### `Liquid.sol`
-The primary ERC-20 token implementation featuring:
+### `LiquidInstant.sol`
+The instant-launch ERC-20 token implementation featuring:
 - Uniswap V4 PoolManager integration via unlock callbacks
-- Buy/sell functionality with native ETH (no WETH for trades)
-- Immediate pool creation with 900K tokens + configurable ETH
-- Automated LP fee collection and distribution
-- Creator and protocol fee distribution with RARE burn support
+- Immediate pool creation with 900K tokens + configurable RARE liquidity
+- Quote functions for buy/sell operations
+- Creator launch reward distribution
+
+### `LiquidGraduated.sol`
+The graduated-launch ERC-20 token implementation featuring:
+- CCA (Continuous Clearing Auction) integration via LBP strategy
+- Pool creation at auction-discovered price (after graduation)
+- Quote functions for buy/sell operations
+- Creator launch reward distribution
+
+### `LiquidMultiCurve.sol`
+The multicurve anti-sniping ERC-20 token implementation featuring:
+- Multiple concentrated liquidity positions for launch price protection
+- Immediate pool creation with distributed liquidity across tick ranges
+- Quote functions for buy/sell operations
+- Creator launch reward distribution
+
+### `LiquidRouter.sol`
+Router contract enabling fee-wrapped trading for any registered ERC20 token:
+- Routes swaps through Uniswap Universal Router (V2/V3/V4 support)
+- Collects trading fees and distributes to beneficiaries and protocol
+- Supports buy (ETH → token), sell (token → ETH), and swap (any → any) operations
+- Uses Permit2 for secure token approvals
+
+### `LiquidAuctioneer.sol`
+Router contract for CCA auction interactions:
+- Bid on auctions using ETH or ERC20 tokens (swapped to RARE)
+- Exit bids and claim filled tokens
+- Routes swaps through Uniswap Universal Router
+- Fee collection and distribution for auction bids
+
+### `LiquidFactory.sol`
+Factory contract for deploying Liquid token instances:
+- Creates LiquidInstant, LiquidGraduated, and LiquidMultiCurve tokens
+- Manages protocol-wide configuration (pool parameters, hooks, registry)
+- Uses EIP-1167 minimal proxy pattern for gas-efficient deployments
+- Centralized configuration management
+
+### `FeeDistributor.sol`
+Fee distribution contract that splits trading fees:
+- Supports three fee split scenarios: 50/50 (single beneficiary), 33/33/34 (two distinct beneficiaries), 100% protocol (no beneficiary)
+- Handles failed beneficiary transfers gracefully (absorbed by protocol)
+- Immutable protocol fee recipient (set at deployment)
+
+### `LiquidRegistry.sol`
+Centralized registry of valid Liquid tokens and their beneficiaries:
+- Token registration requirement for Router and Auctioneer trading
+- Beneficiary mapping for fee distribution
+- Writer-based access control (factory can register tokens)
+
+### `BeneficiaryRegistry.sol`
+Shared mapping from token to beneficiary with explicit writer allowlist:
+- Similar to LiquidRegistry but with different access control model
+- Used for token-beneficiary mapping with writer permissions
+
+### `LiquidSwapGuard.sol`
+Uniswap V4 hook that restricts swaps and pool initialization:
+- Only whitelisted routers/callers can swap (prevents unauthorized direct swaps)
+- Only whitelisted Liquid token contracts can initialize pools (prevents pool pre-initialization DoS)
+- Uses IMsgSender trusted-router pattern
+
+### `LiquidInitGuard.sol`
+Lightweight Uniswap V4 hook that restricts pool initialization only:
+- Only whitelisted Liquid token contracts can initialize pools
+- Swaps are unrestricted (use when swap restriction not needed)
+- Simpler alternative to LiquidSwapGuard
 
 ### `RAREBurner.sol`
-Handles RARE token burning through Uniswap swaps:
-- Converts ETH to RARE tokens
+Non-reverting ETH accumulator that performs best-effort RARE token burns:
+- Converts ETH to RARE tokens via Uniswap V4 swaps
 - Burns RARE tokens to designated burn address
 - Configurable slippage protection
-- V3 and V4 pool support
+- V4 pool support only
 
 ### `V4LiquidityHelper.sol`
 Helper contract for managing Uniswap V4 liquidity positions:
@@ -326,11 +389,20 @@ make clean           # Clean build artifacts
 liquid-edition-contracts/
 ├── src/                      # Contract source files
 │   ├── interfaces/          # Contract interfaces
-│   ├── Liquid.sol          # Main token implementation
+│   ├── LiquidInstant.sol   # Instant-launch token implementation
+│   ├── LiquidGraduated.sol # Graduated-launch token implementation
+│   ├── LiquidMultiCurve.sol # Multicurve anti-sniping token implementation
 │   ├── LiquidFactory.sol   # Factory contract
+│   ├── LiquidRouter.sol    # Router for fee-wrapped trading
+│   ├── LiquidAuctioneer.sol # Router for auction interactions
+│   ├── LiquidSwapGuard.sol # V4 hook for swap/init restrictions
+│   ├── LiquidInitGuard.sol # V4 hook for init-only restrictions
+│   ├── FeeDistributor.sol  # Fee distribution contract
+│   ├── LiquidRegistry.sol  # Token and beneficiary registry
+│   ├── BeneficiaryRegistry.sol # Alternative beneficiary registry
 │   ├── RAREBurner.sol      # RARE token burning
-│   ├── TickMath.sol        # Uniswap tick math library
-│   └── V4LiquidityHelper.sol # V4 liquidity management
+│   ├── LiquidFeeLib.sol    # Shared fee calculation library
+│   └── RoutePolicy.sol     # Universal Router route validation
 ├── script/                  # Deployment scripts
 │   ├── LiquidFactoryDeploy.s.sol
 │   ├── RAREBurnerDeploy.s.sol

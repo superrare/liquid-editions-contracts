@@ -15,7 +15,7 @@ interface ILiquidAuctioneer {
     // ERRORS
     // ============================================
 
-    // Shared errors from ILiquidRouter (AddressZero, InvalidFeeDistribution)
+    // Shared errors from ILiquidRouter (AddressZero)
     // Specific errors below:
 
     /// @notice Thrown when auction operation fails (e.g., auction not found, not graduated)
@@ -34,6 +34,9 @@ interface ILiquidAuctioneer {
     error UnexpectedEthRefund();
     /// @notice Thrown when configured preset route is invalid or missing
     error InvalidPresetRoute();
+
+    /// @notice Thrown when liquidToken is not registered in LiquidRegistry
+    error UnregisteredToken(address token);
 
     // ============================================
     // EVENTS
@@ -59,12 +62,16 @@ interface ILiquidAuctioneer {
         address indexed newUniversalRouter
     );
 
-    /// @notice Emitted when the protocol fee recipient is updated
-    /// @param oldProtocolFeeRecipient Previous protocol fee recipient
-    /// @param newProtocolFeeRecipient New protocol fee recipient
-    event ProtocolFeeRecipientUpdated(
-        address indexed oldProtocolFeeRecipient,
-        address indexed newProtocolFeeRecipient
+    /// @notice Emitted when the fee distributor pointer is updated
+    event FeeDistributorUpdated(
+        address indexed oldFeeDistributor,
+        address indexed newFeeDistributor
+    );
+
+    /// @notice Emitted when the liquid registry pointer is updated
+    event LiquidRegistryUpdated(
+        address indexed oldLiquidRegistry,
+        address indexed newLiquidRegistry
     );
 
     // ============================================
@@ -77,7 +84,6 @@ interface ILiquidAuctioneer {
     /// @param liquidToken The Liquid token address
     /// @param maxPrice Maximum price willing to pay
     /// @param bidOwner Owner of the bid (receives tokens/refunds)
-    /// @param orderReferrer Address of the order referrer (receives referrer fee)
     /// @param prevTickPrice Previous tick price for bid ordering
     /// @param minRareOut Minimum RARE amount to bid (slippage protection)
     /// @param deadline Transaction deadline timestamp
@@ -88,7 +94,6 @@ interface ILiquidAuctioneer {
         address liquidToken,
         uint256 maxPrice,
         address bidOwner,
-        address orderReferrer,
         uint256 prevTickPrice,
         uint256 minRareOut,
         uint256 deadline
@@ -115,9 +120,13 @@ interface ILiquidAuctioneer {
     /// @param _universalRouter New Universal Router address
     function setUniversalRouter(address _universalRouter) external;
 
-    /// @notice Update protocol fee recipient address
-    /// @param _protocolFeeRecipient New protocol fee recipient
-    function setProtocolFeeRecipient(address _protocolFeeRecipient) external;
+    /// @notice Update the fee distributor module
+    /// @param _feeDistributor New fee distributor contract
+    function setFeeDistributor(address _feeDistributor) external;
+
+    /// @notice Update the liquid registry module
+    /// @param _liquidRegistry New liquid registry contract
+    function setLiquidRegistry(address _liquidRegistry) external;
 
     /// @notice Exit a fully filled bid and swap refund to ETH
     /// @param liquidToken The Liquid token address
@@ -170,6 +179,12 @@ interface ILiquidAuctioneer {
     /// @param token The token address
     /// @param beneficiary The beneficiary address
     function setBeneficiary(address token, address beneficiary) external;
+
+    /// @notice Get active fee distributor
+    function feeDistributor() external view returns (address);
+
+    /// @notice Get active liquid registry
+    function liquidRegistry() external view returns (address);
 
     /// @notice Pause the contract (owner only)
     function pause() external;

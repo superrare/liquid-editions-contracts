@@ -3,34 +3,24 @@ pragma solidity ^0.8.0;
 
 import {Test} from "forge-std/Test.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 /// @title Fork Test Base
 /// @notice Shared fork setup: URL resolution, createSelectFork, NetworkConfig
-/// @dev All e2e/fork tests should inherit this. Set FORK_URL in .env (or MAINNET_RPC_URL as fallback).
+/// @dev All e2e/fork tests should inherit this. Set FORK_URL in .env.
 abstract contract ForkTestBase is Test {
     NetworkConfig.Config internal config;
 
-    /// @notice Default fork URL when env vars are not set
-    /// @dev Override in subclass for chain-specific default (e.g. Base vs Ethereum)
-    function _defaultForkUrl() internal pure virtual returns (string memory) {
-        return "https://mainnet.base.org";
-    }
-
     /// @notice Resolve fork URL from environment
-    /// @dev Priority: FORK_URL > MAINNET_RPC_URL > _defaultForkUrl()
+    /// @dev Priority: FORK_URL, hard-fail if missing.
     function _getForkUrl() internal view returns (string memory) {
-        try vm.envString("FORK_URL") returns (string memory url) {
-            if (bytes(url).length > 0) return url;
-        } catch {}
-        try vm.envString("MAINNET_RPC_URL") returns (string memory url) {
-            if (bytes(url).length > 0) return url;
-        } catch {}
-        return _defaultForkUrl();
+        return ForkUrlResolver.requireForkUrl(vm);
     }
 
     /// @notice Override to pin fork block (e.g. for auction salt reuse). Return 0 for latest.
+    /// @dev Defaults to FORK_BLOCK env var if set; helps RPC caching and avoids rate-limit flakes.
     function _getForkBlock() internal virtual returns (uint256) {
-        return 0;
+        return vm.envOr("FORK_BLOCK", uint256(0));
     }
 
     /// @notice Create fork and load config. Call from setUp().

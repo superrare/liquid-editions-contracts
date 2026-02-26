@@ -351,7 +351,6 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
                 graduatedToken,
                 maxPrices[i],
                 bidders[i],
-                address(0),
                 prevTick,
                 1,
                 block.timestamp + 1 hours
@@ -439,7 +438,6 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
         uint256 tokensBought = router.buy{value: buyEthAmount}(
             graduatedToken,
             trader,
-            address(0),
             1,
             buyCommands,
             buyInputs,
@@ -462,7 +460,6 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
                 graduatedToken,
                 tokensToSell,
                 trader,
-                address(0),
                 1,
                 sellCommands,
                 sellInputs,

@@ -20,8 +20,10 @@ import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
 import {DeployConfig} from "script/config/DeployConfig.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
 
-contract LiquidMultiCurveUnitTest is Test {
+contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
     address public admin = makeAddr("admin");
     address public creator = makeAddr("creator");
 
@@ -40,6 +42,7 @@ contract LiquidMultiCurveUnitTest is Test {
         quoter = new MockV4Quoter();
         weth = new MockERC20();
         baseToken = new MockERC20();
+        address initGuardAddr = _deployInitGuardForTest(address(poolManager), admin);
         factory = new LiquidFactory(
             admin,
             address(weth),
@@ -47,14 +50,16 @@ contract LiquidMultiCurveUnitTest is Test {
             -180,
             120000,
             address(quoter),
-            address(0),
+            initGuardAddr,
             60,
             300,
             MIN_RARE
         );
+        vm.prank(admin);
+        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
 
         vm.startPrank(admin);
-        factory.setLiquidRouter(address(1));
+        factory.setLiquidRegistry(address(1));
         multiCurveImplementation = new LiquidMultiCurve();
         factory.setLiquidMultiCurveImplementation(address(multiCurveImplementation));
         factory.setBaseToken(address(baseToken));
@@ -151,6 +156,7 @@ contract LiquidMultiCurveUnitTest is Test {
     }
 
     function test_Initialize_Revert_ImplementationNotSet() public {
+        address newInitGuardAddr = _deployInitGuardForTest(address(poolManager), admin);
         LiquidFactory newFactory = new LiquidFactory(
             admin,
             address(weth),
@@ -158,13 +164,15 @@ contract LiquidMultiCurveUnitTest is Test {
             -180,
             120000,
             address(quoter),
-            address(0),
+            newInitGuardAddr,
             60,
             300,
             MIN_RARE
         );
+        vm.prank(admin);
+        LiquidInitGuard(newInitGuardAddr).setFactory(address(newFactory));
         vm.startPrank(admin);
-        newFactory.setLiquidRouter(address(1));
+        newFactory.setLiquidRegistry(address(1));
         newFactory.setBaseToken(address(baseToken));
         vm.stopPrank();
         // Don't set liquidMultiCurveImplementation

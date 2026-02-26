@@ -17,7 +17,6 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
             BoundaryConstants.ZERO,
             address(0), // tokenOut (ETH when leg2 empty)
             user1,
-            referrer,
             BoundaryConstants.ONE, // minAmountOut must be > 0
             "", // leg1 empty
             new bytes[](0),
@@ -36,10 +35,6 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
         LiquidRouter refundRouterInstance = deployLiquidRouter(
             address(refundRouter),
             protocolFeeRecipient,
-            address(burner),
-            RARE_BURN_FEE_BPS,
-            PROTOCOL_FEE_BPS,
-            REFERRER_FEE_BPS,
             admin
         );
 
@@ -62,7 +57,6 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
             1000e18,
             address(token),
             user1,
-            referrer,
             1, // minAmountOut
             leg1Commands,
             leg1Inputs,
@@ -81,10 +75,6 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
         LiquidRouter refundRouterInstance = deployLiquidRouter(
             address(refundRouter),
             protocolFeeRecipient,
-            address(burner),
-            RARE_BURN_FEE_BPS,
-            PROTOCOL_FEE_BPS,
-            REFERRER_FEE_BPS,
             admin
         );
 
@@ -107,7 +97,6 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
             1000e18,
             address(token),
             user1,
-            referrer,
             1, // minAmountOut
             leg1Commands,
             leg1Inputs,
@@ -137,7 +126,6 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
             1000e18,
             address(token),
             user1,
-            referrer,
             1, // minAmountOut
             leg1Commands,
             leg1Inputs,
@@ -159,10 +147,6 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
         LiquidRouter refundRouterInstance = deployLiquidRouter(
             address(refundRouter),
             protocolFeeRecipient,
-            address(burner),
-            RARE_BURN_FEE_BPS,
-            PROTOCOL_FEE_BPS,
-            REFERRER_FEE_BPS,
             admin
         );
 
@@ -192,7 +176,6 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
             1000e18,
             address(token),
             user1,
-            referrer,
             1, // minAmountOut
             leg1Commands,
             leg1Inputs,

@@ -17,6 +17,9 @@ import {ILiquidAuctioneer} from "liquid-editions/interfaces/ILiquidAuctioneer.so
 import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
 import {ILBPStrategy} from "liquid-editions/interfaces/ILBPStrategy.sol";
 import {MigratorParameters} from "liquid-editions/types/MigratorParameters.sol";
+import {FeeDistributor} from "liquid-editions/FeeDistributor.sol";
+import {IFeeDistributor} from "liquid-editions/interfaces/IFeeDistributor.sol";
+import {LiquidRegistry} from "liquid-editions/LiquidRegistry.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
@@ -34,6 +37,7 @@ contract LiquidAuctioneerUnitTest is Test {
     address admin = makeAddr("admin");
 
     LiquidAuctioneer public auctioneer;
+    LiquidRegistry public auctioneerRegistry;
     MockRARE public rare;
     MockERC20 public usdc;
     MockRouter public router;
@@ -44,6 +48,53 @@ contract LiquidAuctioneerUnitTest is Test {
     MockCCAFactorySweepable public mockCcaFactory;
     MockV4PoolManagerAuctioneer public mockPoolManager;
 
+    function _createDefaultModules(
+        address protocolRecipient
+    ) internal returns (FeeDistributor, LiquidRegistry) {
+        return (
+            new FeeDistributor(
+                owner,
+                400,
+                protocolRecipient
+            ),
+            new LiquidRegistry(owner)
+        );
+    }
+
+    function _createAuctioneer(
+        address routerAddr
+    ) internal returns (LiquidAuctioneer) {
+        return
+            _createAuctioneer(
+                routerAddr,
+                protocolFeeRecipient,
+                makeAddr("weth")
+            );
+    }
+
+    function _createAuctioneer(
+        address routerAddr,
+        address protocolRecipient,
+        address wethAddress
+    ) internal returns (LiquidAuctioneer) {
+        (FeeDistributor feeDistributor, LiquidRegistry liquidRegistry) = _createDefaultModules(
+                protocolRecipient
+            );
+        LiquidAuctioneer createdAuctioneer = new LiquidAuctioneer(
+            owner,
+            routerAddr,
+            address(feeDistributor),
+            address(liquidRegistry),
+            address(rare),
+            wethAddress
+        );
+        vm.prank(owner);
+        liquidRegistry.setWriter(address(createdAuctioneer), true);
+        // Store registry for token registration in tests
+        auctioneerRegistry = liquidRegistry;
+        return createdAuctioneer;
+    }
+
     function setUp() public {
         vm.deal(user, 100 ether);
         rare = new MockRARE();
@@ -52,17 +103,7 @@ contract LiquidAuctioneerUnitTest is Test {
         router = new MockRouter(address(rare));
         burner = new MockBurner();
 
-        auctioneer = new LiquidAuctioneer(
-            owner,
-            address(router),
-            protocolFeeRecipient,
-            address(burner),
-            address(rare),
-            makeAddr("weth"),
-            2500,
-            2500,
-            5000
-        );
+        auctioneer = _createAuctioneer(address(router));
 
         mockPoolManager = new MockV4PoolManagerAuctioneer();
         mockCcaFactory = new MockCCAFactorySweepable(address(rare));
@@ -80,7 +121,7 @@ contract LiquidAuctioneerUnitTest is Test {
             300,
             1e15
         );
-                factory.setLiquidRouter(address(1));
+                factory.setLiquidRegistry(address(1));
         factory.setBaseToken(address(rare));
         implementation = new LiquidGraduated();
         factory.setLiquidGraduatedImplementation(address(implementation));
@@ -118,6 +159,18 @@ contract LiquidAuctioneerUnitTest is Test {
             bytes32(0)
         );
         graduated = LiquidGraduated(payable(token));
+
+        // Register the graduated token in the auctioneer's registry
+        _registerTokenInRegistry(auctioneerRegistry, address(graduated));
+    }
+
+    /// @dev Register a token in a registry (grants writer if needed)
+    function _registerTokenInRegistry(LiquidRegistry registry, address token) internal {
+        if (!registry.isWriter(address(this))) {
+            vm.prank(owner);
+            registry.setWriter(address(this), true);
+        }
+        registry.setBeneficiary(token, makeAddr("beneficiary"));
     }
 
     function _validRoute()
@@ -156,7 +209,6 @@ contract LiquidAuctioneerUnitTest is Test {
             address(graduated),
             1,
             user,
-            referrer,
             0,
             1,
             block.timestamp + 3600
@@ -172,17 +224,10 @@ contract LiquidAuctioneerUnitTest is Test {
         rare.transfer(address(refundRouter), 2e18);
         vm.deal(address(refundRouter), 1 ether);
 
-        LiquidAuctioneer refundAuctioneer = new LiquidAuctioneer(
-            owner,
-            address(refundRouter),
-            protocolFeeRecipient,
-            address(burner),
-            address(rare),
-            makeAddr("weth"),
-            2500,
-            2500,
-            5000
+        LiquidAuctioneer refundAuctioneer = _createAuctioneer(
+            address(refundRouter)
         );
+        _registerTokenInRegistry(auctioneerRegistry, address(graduated));
 
         vm.prank(user);
         vm.expectRevert(ILiquidAuctioneer.UnexpectedEthRefund.selector);
@@ -192,7 +237,6 @@ contract LiquidAuctioneerUnitTest is Test {
             address(graduated),
             1,
             user,
-            referrer,
             0,
             1,
             block.timestamp + 3600
@@ -250,30 +294,105 @@ contract LiquidAuctioneerUnitTest is Test {
         auctioneer.setUniversalRouter(makeAddr("notOwnerRouter"));
     }
 
-    function test_SetProtocolFeeRecipient_RevertsForNonOwner() public {
-        vm.expectRevert();
-        vm.prank(user);
-        auctioneer.setProtocolFeeRecipient(makeAddr("notOwnerRecipient"));
-    }
-
     function testOnlyOwnerCanSetUniversalRouter() public {
         address newRouter = address(new MockRouter(address(rare)));
 
         vm.prank(owner);
         auctioneer.setUniversalRouter(newRouter);
 
-        assertEq(auctioneer.UNIVERSAL_ROUTER(), newRouter);
+        assertEq(auctioneer.universalRouter(), newRouter);
     }
 
-    function testOnlyOwnerCanSetProtocolFeeRecipient() public {
-        address newProtocolFeeRecipient = makeAddr("newProtocolFeeRecipient");
+    function testOnlyOwnerCanSetFeeDistributor() public {
+        FeeDistributor newFeeDistributor = new FeeDistributor(
+            owner,
+            500,
+            protocolFeeRecipient
+        );
+
+        vm.prank(user);
+        vm.expectRevert();
+        auctioneer.setFeeDistributor(address(newFeeDistributor));
+    }
+
+    function testSetFeeDistributorRevertsOnZeroAddress() public {
+        vm.prank(owner);
+        vm.expectRevert(ILiquidRouter.AddressZero.selector);
+        auctioneer.setFeeDistributor(address(0));
+    }
+
+    function testSetFeeDistributorRevertsOnEOA() public {
+        vm.prank(owner);
+        vm.expectRevert(ILiquidRouter.InvalidModule.selector);
+        auctioneer.setFeeDistributor(makeAddr("eoaFeeDistributor"));
+    }
+
+    function testSetFeeDistributorUpdatesAndReadsFromModule() public {
+        address previousDistributor = auctioneer.feeDistributor();
+        FeeDistributor newFeeDistributor = new FeeDistributor(
+            owner,
+            500,
+            protocolFeeRecipient
+        );
+
+        vm.expectEmit(true, true, false, true);
+        emit ILiquidAuctioneer.FeeDistributorUpdated(
+            previousDistributor,
+            address(newFeeDistributor)
+        );
 
         vm.prank(owner);
-        auctioneer.setProtocolFeeRecipient(newProtocolFeeRecipient);
+        auctioneer.setFeeDistributor(address(newFeeDistributor));
+
+        assertEq(auctioneer.feeDistributor(), address(newFeeDistributor));
+        IFeeDistributor distributor = IFeeDistributor(auctioneer.feeDistributor());
+        assertEq(distributor.totalFeeBPS(), 500);
+    }
+
+    function testOnlyOwnerCanSetLiquidRegistry() public {
+        LiquidRegistry newRegistry = new LiquidRegistry(owner);
+
+        vm.prank(user);
+        vm.expectRevert();
+        auctioneer.setLiquidRegistry(address(newRegistry));
+    }
+
+    function testSetLiquidRegistryRevertsOnZeroAddress() public {
+        vm.prank(owner);
+        vm.expectRevert(ILiquidRouter.AddressZero.selector);
+        auctioneer.setLiquidRegistry(address(0));
+    }
+
+    function testSetLiquidRegistryRevertsOnEOA() public {
+        vm.prank(owner);
+        vm.expectRevert(ILiquidRouter.InvalidModule.selector);
+        auctioneer.setLiquidRegistry(makeAddr("eoaLiquidRegistry"));
+    }
+
+    function testSetLiquidRegistryUpdatesTokenBeneficiarySource() public {
+        address previousRegistry = auctioneer.liquidRegistry();
+        LiquidRegistry newRegistry = new LiquidRegistry(owner);
+
+        vm.prank(owner);
+        newRegistry.setWriter(address(auctioneer), true);
+
+        vm.expectEmit(true, true, false, true);
+        emit ILiquidAuctioneer.LiquidRegistryUpdated(
+            previousRegistry,
+            address(newRegistry)
+        );
+
+        vm.prank(owner);
+        auctioneer.setLiquidRegistry(address(newRegistry));
+
+        address token = makeAddr("auctioneerToken");
+        address replacementBeneficiary = makeAddr("replacementBeneficiary");
+        vm.prank(owner);
+        auctioneer.setBeneficiary(token, replacementBeneficiary);
 
         assertEq(
-            auctioneer.PROTOCOL_FEE_RECIPIENT(),
-            newProtocolFeeRecipient
+            auctioneer.tokenBeneficiaries(token),
+            replacementBeneficiary
         );
     }
 
@@ -281,12 +400,6 @@ contract LiquidAuctioneerUnitTest is Test {
         vm.expectRevert(ILiquidRouter.AddressZero.selector);
         vm.prank(owner);
         auctioneer.setUniversalRouter(address(0));
-    }
-
-    function testOnlyOwnerCanSetProtocolFeeRecipientRevertsOnZero() public {
-        vm.expectRevert(ILiquidRouter.AddressZero.selector);
-        vm.prank(owner);
-        auctioneer.setProtocolFeeRecipient(address(0));
     }
 
     function test_RescueTokens_Success() public {
@@ -307,6 +420,7 @@ contract LiquidAuctioneerUnitTest is Test {
         address liquidToken = address(
             new MockLiquidTokenForExit(address(new MockAuctionForBid()))
         );
+        auctioneerRegistry.setBeneficiary(liquidToken, makeAddr("creator"));
         FunctionalMockPermit2 permit2Impl = new FunctionalMockPermit2();
         vm.etch(PERMIT2_ADDR, address(permit2Impl).code);
         rare.transfer(address(router), 10e18);
@@ -323,7 +437,6 @@ contract LiquidAuctioneerUnitTest is Test {
             liquidToken,
             1,
             user,
-            referrer,
             0,
             1,
             block.timestamp + 1 hours
@@ -338,6 +451,7 @@ contract LiquidAuctioneerUnitTest is Test {
         address liquidToken = address(
             new MockLiquidTokenForExit(address(new MockAuctionForBid()))
         );
+        auctioneerRegistry.setBeneficiary(liquidToken, makeAddr("creator"));
         FunctionalMockPermit2 permit2Impl = new FunctionalMockPermit2();
         vm.etch(PERMIT2_ADDR, address(permit2Impl).code);
         rare.transfer(address(router), 10e18);
@@ -354,7 +468,6 @@ contract LiquidAuctioneerUnitTest is Test {
             liquidToken,
             1,
             user,
-            referrer,
             0,
             1,
             block.timestamp + 1 hours
@@ -380,6 +493,7 @@ contract LiquidAuctioneerSecurityTest is Test {
     address recipient = makeAddr("recipient");
 
     LiquidAuctioneer public auctioneer;
+    LiquidRegistry public auctioneerRegistry;
     MockRARE public rare;
     MockBurner public burner;
 
@@ -395,17 +509,14 @@ contract LiquidAuctioneerSecurityTest is Test {
         vm.etch(PERMIT2_ADDR, address(permit2Impl).code);
 
         // Default auctioneer with a placeholder router (each test creates its own)
-        auctioneer = new LiquidAuctioneer(
-            owner,
-            makeAddr("placeholder-router"),
-            protocolFeeRecipient,
-            address(burner),
-            address(rare),
-            makeAddr("weth"),
-            2500,
-            2500,
-            5000
-        );
+        auctioneer = _createAuctioneer(makeAddr("placeholder-router"));
+    }
+
+    /// @dev Register a token in the auctioneer's registry so it passes the isRegistered check
+    function _registerToken(LiquidRegistry registry, address token) internal {
+        vm.prank(owner);
+        registry.setWriter(address(this), true);
+        registry.setBeneficiary(token, makeAddr("beneficiary"));
     }
 
     function _validRoute()
@@ -434,18 +545,33 @@ contract LiquidAuctioneerSecurityTest is Test {
     function _createAuctioneer(
         address routerAddr
     ) internal returns (LiquidAuctioneer) {
-        return
-            new LiquidAuctioneer(
-                owner,
-                routerAddr,
-                protocolFeeRecipient,
-                address(burner),
-                address(rare),
-                makeAddr("weth"),
-                2500,
-                2500,
-                5000
-            );
+        return _createAuctioneer(routerAddr, protocolFeeRecipient, makeAddr("weth"));
+    }
+
+    function _createAuctioneer(
+        address routerAddr,
+        address protocolRecipient,
+        address wethAddress
+    ) internal returns (LiquidAuctioneer) {
+        FeeDistributor feeDistributor = new FeeDistributor(
+            owner,
+            400,
+            protocolRecipient
+        );
+        LiquidRegistry liquidRegistry = new LiquidRegistry(owner);
+        LiquidAuctioneer createdAuctioneer = new LiquidAuctioneer(
+            owner,
+            routerAddr,
+            address(feeDistributor),
+            address(liquidRegistry),
+            address(rare),
+            wethAddress
+        );
+        vm.prank(owner);
+        liquidRegistry.setWriter(address(createdAuctioneer), true);
+        auctioneerRegistry = liquidRegistry;
+
+        return createdAuctioneer;
     }
 
     function _createAuctioneerWithProtocolRecipient(
@@ -453,16 +579,10 @@ contract LiquidAuctioneerSecurityTest is Test {
         address protocolRecipient
     ) internal returns (LiquidAuctioneer) {
         return
-            new LiquidAuctioneer(
-                owner,
+            _createAuctioneer(
                 routerAddr,
                 protocolRecipient,
-                address(burner),
-                address(rare),
-                makeAddr("weth"),
-                2500,
-                2500,
-                5000
+                makeAddr("weth")
             );
     }
 
@@ -489,6 +609,7 @@ contract LiquidAuctioneerSecurityTest is Test {
             address(bidRouter),
             protocolFeeRecipient
         );
+        _registerToken(auctioneerRegistry, liquidToken);
         beneficiary.setAuctioneer(payable(address(bidAuctioneer)));
         vm.prank(owner);
         bidAuctioneer.setBeneficiary(liquidToken, address(beneficiary));
@@ -501,22 +622,27 @@ contract LiquidAuctioneerSecurityTest is Test {
             liquidToken,
             1,
             user,
-            address(0),
-            0,
+            1,
             1,
             block.timestamp + 1 hours
         );
 
-        uint256 totalFee = (1 ether * bidAuctioneer.TOTAL_FEE_BPS()) / 10_000;
-        uint256 beneficiaryFee = (totalFee * 2500) / 10_000;
-        uint256 remainingFee = totalFee - beneficiaryFee;
-        uint256 protocolFee = (remainingFee * 2500) / 10_000;
-        uint256 referrerFee = (remainingFee * 5000) / 10_000;
-        uint256 expectedProtocolShare = protocolFee + referrerFee + beneficiaryFee;
-
+        IFeeDistributor distributor = IFeeDistributor(bidAuctioneer.feeDistributor());
+        uint256 grossFee = (1 ether * uint256(distributor.totalFeeBPS())) / 10_000;
+        (
+            uint256 beneficiaryFee,
+            uint256 protocolFee
+        ) = distributor.quoteFeeBreakdown(grossFee);
+        uint256 expectedProtocolShare = protocolFee + beneficiaryFee;
+        uint256 protocolAfter = protocolFeeRecipient.balance;
+        assertGe(
+            protocolAfter,
+            protocolBefore,
+            "Beneficiary reentry should not reduce protocol balance"
+        );
         assertEq(
-            protocolFeeRecipient.balance - protocolBefore,
-            expectedProtocolShare,
+            protocolAfter,
+            protocolBefore + expectedProtocolShare,
             "Beneficiary reentry should redirect share to protocol"
         );
     }
@@ -533,6 +659,7 @@ contract LiquidAuctioneerSecurityTest is Test {
             address(bidRouter),
             address(rejectingProtocol)
         );
+        _registerToken(auctioneerRegistry, liquidToken);
         vm.expectRevert(ILiquidRouter.EthTransferFailed.selector);
         vm.prank(user);
         bidAuctioneer.bid{value: 1 ether}(
@@ -541,7 +668,6 @@ contract LiquidAuctioneerSecurityTest is Test {
             liquidToken,
             1,
             user,
-            address(0),
             0,
             1,
             block.timestamp + 1 hours
@@ -565,6 +691,7 @@ contract LiquidAuctioneerSecurityTest is Test {
         );
         rare.mint(address(mockAuction), refundAmount);
         address liquidToken = _setupMockAuctionToken(address(mockAuction));
+        _registerToken(auctioneerRegistry, liquidToken);
         (bytes memory exitCommands, bytes[] memory exitInputs) = _validRoute();
 
         ReentrantRecipientForAuctioneer exitRecipient = new ReentrantRecipientForAuctioneer(
@@ -608,6 +735,7 @@ contract LiquidAuctioneerSecurityTest is Test {
         );
         rare.mint(address(mockAuction), refundAmount);
         address liquidToken = _setupMockAuctionToken(address(mockAuction));
+        _registerToken(auctioneerRegistry, liquidToken);
         (bytes memory exitCommands, bytes[] memory exitInputs) = _validRoute();
 
         ReentrantRecipientForAuctioneer exitRecipient = new ReentrantRecipientForAuctioneer(
@@ -653,6 +781,7 @@ contract LiquidAuctioneerSecurityTest is Test {
         );
         rare.mint(address(mockAuction), refundAmount);
         address liquidToken = _setupMockAuctionToken(address(mockAuction));
+        _registerToken(auctioneerRegistry, liquidToken);
 
         // User approves auctioneer to pull RARE
         vm.startPrank(user);
@@ -706,6 +835,7 @@ contract LiquidAuctioneerSecurityTest is Test {
         );
         rare.mint(address(mockAuction), refundAmount);
         address liquidToken = _setupMockAuctionToken(address(mockAuction));
+        _registerToken(auctioneerRegistry, liquidToken);
 
         // User approves and calls exit with minEthOut = 0
         vm.startPrank(user);
@@ -759,6 +889,7 @@ contract LiquidAuctioneerSecurityTest is Test {
         );
         rare.mint(address(mockAuction), refundAmount);
         address liquidToken = _setupMockAuctionToken(address(mockAuction));
+        _registerToken(auctioneerRegistry, liquidToken);
 
         vm.startPrank(user);
         rare.approve(address(ethAuctioneer), type(uint256).max);
@@ -797,6 +928,7 @@ contract LiquidAuctioneerSecurityTest is Test {
         );
         rare.mint(address(mockAuction), refundAmount);
         address liquidToken = _setupMockAuctionToken(address(mockAuction));
+        _registerToken(auctioneerRegistry, liquidToken);
 
         vm.startPrank(user);
         rare.approve(address(ethAuctioneer), type(uint256).max);
@@ -839,6 +971,7 @@ contract LiquidAuctioneerSecurityTest is Test {
         );
         rare.mint(address(mockAuction), refundAmount);
         address liquidToken = _setupMockAuctionToken(address(mockAuction));
+        _registerToken(auctioneerRegistry, liquidToken);
 
         vm.startPrank(user);
         rare.approve(address(ethAuctioneer), type(uint256).max);
@@ -1015,7 +1148,6 @@ contract ReentrantBeneficiaryForAuctioneer {
             liquidToken,
             1,
             bidOwner,
-            address(0),
             0,
             1,
             deadline
@@ -1327,15 +1459,19 @@ contract MockLBPStrategyFactoryAuctioneer is IDistributionStrategy {
 }
 
 contract MockLBPStrategyAuctioneer is IDistributionContract, ILBPStrategy {
-    address public immutable override(ILBPStrategy) token;
-    address public immutable poolManager;
-    address public immutable currency;
+    address public immutable TOKEN;
+    address public immutable POOL_MANAGER;
+    address public immutable CURRENCY;
     address public auction;
 
     constructor(address _token, address _poolManager, address _currency) {
-        token = _token;
-        poolManager = _poolManager;
-        currency = _currency;
+        TOKEN = _token;
+        POOL_MANAGER = _poolManager;
+        CURRENCY = _currency;
+    }
+
+    function token() external view override(ILBPStrategy) returns (address) {
+        return TOKEN;
     }
 
     function onTokensReceived()
@@ -1343,14 +1479,12 @@ contract MockLBPStrategyAuctioneer is IDistributionContract, ILBPStrategy {
         override(IDistributionContract, ILBPStrategy)
     {
         if (auction == address(0)) {
-            MockAuctionSweepable mockAuction = new MockAuctionSweepable(
-                currency
-            );
-            mockAuction.setToken(token);
+            MockAuctionSweepable mockAuction = new MockAuctionSweepable(CURRENCY);
+            mockAuction.setToken(TOKEN);
             auction = address(mockAuction);
-            IERC20(token).transfer(
+            IERC20(TOKEN).transfer(
                 auction,
-                IERC20(token).balanceOf(address(this))
+                IERC20(TOKEN).balanceOf(address(this))
             );
             IDistributionContract(auction).onTokensReceived();
         }
@@ -1368,10 +1502,10 @@ contract MockLBPStrategyAuctioneer is IDistributionContract, ILBPStrategy {
     function migrate() external override(ILBPStrategy) {
         if (auction != address(0)) {
             MockAuctionSweepable(auction).sweepCurrency();
-            IPoolManager pm = IPoolManager(poolManager);
+            IPoolManager pm = IPoolManager(POOL_MANAGER);
             PoolKey memory key = PoolKey({
-                currency0: Currency.wrap(currency < token ? currency : token),
-                currency1: Currency.wrap(currency < token ? token : currency),
+                currency0: Currency.wrap(CURRENCY < TOKEN ? CURRENCY : TOKEN),
+                currency1: Currency.wrap(CURRENCY < TOKEN ? TOKEN : CURRENCY),
                 fee: 0,
                 tickSpacing: 60,
                 hooks: IHooks(address(this))
@@ -1393,11 +1527,45 @@ contract LiquidAuctioneerPayerIsUserTest is Test {
 
     PayerCheckingRouter public payerRouter;
     LiquidAuctioneer public auctioneer;
+    LiquidRegistry public auctioneerRegistry;
     MockRARE public rare;
     MockERC20 public usdc;
     MockBurner public burner;
 
     address constant WETH_ADDR = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+
+    function _createAuctioneer(
+        address routerAddr,
+        address protocolRecipient,
+        address wethAddress
+    ) internal returns (LiquidAuctioneer) {
+        FeeDistributor feeDistributor = new FeeDistributor(
+            owner,
+            400,
+            protocolRecipient
+        );
+        LiquidRegistry liquidRegistry = new LiquidRegistry(owner);
+        LiquidAuctioneer createdAuctioneer = new LiquidAuctioneer(
+            owner,
+            routerAddr,
+            address(feeDistributor),
+            address(liquidRegistry),
+            address(rare),
+            wethAddress
+        );
+        vm.prank(owner);
+        liquidRegistry.setWriter(address(createdAuctioneer), true);
+        auctioneerRegistry = liquidRegistry;
+        return createdAuctioneer;
+    }
+
+    function _registerToken(address token) internal {
+        if (!auctioneerRegistry.isWriter(address(this))) {
+            vm.prank(owner);
+            auctioneerRegistry.setWriter(address(this), true);
+        }
+        auctioneerRegistry.setBeneficiary(token, makeAddr("beneficiary"));
+    }
 
     function setUp() public {
         vm.deal(user, 100 ether);
@@ -1410,16 +1578,10 @@ contract LiquidAuctioneerPayerIsUserTest is Test {
         FunctionalMockPermit2 permit2Impl = new FunctionalMockPermit2();
         vm.etch(PERMIT2_ADDR, address(permit2Impl).code);
 
-        auctioneer = new LiquidAuctioneer(
-            owner,
+        auctioneer = _createAuctioneer(
             address(payerRouter),
             protocolFeeRecipient,
-            address(burner),
-            address(rare),
-            WETH_ADDR,
-            2500,
-            2500,
-            5000
+            WETH_ADDR
         );
     }
 
@@ -1437,6 +1599,7 @@ contract LiquidAuctioneerPayerIsUserTest is Test {
         address liquidToken = address(
             new MockLiquidTokenForExit(address(new MockAuctionForBid()))
         );
+        _registerToken(liquidToken);
         usdc.mint(user, 100e18);
 
         // Set expected payerIsUser = true for ERC20
@@ -1450,7 +1613,6 @@ contract LiquidAuctioneerPayerIsUserTest is Test {
             liquidToken,
             1,
             user,
-            referrer,
             0,
             1,
             block.timestamp + 1 hours
@@ -1474,6 +1636,7 @@ contract LiquidAuctioneerPayerIsUserTest is Test {
         address liquidToken = address(
             new MockLiquidTokenForExit(address(new MockAuctionForBid()))
         );
+        _registerToken(liquidToken);
 
         // Set expected payerIsUser = false for ETH
         payerRouter.setExpectedPayerIsUser(false);
@@ -1485,7 +1648,6 @@ contract LiquidAuctioneerPayerIsUserTest is Test {
             liquidToken,
             1,
             user,
-            referrer,
             0,
             1,
             block.timestamp + 1 hours
@@ -1506,6 +1668,7 @@ contract LiquidAuctioneerPayerIsUserTest is Test {
         address liquidToken = address(
             new MockLiquidTokenForExit(address(new MockAuctionForBid()))
         );
+        _registerToken(liquidToken);
         usdc.mint(user, 100e18);
 
         // Set expected payerIsUser = true for ERC20
@@ -1519,7 +1682,6 @@ contract LiquidAuctioneerPayerIsUserTest is Test {
             liquidToken,
             1,
             user,
-            referrer,
             0,
             1,
             block.timestamp + 1 hours
@@ -1541,6 +1703,7 @@ contract LiquidAuctioneerPayerIsUserTest is Test {
         address liquidToken = address(
             new MockLiquidTokenForExit(address(new MockAuctionForBid()))
         );
+        _registerToken(liquidToken);
 
         // Set expected payerIsUser = false for ETH
         payerRouter.setExpectedPayerIsUser(false);
@@ -1552,7 +1715,6 @@ contract LiquidAuctioneerPayerIsUserTest is Test {
             liquidToken,
             1,
             user,
-            referrer,
             0,
             1,
             block.timestamp + 1 hours

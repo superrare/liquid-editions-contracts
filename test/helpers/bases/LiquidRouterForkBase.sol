@@ -5,16 +5,21 @@ import {Test} from "forge-std/Test.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {ILiquidRegistry} from "liquid-editions/interfaces/ILiquidRegistry.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {DeployConfig} from "script/config/DeployConfig.sol";
 import {DeployRAREBurner} from "script/deployers/DeployRAREBurner.s.sol";
 import {DeployLiquidFactory} from "script/deployers/DeployLiquidFactory.s.sol";
 import {DeployLiquidRouter} from "script/deployers/DeployLiquidRouter.s.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 /// @title LiquidRouter Fork Base
 /// @notice Shared fork setup: URL resolution, deploy burner/factory/router. Extend for AnvilFork, LiquidSwapGuard, etc.
-abstract contract LiquidRouterForkBase is Test {
+abstract contract LiquidRouterForkBase is Test, InitGuardTestHelper {
     NetworkConfig.Config internal config;
     DeployConfig.Config internal deployConfig;
 
@@ -28,25 +33,17 @@ abstract contract LiquidRouterForkBase is Test {
     LiquidRouter public router;
 
     /// @notice Override to pin fork block (e.g. for auction salt reuse). Return 0 for latest.
+    /// @dev Defaults to FORK_BLOCK env var if set; helps RPC caching and avoids rate-limit flakes.
     function _getForkBlock() internal virtual returns (uint256) {
-        return 0;
+        return vm.envOr("FORK_BLOCK", uint256(0));
     }
 
     /// @notice Override to add factory config (CCA/LBP, pool hooks). Called after base factory setup.
     function _configureFactory() internal virtual {}
 
-    /// @notice Resolve fork URL. Priority: FORK_URL > MAINNET_RPC_URL > ETH_MAINNET > default
+    /// @notice Resolve fork URL. Uses FORK_URL only.
     function _getForkUrl() internal view returns (string memory forkUrl) {
-        try vm.envString("FORK_URL") returns (string memory url) {
-            if (bytes(url).length > 0) return url;
-        } catch {}
-        try vm.envString("MAINNET_RPC_URL") returns (string memory url) {
-            if (bytes(url).length > 0) return url;
-        } catch {}
-        try vm.envString("ETH_MAINNET") returns (string memory url) {
-            return url;
-        } catch {}
-        return "https://eth.llamarpc.com";
+        return ForkUrlResolver.requireForkUrl(vm);
     }
 
     /// @notice Base setUp. Override and call super.setUp() first to get burner/factory/router.
@@ -92,6 +89,12 @@ abstract contract LiquidRouterForkBase is Test {
         );
         burner = RAREBurner(payable(burnerAddr));
 
+        // Deploy LiquidInitGuard as default pool hooks (prevents pre-initialization DoS)
+        if (deployConfig.factory.poolHooks == address(0)) {
+            address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
+            deployConfig.factory.poolHooks = initGuardAddr;
+        }
+
         // DeployLiquidFactory.deploy sets all three implementations and base token
         DeployLiquidFactory.DeployResult memory factoryResult = DeployLiquidFactory.deploy(
             admin,
@@ -100,18 +103,33 @@ abstract contract LiquidRouterForkBase is Test {
         );
         factory = LiquidFactory(factoryResult.factory);
 
+        // Wire init guard to factory
+        if (deployConfig.factory.poolHooks != address(0)) {
+            try LiquidInitGuard(deployConfig.factory.poolHooks).factory() returns (address f) {
+                if (f == address(0)) {
+                    LiquidInitGuard(deployConfig.factory.poolHooks).setFactory(address(factory));
+                }
+            } catch {}
+        }
+
         _configureFactory();
 
         (address routerAddr, ) = DeployLiquidRouter.deploy(
             admin,
             protocolFeeRecipient,
             deployConfig.fees,
-            config,
-            burnerAddr
+            config.uniswapUniversalRouter
         );
         router = LiquidRouter(payable(routerAddr));
-        factory.setLiquidRouter(address(router));
-        router.setTrustedFactory(address(factory));
+        ILiquidRegistry(router.liquidRegistry()).setWriter(
+            address(router),
+            true
+        );
+        ILiquidRegistry(router.liquidRegistry()).setWriter(
+            address(factory),
+            true
+        );
+        factory.setLiquidRegistry(router.liquidRegistry());
 
         vm.stopPrank();
     }

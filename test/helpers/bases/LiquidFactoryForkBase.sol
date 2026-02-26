@@ -7,11 +7,14 @@ import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
 
 /// @title Liquid Factory Fork Test Base
 /// @notice Shared setup for fork tests: Factory + MockRARE + common accounts
 /// @dev Inheritors get factory, mockRARE, multiCurveImpl, and funded admin/tokenCreator/protocolFeeRecipient
-abstract contract LiquidFactoryForkBase is ForkTestBase {
+abstract contract LiquidFactoryForkBase is ForkTestBase, InitGuardTestHelper {
     // Standard LP tick range
     int24 constant LP_TICK_LOWER = -180;
     int24 constant LP_TICK_UPPER = 120000;
@@ -32,6 +35,8 @@ abstract contract LiquidFactoryForkBase is ForkTestBase {
 
     /// @notice Deploy factory with standard params. Override to customize.
     function _deployFactory() internal virtual returns (LiquidFactory) {
+        address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
+
         LiquidFactory f = new LiquidFactory(
             admin,
             config.weth,
@@ -39,12 +44,13 @@ abstract contract LiquidFactoryForkBase is ForkTestBase {
             LP_TICK_LOWER,
             LP_TICK_UPPER,
             config.uniswapV4Quoter,
-            address(0), // poolHooks
+            initGuardAddr,
             60, // poolTickSpacing
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-        f.setLiquidRouter(address(1));
+        LiquidInitGuard(initGuardAddr).setFactory(address(f));
+        f.setLiquidRegistry(address(1));
         f.setLiquidMultiCurveImplementation(address(multiCurveImpl));
         f.setBaseToken(address(mockRARE));
         return f;

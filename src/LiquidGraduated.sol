@@ -154,8 +154,30 @@ contract LiquidGraduated is
     // ============================================
 
     /// @notice Initializes a new liquid token with LBP strategy (no pool yet)
-    /// @dev Called once by factory after cloning. Mints all tokens, sends creator reward and LP supply to strategy.
-    ///      Pool is created later via strategy.migrate() at auction-discovered price.
+    /// @dev Called once by factory after cloning. This is the first phase of graduated launch:
+    ///
+    ///      **Phase 1: Initialization (this function)**
+    ///      - Mints all tokens (1M total supply)
+    ///      - Sends creator reward (100K tokens)
+    ///      - Sends LP supply (900K tokens) to strategy
+    ///      - Strategy creates CCA auction
+    ///      - Pool is NOT created yet (no Uniswap V4 pool exists)
+    ///
+    ///      **Phase 2: Auction (after initialization)**
+    ///      - Users bid on auction using LiquidAuctioneer.bid()
+    ///      - Auction discovers price through bidding mechanism
+    ///      - Auction ends after specified duration
+    ///
+    ///      **Phase 3: Graduation (after auction ends)**
+    ///      - Anyone can call strategy.migrate() to create pool
+    ///      - Pool is created at auction-discovered price
+    ///      - Token "graduates" from auction to live trading
+    ///      - _isPoolLive() returns true after graduation
+    ///
+    ///      The relationship: strategy → auction → pool
+    ///      - strategy holds tokens and creates auction
+    ///      - auction runs price discovery
+    ///      - strategy.migrate() creates pool at discovered price
     /// @param _creator The address of the liquid token creator (receives launch reward)
     /// @param _tokenUri The location of initial token metadata
     /// @param _name The liquid token name
@@ -228,9 +250,13 @@ contract LiquidGraduated is
         poolId = poolKey.toId();
     }
 
-    /// @notice Admin fallback to set poolId (only factory, for edge cases)
-    error InvalidPoolId();
-
+    /// @notice Updates the pool ID after strategy migration (factory only)
+    /// @dev Called by factory after strategy.migrate() creates the Uniswap V4 pool.
+    ///      During initialization, poolId is computed from poolKey (pre-computed from snapshotted config).
+    ///      However, after migration, the actual pool may have a different ID if pool parameters changed.
+    ///      This function allows factory to update poolId to match the actual deployed pool.
+    ///      Only callable by factory (prevents unauthorized pool ID changes).
+    /// @param _newPoolId The new pool ID from the migrated pool
     function setPoolId(PoolId _newPoolId) external {
         if (msg.sender != factory) revert NotMigrator();
         if (PoolId.unwrap(_newPoolId) == bytes32(0)) {
@@ -239,8 +265,6 @@ contract LiquidGraduated is
         emit PoolIdUpdated(poolId, _newPoolId);
         poolId = _newPoolId;
     }
-
-    event PoolIdUpdated(PoolId indexed oldPoolId, PoolId indexed newPoolId);
 
     /// @inheritdoc ILiquidGraduated
     function isGraduated() external view returns (bool) {
@@ -291,13 +315,26 @@ contract LiquidGraduated is
         );
     }
 
-    /// @notice Returns whether the pool has been initialized (by strategy.migrate())
-    /// @dev sqrtPriceX96 != 0 means pool was initialized
+    /// @notice Returns whether the pool has been initialized (graduation detection)
+    /// @dev This function detects if the token has "graduated" from auction to live pool.
+    ///      Graduation flow:
+    ///      1. Token is created with strategy (auction is active, no pool yet)
+    ///      2. Auction runs and discovers price through bidding
+    ///      3. After auction ends, anyone can call strategy.migrate()
+    ///      4. strategy.migrate() creates Uniswap V4 pool at auction-discovered price
+    ///      5. Pool initialization sets sqrtPriceX96 to non-zero value
+    ///      6. This function detects graduation by checking if sqrtPriceX96 != 0
+    ///
+    ///      Before graduation: sqrtPriceX96 = 0 (pool not initialized)
+    ///      After graduation: sqrtPriceX96 != 0 (pool initialized with discovered price)
+    /// @return True if pool has been initialized (graduated), false if still in auction phase
     function _isPoolLive() internal view returns (bool) {
         if (strategy == address(0)) return false;
+        // Read pool slot0 - sqrtPriceX96 is 0 if pool hasn't been initialized
         (uint160 sqrtPriceX96, , , ) = IPoolManager(poolManager).getSlot0(
             poolId
         );
+        // Non-zero sqrtPriceX96 means pool was initialized (graduated)
         return sqrtPriceX96 != 0;
     }
 
@@ -686,6 +723,11 @@ contract LiquidGraduated is
     }
 
     /// @notice Quote helper for RARE -> LIQUID swaps (always reverts with QuoteResult)
+    /// @dev Called during unlock callback to simulate buy swap. Executes V4 swap, validates delta signs,
+    ///      extracts LIQUID output, and reverts with QuoteResult containing output and post-swap price.
+    ///      Handles currency ordering (baseToken can be currency0 or currency1).
+    /// @param data Encoded rareAmount (uint256)
+    /// @return Empty bytes (never reached - always reverts with QuoteResult)
     function _unlockQuoteSwapBuy(
         bytes memory data
     ) internal returns (bytes memory) {
@@ -732,6 +774,11 @@ contract LiquidGraduated is
     }
 
     /// @notice Quote helper for LIQUID -> RARE swaps (always reverts with QuoteResult)
+    /// @dev Called during unlock callback to simulate sell swap. Executes V4 swap, validates delta signs,
+    ///      extracts RARE output, and reverts with QuoteResult containing output and post-swap price.
+    ///      Handles currency ordering (baseToken can be currency0 or currency1).
+    /// @param data Encoded tokenAmount (uint256)
+    /// @return Empty bytes (never reached - always reverts with QuoteResult)
     function _unlockQuoteSwapSell(
         bytes memory data
     ) internal returns (bytes memory) {
@@ -791,7 +838,11 @@ contract LiquidGraduated is
         return uint128(value);
     }
 
-    /// @dev Safe cast helpers for BalanceDelta conversions
+    /// @notice Converts positive BalanceDelta amount to uint128
+    /// @dev Safe cast helper for BalanceDelta conversions. Validates x >= 0 before casting.
+    ///      Used to extract output amounts from swap deltas.
+    /// @param x Positive int128 delta value
+    /// @return uint128 representation of x
     function _toUint128Pos(int128 x) internal pure returns (uint128) {
         if (x < 0) revert NegativeValue(x);
         // Casting to uint128 is safe because we verified x >= 0
@@ -799,6 +850,11 @@ contract LiquidGraduated is
         return uint128(uint256(int256(x)));
     }
 
+    /// @notice Converts negative BalanceDelta amount to uint128 (absolute value)
+    /// @dev Safe cast helper for BalanceDelta conversions. Validates x <= 0, negates in 256-bit space
+    ///      to avoid int128.min overflow, then casts to uint128. Used to extract input amounts from swap deltas.
+    /// @param x Negative int128 delta value
+    /// @return uint128 absolute value of x
     function _toUint128Neg(int128 x) internal pure returns (uint128) {
         if (x > 0) revert PositiveValue(x);
         int256 y = -int256(x); // negate in 256-bit space to avoid int128.min overflow

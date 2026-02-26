@@ -12,9 +12,12 @@ import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 /// @notice Shared base for Liquid bonding and rarBurn fork tests
-abstract contract LiquidBondingForkBase is Test {
+abstract contract LiquidBondingForkBase is Test, InitGuardTestHelper {
     NetworkConfig.Config internal config;
 
     address public admin = makeAddr("admin");
@@ -36,10 +39,7 @@ abstract contract LiquidBondingForkBase is Test {
     MockRARE public mockRARE;
 
     function setUp() public virtual {
-        string memory forkUrl = vm.envOr(
-            "FORK_URL",
-            string("https://mainnet.base.org")
-        );
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
 
         config = NetworkConfig.getConfig(block.chainid);
@@ -108,6 +108,7 @@ abstract contract LiquidBondingForkBase is Test {
         int24 tickLower,
         int24 tickUpper
     ) internal returns (LiquidFactory) {
+        address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         vm.startPrank(admin);
 
         LiquidFactory tempFactory = new LiquidFactory(
@@ -117,12 +118,13 @@ abstract contract LiquidBondingForkBase is Test {
             tickLower,
             tickUpper,
             config.uniswapV4Quoter,
-            address(0),
+            initGuardAddr,
             60,
             300,
             1e15
         );
-        tempFactory.setLiquidRouter(address(1));
+        LiquidInitGuard(initGuardAddr).setFactory(address(tempFactory));
+        tempFactory.setLiquidRegistry(address(1));
 
         LiquidMultiCurve multiCurveImpl = new LiquidMultiCurve();
         tempFactory.setLiquidMultiCurveImplementation(address(multiCurveImpl));

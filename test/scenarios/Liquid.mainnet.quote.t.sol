@@ -12,11 +12,14 @@ import {FullMath} from "v4-core/libraries/FullMath.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 import {LiquidPoolSwapHelper} from "liquid-editions-test/helpers/LiquidPoolSwapHelper.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 /// @title LiquidMultiCurve Quote → Trade Pattern Tests
 /// @notice Comprehensive tests for quoteBuy() → buy() and quoteSell() → sell() patterns
 /// @dev Tests that quotes accurately predict actual trade outcomes including slippage protection
-contract LiquidInstantQuoteTradeTest is Test {
+contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
     // Network configuration
     NetworkConfig.Config internal config;
 
@@ -51,10 +54,7 @@ contract LiquidInstantQuoteTradeTest is Test {
 
     function setUp() public {
         // Fork Base mainnet for realistic testing
-        string memory forkUrl = vm.envOr(
-            "FORK_URL",
-            string("https://mainnet.base.org")
-        );
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
 
         // Get network configuration
@@ -76,6 +76,7 @@ contract LiquidInstantQuoteTradeTest is Test {
         mockRARE.mint(user2, 10_000_000 ether);
 
         // Deploy contracts
+        address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         vm.startPrank(admin);
 
         liquidImpl = new LiquidMultiCurve();
@@ -100,14 +101,14 @@ contract LiquidInstantQuoteTradeTest is Test {
             LP_TICK_LOWER,
             LP_TICK_UPPER,
             config.uniswapV4Quoter, // Use wrapper instead of raw quoter
-            address(0), // poolHooks (no hooks)
+            initGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
+        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
 
-        
-        factory.setLiquidRouter(address(1));
+        factory.setLiquidRegistry(address(1));
 
         factory.setLiquidMultiCurveImplementation(address(liquidImpl));
 

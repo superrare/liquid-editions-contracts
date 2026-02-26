@@ -59,7 +59,7 @@ contract LiquidGraduatedUnitTest is Test {
         );
 
         vm.startPrank(admin);
-        factory.setLiquidRouter(address(1));
+        factory.setLiquidRegistry(address(1));
         factory.setBaseToken(address(rare));
         implementation = new LiquidGraduated();
         factory.setLiquidGraduatedImplementation(address(implementation));
@@ -233,15 +233,19 @@ contract MockLBPStrategyFactory is IDistributionStrategy {
 
 /// Mock LBP Strategy: implements ILBPStrategy interface
 contract MockLBPStrategy is IDistributionContract, ILBPStrategy {
-    address public immutable override(ILBPStrategy) token;
-    address public immutable poolManager;
-    address public immutable currency;
+    address public immutable TOKEN;
+    address public immutable POOL_MANAGER;
+    address public immutable CURRENCY;
     address public auction;
 
     constructor(address _token, address _poolManager, address _currency) {
-        token = _token;
-        poolManager = _poolManager;
-        currency = _currency;
+        TOKEN = _token;
+        POOL_MANAGER = _poolManager;
+        CURRENCY = _currency;
+    }
+
+    function token() external view override(ILBPStrategy) returns (address) {
+        return TOKEN;
     }
 
     function onTokensReceived()
@@ -250,13 +254,13 @@ contract MockLBPStrategy is IDistributionContract, ILBPStrategy {
     {
         if (auction == address(0)) {
             // Create mock auction on first call
-            MockAuction mockAuction = new MockAuction(currency);
-            mockAuction.setToken(token);
+            MockAuction mockAuction = new MockAuction(CURRENCY);
+            mockAuction.setToken(TOKEN);
             auction = address(mockAuction);
             // Transfer tokens to auction
-            IERC20(token).transfer(
+            IERC20(TOKEN).transfer(
                 auction,
-                IERC20(token).balanceOf(address(this))
+                IERC20(TOKEN).balanceOf(address(this))
             );
             IDistributionContract(auction).onTokensReceived();
         }
@@ -276,11 +280,11 @@ contract MockLBPStrategy is IDistributionContract, ILBPStrategy {
             // Sweep currency from auction
             MockAuction(auction).sweepCurrency();
             // Initialize pool via pool manager
-            IPoolManager pm = IPoolManager(poolManager);
+            IPoolManager pm = IPoolManager(POOL_MANAGER);
             // Create a simple pool key
             PoolKey memory key = PoolKey({
-                currency0: Currency.wrap(currency < token ? currency : token),
-                currency1: Currency.wrap(currency < token ? token : currency),
+                currency0: Currency.wrap(CURRENCY < TOKEN ? CURRENCY : TOKEN),
+                currency1: Currency.wrap(CURRENCY < TOKEN ? TOKEN : CURRENCY),
                 fee: 0,
                 tickSpacing: 60,
                 hooks: IHooks(address(this))

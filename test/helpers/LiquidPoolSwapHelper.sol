@@ -17,7 +17,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 contract LiquidPoolSwapHelper is IUnlockCallback {
     using SafeERC20 for IERC20;
 
-    IPoolManager public immutable poolManager;
+    IPoolManager public immutable POOL_MANAGER;
 
     struct SwapParams {
         Currency currency0;
@@ -34,7 +34,7 @@ contract LiquidPoolSwapHelper is IUnlockCallback {
     }
 
     constructor(IPoolManager _poolManager) {
-        poolManager = _poolManager;
+        POOL_MANAGER = _poolManager;
     }
 
     /// @notice Buy LIQUID with RARE (exact RARE in)
@@ -144,7 +144,7 @@ contract LiquidPoolSwapHelper is IUnlockCallback {
         });
         return (
             abi.decode(
-                poolManager.unlock(abi.encode(params)),
+                POOL_MANAGER.unlock(abi.encode(params)),
                 (BalanceDelta)
             ),
             ""
@@ -152,7 +152,7 @@ contract LiquidPoolSwapHelper is IUnlockCallback {
     }
 
     function unlockCallback(bytes calldata data) external returns (bytes memory) {
-        require(msg.sender == address(poolManager));
+        require(msg.sender == address(POOL_MANAGER));
         SwapParams memory params = abi.decode(data, (SwapParams));
 
         PoolKey memory poolKey = PoolKey({
@@ -163,7 +163,7 @@ contract LiquidPoolSwapHelper is IUnlockCallback {
             hooks: IHooks(params.hooks)
         });
 
-        BalanceDelta delta = poolManager.swap(
+        BalanceDelta delta = POOL_MANAGER.swap(
             poolKey,
             IPoolManager.SwapParams({
                 zeroForOne: params.zeroForOne,
@@ -179,32 +179,32 @@ contract LiquidPoolSwapHelper is IUnlockCallback {
         if (delta0 < 0) {
             uint256 owed = uint256(uint128(-delta0));
             address token0 = Currency.unwrap(params.currency0);
-            poolManager.sync(params.currency0);
+            POOL_MANAGER.sync(params.currency0);
             if (params.payer != address(this)) {
-                IERC20(token0).safeTransferFrom(params.payer, address(poolManager), owed);
+                IERC20(token0).safeTransferFrom(params.payer, address(POOL_MANAGER), owed);
             } else {
-                IERC20(token0).safeTransfer(address(poolManager), owed);
+                IERC20(token0).safeTransfer(address(POOL_MANAGER), owed);
             }
-            poolManager.settle();
+            POOL_MANAGER.settle();
         }
         if (delta1 < 0) {
             uint256 owed = uint256(uint128(-delta1));
             address token1 = Currency.unwrap(params.currency1);
-            poolManager.sync(params.currency1);
+            POOL_MANAGER.sync(params.currency1);
             if (params.payer != address(this)) {
-                IERC20(token1).safeTransferFrom(params.payer, address(poolManager), owed);
+                IERC20(token1).safeTransferFrom(params.payer, address(POOL_MANAGER), owed);
             } else {
-                IERC20(token1).safeTransfer(address(poolManager), owed);
+                IERC20(token1).safeTransfer(address(POOL_MANAGER), owed);
             }
-            poolManager.settle();
+            POOL_MANAGER.settle();
         }
         if (delta0 > 0) {
             uint256 amount = uint256(uint128(delta0));
-            poolManager.take(params.currency0, params.recipient, amount);
+            POOL_MANAGER.take(params.currency0, params.recipient, amount);
         }
         if (delta1 > 0) {
             uint256 amount = uint256(uint128(delta1));
-            poolManager.take(params.currency1, params.recipient, amount);
+            POOL_MANAGER.take(params.currency1, params.recipient, amount);
         }
 
         return abi.encode(delta);

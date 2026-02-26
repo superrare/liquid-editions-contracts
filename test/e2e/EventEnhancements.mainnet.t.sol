@@ -13,6 +13,9 @@ import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 // Mock PoolManager
 contract MockPoolManager {
@@ -25,7 +28,7 @@ contract MockPoolManager {
 
 /// @title EventEnhancements Mainnet Test
 /// @notice Integration tests for BurnerDeposit and ConfigDigest events on Base mainnet fork
-contract EventEnhancementsMainnetTest is Test {
+contract EventEnhancementsMainnetTest is Test, InitGuardTestHelper {
     // Network configuration
     NetworkConfig.Config internal config;
 
@@ -79,10 +82,7 @@ contract EventEnhancementsMainnetTest is Test {
 
     function setUp() public {
         // Fork Base mainnet for realistic testing
-        string memory forkUrl = vm.envOr(
-            "FORK_URL",
-            string("https://mainnet.base.org")
-        );
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
 
         // Get network configuration (Base mainnet chain ID = 8453)
@@ -127,6 +127,9 @@ contract EventEnhancementsMainnetTest is Test {
         // Deploy LiquidMultiCurve implementation
         liquidImpl = new LiquidMultiCurve();
 
+        // Deploy init guard for pool hooks
+        address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
+
         // Deploy factory (fee config moved to LiquidRouter)
         factory = new LiquidFactory(
             admin,
@@ -135,12 +138,13 @@ contract EventEnhancementsMainnetTest is Test {
             LP_TICK_LOWER,
             LP_TICK_UPPER,
             config.uniswapV4Quoter, // Use wrapper instead of raw quoter
-            address(0), // poolHooks (no hooks)
+            initGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-        factory.setLiquidRouter(address(1));
+        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+        factory.setLiquidRegistry(address(1));
 
         // Set implementation
         factory.setLiquidMultiCurveImplementation(address(liquidImpl));

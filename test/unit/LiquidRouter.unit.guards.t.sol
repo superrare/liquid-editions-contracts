@@ -33,7 +33,6 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             address(reentrant),
-            referrer,
             1,
             commands,
             inputs,
@@ -60,7 +59,6 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
         liquidRouter.buy{value: 1 ether}(
             address(token),
             user1,
-            referrer,
             1,
             commands,
             inputs,
@@ -88,7 +86,6 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            address(reentrantReferrer),
             1,
             commands,
             inputs,
@@ -118,10 +115,6 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
         LiquidRouter rejectingRouter = deployLiquidRouter(
             address(router),
             address(rejectingProtocol),
-            address(burner),
-            RARE_BURN_FEE_BPS,
-            PROTOCOL_FEE_BPS,
-            REFERRER_FEE_BPS,
             admin
         );
 
@@ -134,7 +127,6 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
         rejectingRouter.buy{value: 1 ether}(
             address(token),
             user1,
-            referrer,
             1,
             commands,
             inputs,
@@ -148,10 +140,6 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
         LiquidRouter rejectingRouter = deployLiquidRouter(
             address(router),
             address(rejectingProtocol),
-            address(burner),
-            RARE_BURN_FEE_BPS,
-            PROTOCOL_FEE_BPS,
-            REFERRER_FEE_BPS,
             admin
         );
 
@@ -169,7 +157,6 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
             address(token),
             tokenAmount,
             user1,
-            referrer,
             1,
             commands,
             inputs,

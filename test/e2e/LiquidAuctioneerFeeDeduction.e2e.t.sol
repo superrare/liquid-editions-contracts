@@ -2,25 +2,22 @@
 pragma solidity ^0.8.0;
 
 import {AnvilForkAuctionBase} from "liquid-editions-test/AnvilForkAuctionBase.sol";
+import {IFeeDistributor} from "liquid-editions/interfaces/IFeeDistributor.sol";
 
 /// @title AnvilForkAuctioneerFeeDeductionTest
 /// @notice Verifies bid fee allocation on forked mainnet auctioneer setup.
 contract AnvilForkAuctioneerFeeDeductionTest is AnvilForkAuctionBase {
-    uint256 internal constant BENEFICIARY_FEE_BPS = 2500;
+    uint256 internal constant BENEFICIARY_FEE_BPS = 5000;
 
     struct FeeSplit {
         uint256 totalFee;
         uint256 beneficiaryFee;
         uint256 protocolFee;
-        uint256 referrerFee;
-        uint256 burnerFee;
     }
 
     struct BalanceSnapshot {
         uint256 protocolRecipient;
-        uint256 referrer;
         uint256 tokenBeneficiary;
-        uint256 rareBurner;
     }
 
     function test_BidWithETH_FeeDeduction() public {
@@ -30,11 +27,10 @@ contract AnvilForkAuctioneerFeeDeductionTest is AnvilForkAuctionBase {
             return;
         }
 
-        address referrer = makeAddr("auctioneerFeeDeductionReferrer");
         uint256 bidAmount = 1 ether;
-        address protocolRecipient = auctioneer.PROTOCOL_FEE_RECIPIENT();
+        IFeeDistributor distributor = IFeeDistributor(auctioneer.feeDistributor());
+        address protocolRecipient = distributor.protocolFeeRecipient();
         address tokenBeneficiary = auctioneer.tokenBeneficiaries(state.graduatedToken);
-        address rareBurner = auctioneer.RARE_BURNER();
         FeeSplit memory expected = _computeFeeSplit(
             bidAmount,
             tokenBeneficiary,
@@ -42,9 +38,7 @@ contract AnvilForkAuctioneerFeeDeductionTest is AnvilForkAuctionBase {
         );
         BalanceSnapshot memory before = _snapshotBalances(
             protocolRecipient,
-            referrer,
-            tokenBeneficiary,
-            rareBurner
+            tokenBeneficiary
         );
 
         vm.prank(buyer);
@@ -54,36 +48,28 @@ contract AnvilForkAuctioneerFeeDeductionTest is AnvilForkAuctionBase {
             state.graduatedToken,
             0,
             buyer,
-            referrer,
             0,
             1,
             block.timestamp + 1 hours
         );
         BalanceSnapshot memory afterSnapshot = _snapshotBalances(
             protocolRecipient,
-            referrer,
-            tokenBeneficiary,
-            rareBurner
+            tokenBeneficiary
         );
         uint256 observedProtocol = afterSnapshot.protocolRecipient - before.protocolRecipient;
-        uint256 observedReferrer = afterSnapshot.referrer - before.referrer;
         uint256 observedTokenBeneficiary = afterSnapshot.tokenBeneficiary -
             before.tokenBeneficiary;
-        uint256 observedBurner = afterSnapshot.rareBurner - before.rareBurner;
 
         _assertFeeSplit(
             tokenBeneficiary,
             protocolRecipient,
-            rareBurner,
             expected,
             observedProtocol,
-            observedReferrer,
-            observedTokenBeneficiary,
-            observedBurner
+            observedTokenBeneficiary
         );
 
         assertEq(
-            observedProtocol + observedReferrer + observedTokenBeneficiary + observedBurner,
+            observedProtocol + observedTokenBeneficiary,
             expected.totalFee,
             "All fee components should sum to total fee"
         );
@@ -97,14 +83,10 @@ contract AnvilForkAuctioneerFeeDeductionTest is AnvilForkAuctionBase {
 
     function _snapshotBalances(
         address protocolRecipient,
-        address referrer,
-        address tokenBeneficiary,
-        address rareBurner
+        address tokenBeneficiary
     ) internal view returns (BalanceSnapshot memory balances) {
         balances.protocolRecipient = _balanceOrZero(protocolRecipient);
-        balances.referrer = _balanceOrZero(referrer);
         balances.tokenBeneficiary = _balanceOrZero(tokenBeneficiary);
-        balances.rareBurner = _balanceOrZero(rareBurner);
     }
 
     function _computeFeeSplit(
@@ -112,18 +94,11 @@ contract AnvilForkAuctioneerFeeDeductionTest is AnvilForkAuctionBase {
         address tokenBeneficiary,
         address protocolRecipient
     ) internal view returns (FeeSplit memory feeSplit) {
-        feeSplit.totalFee = (bidAmount * auctioneer.TOTAL_FEE_BPS()) / 10_000;
+        IFeeDistributor distributor = IFeeDistributor(auctioneer.feeDistributor());
+        feeSplit.totalFee = (bidAmount * distributor.totalFeeBPS()) / 10_000;
         feeSplit.beneficiaryFee = (feeSplit.totalFee * BENEFICIARY_FEE_BPS) /
             10_000;
-        uint256 remainingFee = feeSplit.totalFee - feeSplit.beneficiaryFee;
-        feeSplit.protocolFee =
-            (remainingFee * auctioneer.PROTOCOL_FEE_BPS()) / 10_000;
-        feeSplit.referrerFee =
-            (remainingFee * auctioneer.REFERRER_FEE_BPS()) / 10_000;
-        feeSplit.burnerFee = (remainingFee * auctioneer.RARE_BURN_FEE_BPS()) / 10_000;
-        feeSplit.protocolFee +=
-            remainingFee -
-            (feeSplit.protocolFee + feeSplit.referrerFee + feeSplit.burnerFee);
+        feeSplit.protocolFee = feeSplit.totalFee - feeSplit.beneficiaryFee;
         if (tokenBeneficiary == protocolRecipient || tokenBeneficiary == address(0)) {
             feeSplit.protocolFee += feeSplit.beneficiaryFee;
         }
@@ -132,12 +107,9 @@ contract AnvilForkAuctioneerFeeDeductionTest is AnvilForkAuctionBase {
     function _assertFeeSplit(
         address tokenBeneficiary,
         address protocolRecipient,
-        address rareBurner,
         FeeSplit memory expected,
         uint256 observedProtocol,
-        uint256 observedReferrer,
-        uint256 observedTokenBeneficiary,
-        uint256 observedBurner
+        uint256 observedTokenBeneficiary
     ) internal pure {
         if (tokenBeneficiary == address(0) || tokenBeneficiary == protocolRecipient) {
             assertEq(
@@ -160,28 +132,6 @@ contract AnvilForkAuctioneerFeeDeductionTest is AnvilForkAuctionBase {
                 observedProtocol,
                 expected.protocolFee,
                 "Protocol should receive configured share"
-            );
-        }
-
-        assertEq(
-            observedReferrer,
-            expected.referrerFee,
-            "Referrer should receive configured referrer fee"
-        );
-
-        if (rareBurner == address(0)) {
-            assertEq(observedBurner, 0, "No burner should receive no transfer");
-        } else if (rareBurner == protocolRecipient) {
-            assertEq(
-                observedProtocol,
-                expected.protocolFee + observedBurner,
-                "Protocol total includes burn transfer when burner is protocol"
-            );
-        } else {
-            assertEq(
-                observedBurner,
-                expected.burnerFee,
-                "Burner should receive configured burn fee"
             );
         }
     }

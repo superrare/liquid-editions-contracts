@@ -8,7 +8,9 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
-import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
+import {IFeeDistributor} from "liquid-editions/interfaces/IFeeDistributor.sol";
+import {ILiquidRegistry} from "liquid-editions/interfaces/ILiquidRegistry.sol";
+
 import {IPermit2} from "liquid-editions/interfaces/IPermit2.sol";
 import {LiquidFeeLib} from "liquid-editions/LiquidFeeLib.sol";
 
@@ -16,22 +18,26 @@ import {LiquidFeeLib} from "liquid-editions/LiquidFeeLib.sol";
 /// @author SuperRare Labs
 /// @notice A router contract that enables Liquid-style trading (buy/sell with fees) for any existing ERC20 token
 /// @dev Routes swaps through Uniswap's Universal Router while collecting and distributing fees.
-///      Fee split configuration is immutable and set at deployment.
+///      Fee split configuration is delegated to FeeDistributor and can be updated there.
 ///
 /// ## Architecture Overview
 /// LiquidRouter enables fee collection and distribution for any ERC20 token:
 /// - Routes swaps through Uniswap's Universal Router (supports V2/V3/V4 and multi-hop routes)
-/// - Collects trading fees (4% TOTAL_FEE_BPS) and distributes them to beneficiary/protocol/referrer/RARE burn
-/// - Minimal on-chain state: token-to-beneficiary mapping, optional allowlist
-/// - Fee split configuration is immutable (set in constructor)
+/// - Collects trading fees (configurable via FeeDistributor.totalFeeBPS) and distributes them:
+///   * 50/50 between beneficiary and protocol (with one beneficiary or two identical beneficiaries)
+///   * 33/33/34 between beneficiaryA, beneficiaryB, and protocol (with two distinct beneficiaries in swap())
+///   * 100% to protocol (if no beneficiary)
+/// - Minimal on-chain state: token registration and beneficiary mapping via LiquidRegistry
+/// - Fee split configuration is delegated to FeeDistributor
 /// - Uses Permit2 for secure token approvals during sell operations
 /// - Supports buy (ETH → token), sell (token → ETH), and swap (any → any via ETH midpoint)
 ///
 /// ## Fee Flow
-/// 1. TIER 1: Total fee (TOTAL_FEE_BPS) is collected from the trade (ETH side)
-/// 2. TIER 2: Beneficiary gets their fixed cut first (BENEFICIARY_FEE_BPS)
-/// 3. TIER 3: Remainder is split among protocol/referrer/RARE burn per router config
-/// 4. Any rounding dust goes to protocol to ensure exact accounting
+/// 1. Total fee (FeeDistributor.totalFeeBPS) is collected from the trade (ETH side)
+/// 2. Fee split depends on beneficiary configuration:
+///    - One beneficiary (or two identical): 50% beneficiary, 50% protocol
+///    - Two distinct beneficiaries (swap only): 33% beneficiaryA, 33% beneficiaryB, 34% protocol
+///    - No beneficiary: 100% protocol
 ///
 /// ## Client Integration
 /// Clients must:
@@ -43,22 +49,21 @@ import {LiquidFeeLib} from "liquid-editions/LiquidFeeLib.sol";
 /// ## Security Model
 /// - nonReentrant on all trading functions
 /// - Pausable for emergency stops
-/// - Failed fee transfers to beneficiary/referrer are absorbed (not reverted)
+/// - Failed fee transfers to beneficiary are absorbed (not reverted)
 /// - Protocol fee transfer failure DOES revert (ensures fees aren't lost)
 /// - Gas-limited external calls prevent griefing attacks
 contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     using SafeERC20 for IERC20;
 
     // ============================================
-    // CONSTANTS
+    // CONFIG (mutable modules)
     // ============================================
 
-    /// @notice Total trading fee in basis points (4% = 400 BPS)
-    /// @dev This is the "TIER 1" fee - the gross amount collected from each trade.
-    ///      Increased from 3% to 4% to compensate for 0% LP fee (removed secondary rewards).
-    ///      For buys, fee is deducted from ETH input BEFORE the swap.
-    ///      For sells, fee is deducted from ETH output AFTER the swap.
-    uint256 public constant TOTAL_FEE_BPS = LiquidFeeLib.TOTAL_FEE_BPS;
+    /// @notice Contract that owns fee policy + split execution.
+    IFeeDistributor private _feeDistributor;
+
+    /// @notice Contract that owns token->beneficiary mapping and token registration.
+    ILiquidRegistry private _liquidRegistry;
 
     /// @notice Uniswap Permit2 contract address
     /// @dev Universal Router pulls tokens via Permit2, not directly.
@@ -68,122 +73,111 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         0x000000000022D473030F116dDEE9F6B43aC78BA3;
 
     // ============================================
-    // CONFIG (owner-editable + immutable values)
+    // CONFIG (owner-editable + mutable policy)
     // ============================================
 
     /// @notice Uniswap Universal Router address
     /// @dev This is the swap execution engine. Can be updated by owner.
     ///      Universal Router supports multiple DEX protocols and complex multi-hop routes.
     ///      Different networks have different router addresses.
-    // forge-lint: disable-next-line(screaming-snake-case-immutable) -- camelCase used for public API consistency
     address public universalRouter;
-
-    /// @notice TIER 3 fee splits (must sum to 10000 BPS)
-    /// @dev These fees are applied to the remainder after beneficiary takes their cut
-    ///      Immutable after deployment - set in constructor.
-    // forge-lint: disable-next-line(screaming-snake-case-immutable) -- camelCase used for public API consistency
-    uint256 public immutable rareBurnFeeBPS;
-    // forge-lint: disable-next-line(screaming-snake-case-immutable) -- camelCase used for public API consistency
-    uint256 public immutable protocolFeeBPS;
-    // forge-lint: disable-next-line(screaming-snake-case-immutable) -- camelCase used for public API consistency
-    uint256 public immutable referrerFeeBPS;
-
-    /// @notice Protocol fee recipient address
-    /// @dev Receives protocol fees from trades. Can be updated by owner.
-    // forge-lint: disable-next-line(screaming-snake-case-immutable) -- camelCase used for public API consistency
-    address public protocolFeeRecipient;
-
-    /// @notice RARE burner contract address
-    /// @dev Receives burn fees from trades. Can be updated by owner.
-    // forge-lint: disable-next-line(screaming-snake-case-immutable) -- camelCase used for public API consistency
-    address public rareBurner;
 
     // ============================================
     // STORAGE (mutable)
     // ============================================
 
-    /// @notice Mapping of token address to beneficiary (receives "creator" fees)
-    /// @dev Beneficiary is optional - if not set, beneficiary fee goes to protocol.
-    ///      Typically set to project treasury or token deployer address.
-    ///      Can be updated by owner via updateBeneficiary().
-    mapping(address => address) public tokenBeneficiaries;
-
-    /// @notice Mapping of allowed tokens (if allowlist is enabled)
-    /// @dev Only checked when allowlistEnabled is true.
-    ///      When allowlist is disabled, ANY token can be traded through the router.
-    ///      registerToken() automatically adds to allowlist.
-    mapping(address => bool) public allowedTokens;
-
-    /// @notice Trusted factory for auto-registration
-    /// @dev Only used to allow factory-driven registration where beneficiary must match tokenCreator.
-    address public trustedFactory;
-
-    /// @notice Whether the allowlist is enabled
-    /// @dev When false: any token can be traded (permissionless mode)
-    ///      When true: only tokens in allowedTokens mapping can be traded
-    ///      GOTCHA: A token can be in allowedTokens but have no beneficiary set.
-    bool public allowlistEnabled;
-
-    error NotTrustedFactory(address caller, address trustedFactory);
-    error BeneficiaryNotCreator(
-        address token,
-        address tokenCreator,
-        address beneficiary
-    );
-    error NotILiquidToken(address token);
-
     // ============================================
     // CONSTRUCTOR
     // ============================================
 
-    /// @notice Constructs a new LiquidRouter contract
+    function _initContract(
+        address _universalRouter,
+        IFeeDistributor feeDistributorModule,
+        ILiquidRegistry liquidRegistryModule
+    ) internal {
+        if (_universalRouter == address(0)) {
+            revert AddressZero();
+        }
+        if (address(feeDistributorModule) == address(0)) {
+            revert AddressZero();
+        }
+        if (address(liquidRegistryModule) == address(0)) {
+            revert AddressZero();
+        }
+
+        universalRouter = _universalRouter;
+        _feeDistributor = feeDistributorModule;
+        _liquidRegistry = liquidRegistryModule;
+    }
+
+    /// @notice Unified constructor for module-backed deployments.
     /// @param _owner Owner address (can transfer ownership via Ownable)
     /// @param _universalRouter Address of Uniswap's Universal Router
-    /// @param _protocolFeeRecipient Address that receives protocol fees
-    /// @param _rareBurner Address of RARE burner contract
-    /// @param _rareBurnFeeBPS RARE burn fee in basis points (must sum with other TIER 3 fees to 10000)
-    /// @param _protocolFeeBPS Protocol fee in basis points (must sum with other TIER 3 fees to 10000)
-    /// @param _referrerFeeBPS Referrer fee in basis points (must sum with other TIER 3 fees to 10000)
-    /// @dev Contract starts in unpaused state with allowlist disabled.
+    /// @param _feeDistributorAddress FeeDistributor module address
+    /// @param _liquidRegistryAddress LiquidRegistry module address
     constructor(
         address _owner,
         address _universalRouter,
-        address _protocolFeeRecipient,
-        address _rareBurner,
-        uint256 _rareBurnFeeBPS,
-        uint256 _protocolFeeBPS,
-        uint256 _referrerFeeBPS
+        address _feeDistributorAddress,
+        address _liquidRegistryAddress
     ) Ownable(_owner) {
-        // Validate addresses
-        if (_owner == address(0)) revert AddressZero();
-        if (_universalRouter == address(0)) revert AddressZero();
-        if (_protocolFeeRecipient == address(0)) revert AddressZero();
-        if (_rareBurner == address(0)) revert AddressZero();
-
-        // Validate TIER 3 fees sum to exactly 100%
-        uint256 tier3Total = _rareBurnFeeBPS +
-            _protocolFeeBPS +
-            _referrerFeeBPS;
-        if (tier3Total != 10000) {
-            revert InvalidFeeDistribution();
+        if (_owner == address(0)) {
+            revert AddressZero();
+        }
+        if (_universalRouter == address(0)) {
+            revert AddressZero();
+        }
+        if (_feeDistributorAddress == address(0)) {
+            revert AddressZero();
+        }
+        if (_liquidRegistryAddress == address(0)) {
+            revert AddressZero();
         }
 
-        // Set configuration
-        universalRouter = _universalRouter;
-        protocolFeeRecipient = _protocolFeeRecipient;
-        rareBurner = _rareBurner;
-        rareBurnFeeBPS = _rareBurnFeeBPS;
-        protocolFeeBPS = _protocolFeeBPS;
-        referrerFeeBPS = _referrerFeeBPS;
-
-        // Note: allowlistEnabled defaults to false (permissionless mode)
-        // Note: contract starts unpaused
+        _initContract(
+            _universalRouter,
+            IFeeDistributor(_feeDistributorAddress),
+            ILiquidRegistry(_liquidRegistryAddress)
+        );
     }
 
-    /// @notice Beneficiary's share of total fees in basis points (TIER 2)
-    /// @dev Matches LiquidFeeLib.BENEFICIARY_FEE_BPS for fee distribution
-    function BENEFICIARY_FEE_BPS() external pure returns (uint256) {
-        return LiquidFeeLib.BENEFICIARY_FEE_BPS;
+    /// @notice Read the active fee distributor contract address.
+    function feeDistributor() external view returns (address) {
+        return address(_feeDistributor);
+    }
+
+    /// @notice Read the active liquid registry contract address.
+    function liquidRegistry() external view returns (address) {
+        return address(_liquidRegistry);
+    }
+
+    /// @notice Read token beneficiary from registry.
+    function tokenBeneficiaries(
+        address token
+    ) external view returns (address) {
+        return _liquidRegistry.beneficiaryOf(token);
+    }
+
+    /// @notice Set a new fee distributor module.
+    function setFeeDistributor(address feeDistributorAddress) external onlyOwner {
+        if (feeDistributorAddress == address(0)) revert AddressZero();
+        if (feeDistributorAddress.code.length == 0) {
+            revert InvalidModule();
+        }
+        address old = address(_feeDistributor);
+        _feeDistributor = IFeeDistributor(feeDistributorAddress);
+        emit FeeDistributorUpdated(old, feeDistributorAddress);
+    }
+
+    /// @notice Set a new liquid registry module.
+    function setLiquidRegistry(address liquidRegistryAddress) external onlyOwner {
+        if (liquidRegistryAddress == address(0)) revert AddressZero();
+        if (liquidRegistryAddress.code.length == 0) {
+            revert InvalidModule();
+        }
+        address old = address(_liquidRegistry);
+        _liquidRegistry = ILiquidRegistry(liquidRegistryAddress);
+        emit LiquidRegistryUpdated(old, liquidRegistryAddress);
     }
 
     // ============================================
@@ -194,7 +188,6 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     /// @dev Fee is deducted from ETH input before swap
     /// @param token The ERC20 token to buy
     /// @param recipient The address to receive the tokens
-    /// @param orderReferrer The address of the order referrer (receives referrer fee)
     /// @param minTokensOut Minimum tokens to receive (slippage protection)
     /// @param commands Encoded Universal Router command bytes
     /// @param inputs Encoded Universal Router command inputs (one per command)
@@ -206,7 +199,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     /// 2. Fee (TOTAL_FEE_BPS) is calculated and held aside
     /// 3. Remaining ETH is swapped for tokens via Universal Router
     /// 4. Tokens are transferred to recipient
-    /// 5. Fee is distributed to beneficiary/protocol/referrer/burn
+    /// 5. Fee is distributed to beneficiary/protocol
     ///
     /// ## Client Requirements
     /// - commands/inputs must encode an ETH → token swap
@@ -221,7 +214,6 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     function buy(
         address token,
         address recipient,
-        address orderReferrer,
         uint256 minTokensOut,
         bytes calldata commands,
         bytes[] calldata inputs,
@@ -239,14 +231,17 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         if (minTokensOut == 0) revert InvalidAmount();
         // Note: msg.value of 0 is technically allowed but will fail at swap
 
-        // Check allowlist if enabled (permissionless when disabled)
-        if (allowlistEnabled && !allowedTokens[token]) {
+        // Only registered tokens can be traded
+        if (!_liquidRegistry.isRegistered(token)) {
             revert TokenNotAllowed(token);
         }
 
         // Fee is taken BEFORE the swap from the ETH input
         // This means user pays fee on their full ETH amount
-        uint256 fee = LiquidFeeLib.calculateFee(msg.value, TOTAL_FEE_BPS);
+        uint256 fee = LiquidFeeLib.calculateFee(
+            msg.value,
+            _feeDistributor.totalFeeBPS()
+        );
         uint256 ethForSwap = msg.value - fee;
 
         // Record balances before swap to calculate received amounts
@@ -289,28 +284,29 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         _sendTokens(token, recipient, tokensReceived);
 
         // Fee distribution happens AFTER successful swap and token transfer
-        address beneficiary = tokenBeneficiaries[token];
+        address beneficiary = _liquidRegistry.beneficiaryOf(token);
         (
             uint256 protocolFee,
-            uint256 referrerFee,
-            uint256 beneficiaryFee,
-            uint256 burnFee
-        ) = _disperseFees(fee, orderReferrer, beneficiary);
+            uint256 beneficiaryFeeA,
+            uint256 beneficiaryFeeB
+        ) = _feeDistributor.distributeFees{value: fee}(
+                fee,
+                beneficiary,
+                beneficiary
+            );
+        uint256 beneficiaryFee = beneficiaryFeeA + beneficiaryFeeB;
 
         // Comprehensive event for off-chain indexing and analytics
         emit RouterBuy(
             token,
             msg.sender, // buyer
             recipient, // may differ from buyer (gift purchases, etc.)
-            orderReferrer,
             msg.value, // total ETH sent
             fee, // total fee collected
             ethForSwap, // ETH actually swapped
             tokensReceived,
             protocolFee,
-            referrerFee,
-            beneficiaryFee,
-            burnFee
+            beneficiaryFee
         );
 
         return tokensReceived;
@@ -321,7 +317,6 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     /// @param token The ERC20 token to sell
     /// @param tokenAmount The amount of tokens to sell
     /// @param recipient The address to receive the ETH
-    /// @param orderReferrer The address of the order referrer (receives referrer fee)
     /// @param minEthOut Minimum GROSS ETH expected from swap (before fees) - slippage protection
     /// @param commands Encoded Universal Router command bytes
     /// @param inputs Encoded Universal Router command inputs (one per command)
@@ -338,7 +333,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     /// 5. All approvals are cleared (security)
     /// 6. Fee (TOTAL_FEE_BPS) is calculated from ETH output and held aside
     /// 7. Net ETH is transferred to recipient
-    /// 8. Fee is distributed to beneficiary/protocol/referrer/burn
+    /// 8. Fee is distributed to beneficiary/protocol
     ///
     /// ## Client Requirements
     /// - User must have approved this contract for tokenAmount first
@@ -356,7 +351,6 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         address token,
         uint256 tokenAmount,
         address recipient,
-        address orderReferrer,
         uint256 minEthOut,
         bytes calldata commands,
         bytes[] calldata inputs,
@@ -368,8 +362,8 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         if (tokenAmount == 0) revert InvalidAmount();
         if (minEthOut == 0) revert InvalidAmount();
 
-        // Check allowlist if enabled (permissionless when disabled)
-        if (allowlistEnabled && !allowedTokens[token]) {
+        // Only registered tokens can be traded
+        if (!_liquidRegistry.isRegistered(token)) {
             revert TokenNotAllowed(token);
         }
 
@@ -406,7 +400,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         // This means fee is based on actual swap proceeds
         uint256 fee = LiquidFeeLib.calculateFee(
             grossEthReceived,
-            TOTAL_FEE_BPS
+            _feeDistributor.totalFeeBPS()
         );
         ethReceived = grossEthReceived - fee;
 
@@ -414,7 +408,10 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         // We internally calculate what the minimum NET should be after fees.
         // This simplifies client integration - they just pass quoted gross with slippage.
         uint256 minNetEthExpected = minEthOut -
-            LiquidFeeLib.calculateFee(minEthOut, TOTAL_FEE_BPS);
+            LiquidFeeLib.calculateFee(
+                minEthOut,
+                _feeDistributor.totalFeeBPS()
+            );
         if (ethReceived < minNetEthExpected) revert SlippageExceeded();
 
         // Using low-level call to support smart contract recipients
@@ -422,27 +419,28 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         (bool success, ) = recipient.call{value: ethReceived}("");
         if (!success) revert EthTransferFailed();
 
-        address beneficiary = tokenBeneficiaries[token];
+        address beneficiary = _liquidRegistry.beneficiaryOf(token);
         (
             uint256 protocolFee,
-            uint256 referrerFee,
-            uint256 beneficiaryFee,
-            uint256 burnFee
-        ) = _disperseFees(fee, orderReferrer, beneficiary);
+            uint256 beneficiaryFeeA,
+            uint256 beneficiaryFeeB
+        ) = _feeDistributor.distributeFees{value: fee}(
+                fee,
+                beneficiary,
+                beneficiary
+            );
+        uint256 beneficiaryFee = beneficiaryFeeA + beneficiaryFeeB;
 
         emit RouterSell(
             token,
             msg.sender, // seller
             recipient, // may differ from seller
-            orderReferrer,
             tokenAmount, // tokens sold
             grossEthReceived, // ETH from swap (before fee)
             fee, // total fee collected
             ethReceived, // ETH to user (after fee)
             protocolFee,
-            referrerFee,
-            beneficiaryFee,
-            burnFee
+            beneficiaryFee
         );
 
         return ethReceived;
@@ -476,7 +474,6 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     /// @param amountIn Input amount (ignored if ETH — uses msg.value)
     /// @param tokenOut Output token (address(0) for ETH)
     /// @param recipient Address to receive output
-    /// @param orderReferrer Address of the order referrer (receives referrer fee)
     /// @param minAmountOut Minimum final output after fees
     /// @param leg1Commands Route commands for tokenIn -> ETH (empty if input is ETH)
     /// @param leg1Inputs Route inputs for tokenIn -> ETH
@@ -489,7 +486,6 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         uint256 amountIn,
         address tokenOut,
         address recipient,
-        address orderReferrer,
         uint256 minAmountOut,
         bytes calldata leg1Commands,
         bytes[] calldata leg1Inputs,
@@ -523,8 +519,8 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
             if (amountIn == 0) revert InvalidAmount();
             if (msg.value != 0) revert UnexpectedMsgValue();
 
-            // Allowlist check for input token
-            if (allowlistEnabled && !allowedTokens[tokenIn]) {
+            // Only registered tokens can be traded
+            if (!_liquidRegistry.isRegistered(tokenIn)) {
                 revert TokenNotAllowed(tokenIn);
             }
 
@@ -549,7 +545,10 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         }
 
         // --- FEE HARVEST (always ETH) ---
-        uint256 fee = LiquidFeeLib.calculateFee(grossEth, TOTAL_FEE_BPS);
+        uint256 fee = LiquidFeeLib.calculateFee(
+            grossEth,
+            _feeDistributor.totalFeeBPS()
+        );
         uint256 ethForLeg2 = grossEth - fee;
 
         // --- LEG 2: ETH -> tokenOut ---
@@ -566,8 +565,8 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
             // Output is ERC20
             if (tokenOut == address(0)) revert InvalidRouteData();
 
-            // Allowlist check for output token
-            if (allowlistEnabled && !allowedTokens[tokenOut]) {
+            // Only registered tokens can be traded
+            if (!_liquidRegistry.isRegistered(tokenOut)) {
                 revert TokenNotAllowed(tokenOut);
             }
 
@@ -602,40 +601,34 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
 
         // --- FEE DISTRIBUTION ---
         address beneficiaryIn = (tokenIn != address(0))
-            ? tokenBeneficiaries[tokenIn]
+            ? _liquidRegistry.beneficiaryOf(tokenIn)
             : address(0);
         address beneficiaryOut = (tokenOut != address(0))
-            ? tokenBeneficiaries[tokenOut]
+            ? _liquidRegistry.beneficiaryOf(tokenOut)
             : address(0);
 
         (
             uint256 protocolFee,
-            uint256 referrerFee,
             uint256 beneficiaryFeeA,
-            uint256 beneficiaryFeeB,
-            uint256 burnFee
-        ) = _disperseFeesSwap(
-                fee,
-                orderReferrer,
-                beneficiaryIn,
-                beneficiaryOut
-            );
+            uint256 beneficiaryFeeB
+        ) = _feeDistributor.distributeFees{value: fee}(
+            fee,
+            beneficiaryIn,
+            beneficiaryOut
+        );
 
         emit RouterSwap(
             tokenIn,
             tokenOut,
             msg.sender,
             recipient,
-            orderReferrer,
             leg1Commands.length == 0 ? msg.value : amountIn,
             grossEth,
             fee,
             amountOut,
             protocolFee,
-            referrerFee,
             beneficiaryFeeA,
-            beneficiaryFeeB,
-            burnFee
+            beneficiaryFeeB
         );
 
         return amountOut;
@@ -658,23 +651,15 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     // 3. Apply slippage tolerance to quoted amount
     // 4. Execute buy()/sell()/swap()
 
-    /// @notice Quote the fee breakdown for a given total fee
-    /// @dev Fee percentages are read from router immutables
+    /// @notice Quote the fee breakdown for a given total fee (single-beneficiary case only)
+    /// @dev This function only handles the single-beneficiary scenario (50/50 split).
+    ///      It delegates to FeeDistributor.quoteFeeBreakdown() which only supports 50/50 splits.
+    ///      For swap operations with two distinct beneficiaries (33/33/34 split),
+    ///      the actual fee distribution is handled internally by swap() using distributeFees().
+    ///      This quote function is primarily useful for buy() and sell() operations.
     /// @param totalFee The total fee amount
-    /// @return beneficiaryFee Fee to beneficiary
-    /// @return protocolFee Fee to protocol
-    /// @return referrerFee Fee to referrer
-    /// @return burnFee Fee for RARE burn
-    ///
-    /// ## Fee Distribution Order
-    /// 1. Beneficiary gets their fixed % first (TIER 2)
-    /// 2. Remaining amount is split among protocol/referrer/burn (TIER 3)
-    /// 3. Any rounding dust goes to protocol
-    ///
-    /// ## Fee Calculation Order
-    /// 1. totalFee = tradeAmount × TOTAL_FEE_BPS / 10000
-    /// 2. beneficiaryFee = totalFee × BENEFICIARY_FEE_BPS / 10000
-    /// 3. remaining = totalFee - beneficiaryFee (split per router config)
+    /// @return beneficiaryFee Fee to beneficiary (50% of totalFee)
+    /// @return protocolFee Fee to protocol (50% of totalFee)
     function quoteFeeBreakdown(
         uint256 totalFee
     )
@@ -682,29 +667,10 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         view
         returns (
             uint256 beneficiaryFee,
-            uint256 protocolFee,
-            uint256 referrerFee,
-            uint256 burnFee
+            uint256 protocolFee
         )
     {
-        // TIER 2: Beneficiary gets their fixed share first
-        beneficiaryFee = LiquidFeeLib.calculateFee(
-            totalFee,
-            LiquidFeeLib.BENEFICIARY_FEE_BPS
-        );
-        uint256 remainingFee = totalFee - beneficiaryFee;
-
-        // TIER 3: Split remainder among burn/protocol/referrer
-        // Each percentage is applied to remainingFee (not totalFee)
-        burnFee = LiquidFeeLib.calculateFee(remainingFee, rareBurnFeeBPS);
-        referrerFee = LiquidFeeLib.calculateFee(remainingFee, referrerFeeBPS);
-        protocolFee = LiquidFeeLib.calculateFee(remainingFee, protocolFeeBPS);
-
-        // Handle rounding dust - send to protocol to ensure exact accounting
-        // This can happen because BPS calculations truncate
-        uint256 totalRemainder = burnFee + referrerFee + protocolFee;
-        uint256 dust = remainingFee - totalRemainder;
-        protocolFee += dust;
+        return _feeDistributor.quoteFeeBreakdown(totalFee);
     }
 
     // ============================================
@@ -714,46 +680,23 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     // All admin functions are onlyOwner. Owner can be transferred via Ownable.
     // Consider using a multisig or timelock for production deployments.
     //
-    // ## Allowlist Behavior
-    // - allowlistEnabled = false: ANY token can be traded (permissionless)
-    // - allowlistEnabled = true: Only tokens in allowedTokens can be traded
-    // - registerToken() adds to allowlist AND sets beneficiary
-    // - removeToken() removes from allowlist AND clears beneficiary
-    // - A token can be traded without a beneficiary (fees go to protocol)
+    // ## Registration
+    // - Only tokens registered in LiquidRegistry can be traded
+    // - Factory registers tokens directly with the registry at creation time
+    // - registerToken() is for manual admin registration of tokens
+    // - removeToken() deregisters from registry, blocking all trading
 
-    /// @notice Register a token with its beneficiary
+    /// @notice Register a token with its beneficiary (admin only)
     /// @param token The token address
     /// @param beneficiary The beneficiary address (receives "creator" fees)
-    /// @dev Automatically adds token to allowlist. Call this for each token
-    ///      you want to support with a specific beneficiary.
-    function registerToken(address token, address beneficiary) external {
+    /// @dev Registers the token in LiquidRegistry. Only registered tokens can be traded.
+    function registerToken(address token, address beneficiary) external onlyOwner {
         if (token == address(0)) revert AddressZero();
         if (beneficiary == address(0)) revert AddressZero();
-        if (
-            msg.sender != owner() &&
-            (trustedFactory == address(0) || msg.sender != trustedFactory)
-        ) {
-            revert NotTrustedFactory(msg.sender, trustedFactory);
-        }
 
-        if (msg.sender == trustedFactory) {
-            _assertFactoryBeneficiary(token, beneficiary);
-        }
-
-        // Set beneficiary for fee distribution
-        tokenBeneficiaries[token] = beneficiary;
-
-        // Add to allowlist (effective when allowlistEnabled = true)
-        allowedTokens[token] = true;
+        _liquidRegistry.setBeneficiary(token, beneficiary);
 
         emit TokenRegistered(token, beneficiary);
-    }
-
-    function setTrustedFactory(address _trustedFactory) external onlyOwner {
-        if (_trustedFactory == address(0)) revert AddressZero();
-        address oldTrustedFactory = trustedFactory;
-        trustedFactory = _trustedFactory;
-        emit TrustedFactoryUpdated(oldTrustedFactory, _trustedFactory);
     }
 
     /// @notice Update Universal Router address
@@ -767,59 +710,14 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         emit UniversalRouterUpdated(oldUniversalRouter, _universalRouter);
     }
 
-    /// @notice Update protocol fee recipient address
-    /// @param _protocolFeeRecipient New protocol fee recipient address
-    /// @dev Can only be called by owner.
-    function setProtocolFeeRecipient(
-        address _protocolFeeRecipient
-    ) external onlyOwner {
-        if (_protocolFeeRecipient == address(0)) revert AddressZero();
-        address oldProtocolFeeRecipient = protocolFeeRecipient;
-        protocolFeeRecipient = _protocolFeeRecipient;
-        emit ProtocolFeeRecipientUpdated(
-            oldProtocolFeeRecipient,
-            _protocolFeeRecipient
-        );
-    }
-
-    /// @notice Update RARE burner address
-    /// @param _rareBurner New RARE burner contract address
-    /// @dev Can only be called by owner. Used to migrate burn target.
-    function setRareBurner(address _rareBurner) external onlyOwner {
-        if (_rareBurner == address(0)) revert AddressZero();
-        address oldRareBurner = rareBurner;
-        rareBurner = _rareBurner;
-        emit RareBurnerUpdated(oldRareBurner, _rareBurner);
-    }
-
-    function _assertFactoryBeneficiary(
-        address token,
-        address beneficiary
-    ) internal view {
-        address tokenCreator;
-        try ILiquid(token).tokenCreator() returns (address _tokenCreator) {
-            tokenCreator = _tokenCreator;
-        } catch {
-            revert NotILiquidToken(token);
-        }
-
-        if (tokenCreator != beneficiary) {
-            revert BeneficiaryNotCreator(token, tokenCreator, beneficiary);
-        }
-    }
-
-    /// @notice Remove a token from the allowlist
-    /// @dev Also clears the beneficiary mapping. When allowlist is enabled,
-    ///      this effectively blocks trading for this token.
+    /// @notice Remove a token from the registry
+    /// @dev Clears the beneficiary mapping, which deregisters the token and
+    ///      blocks all trading for it through the router and auctioneer.
     /// @param token The token address
     function removeToken(address token) external onlyOwner {
         if (token == address(0)) revert AddressZero();
 
-        // Remove from allowlist
-        allowedTokens[token] = false;
-
-        // Clear beneficiary (no dangling state)
-        delete tokenBeneficiaries[token];
+        _liquidRegistry.removeBeneficiary(token);
 
         emit TokenRemoved(token);
     }
@@ -828,7 +726,6 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     /// @param token The token address
     /// @param newBeneficiary The new beneficiary address
     /// @dev Use this to change who receives beneficiary fees for a token.
-    ///      Does NOT affect allowlist status.
     function updateBeneficiary(
         address token,
         address newBeneficiary
@@ -836,20 +733,10 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         if (token == address(0)) revert AddressZero();
         if (newBeneficiary == address(0)) revert AddressZero();
 
-        address oldBeneficiary = tokenBeneficiaries[token];
-        tokenBeneficiaries[token] = newBeneficiary;
+        address oldBeneficiary = _liquidRegistry.beneficiaryOf(token);
+        _liquidRegistry.setBeneficiary(token, newBeneficiary);
 
         emit BeneficiaryUpdated(token, oldBeneficiary, newBeneficiary);
-    }
-
-    /// @notice Enable or disable the allowlist
-    /// @param enabled Whether to enable the allowlist
-    /// @dev When disabled (false): router is permissionless, any token works
-    ///      When enabled (true): only registered tokens can be traded
-    ///      Useful for gradually rolling out or restricting to vetted tokens
-    function setAllowlistEnabled(bool enabled) external onlyOwner {
-        allowlistEnabled = enabled;
-        emit AllowlistEnabledUpdated(enabled);
     }
 
     /// @notice Pause the contract (emergency stop)
@@ -1005,117 +892,70 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         }
     }
 
-    /// @notice Distributes collected fees to beneficiary, protocol, referrer, and RARE burn
-    /// @dev Wrapper around LiquidFeeLib.disperseFees for single beneficiary (used by buy/sell)
-    /// @param _fee The total fee amount to distribute
-    /// @param _orderReferrer The address of the order referrer
-    /// @param _beneficiary The address of the token beneficiary
-    /// @return protocolFee Actual protocol fee transferred
-    /// @return referrerFee Actual referrer fee transferred
-    /// @return beneficiaryFee Actual beneficiary fee transferred (sum of A and B)
-    /// @return rareBurnFee Actual RARE burn fee deposited
+    /// @notice Distributes collected fees to beneficiary and protocol (single-beneficiary wrapper)
+    /// @dev Internal helper used by buy() and sell() operations. Wraps FeeDistributor.distributeFees()
+    ///      for the single-beneficiary case (50/50 split). Passes the same beneficiary address
+    ///      as both beneficiaryA and beneficiaryB to FeeDistributor, which results in a 50/50 split.
+    ///      Failed beneficiary transfers are absorbed by protocol (handled by FeeDistributor).
+    /// @param _fee The total fee amount to distribute (must equal msg.value when called)
+    /// @param _beneficiary The address of the token beneficiary (receives 50% of fee)
+    /// @return protocolFee Actual protocol fee transferred (includes any failed beneficiary transfers)
+    /// @return beneficiaryFee Actual beneficiary fee transferred (sum of beneficiaryFeeA and beneficiaryFeeB)
     function _disperseFees(
         uint256 _fee,
-        address _orderReferrer,
         address _beneficiary
     )
         internal
         returns (
             uint256 protocolFee,
-            uint256 referrerFee,
-            uint256 beneficiaryFee,
-            uint256 rareBurnFee
+            uint256 beneficiaryFee
         )
     {
+        uint256 beneficiaryFeeA;
+        uint256 beneficiaryFeeB;
         (
-            uint256 p,
-            uint256 r,
-            uint256 bA,
-            uint256 bB,
-            uint256 burn
-        ) = LiquidFeeLib.disperseFees(
-                _fee,
-                _orderReferrer,
-                _beneficiary,
-                _beneficiary,
-                protocolFeeRecipient,
-                rareBurner,
-                rareBurnFeeBPS,
-                protocolFeeBPS,
-                referrerFeeBPS
-            );
-        return (p, r, bA + bB, burn);
+            protocolFee,
+            beneficiaryFeeA,
+            beneficiaryFeeB
+        ) = _feeDistributor.distributeFees{value: _fee}(
+            _fee,
+            _beneficiary,
+            _beneficiary
+        );
+
+        beneficiaryFee = beneficiaryFeeA + beneficiaryFeeB;
     }
 
-    /// @notice Distributes fees with split beneficiary for swap()
-    /// @dev Core implementation that handles two beneficiaries (used by swap)
-    /// @param _fee The total fee amount to distribute
-    /// @param _orderReferrer The address of the order referrer
-    /// @param _beneficiaryA The first beneficiary address (tokenIn's beneficiary)
-    /// @param _beneficiaryB The second beneficiary address (tokenOut's beneficiary)
-    /// @return protocolFee Actual protocol fee transferred
-    /// @return referrerFee Actual referrer fee transferred
-    /// @return beneficiaryFeeA Actual beneficiary fee transferred to beneficiaryA
-    /// @return beneficiaryFeeB Actual beneficiary fee transferred to beneficiaryB
-    /// @return rareBurnFee Actual RARE burn fee deposited
-    ///
-    /// ## Fee Distribution Architecture (Tiered)
-    ///
-    /// TIER 1: Total fee collected (TOTAL_FEE_BPS of trade) - already calculated before this function
-    ///
-    /// TIER 2: Beneficiary's fixed share (BENEFICIARY_FEE_BPS)
-    /// - Beneficiary gets their cut first from total fee
-    /// - For swap(): split 50/50 between beneficiaryA and beneficiaryB
-    /// - If both are the same address, send full amount to that address
-    /// - If only one is set, that one gets the full beneficiary share
-    ///
-    /// TIER 3: Remainder split per router config
-    /// - Protocol: base protocol fee (immutable)
-    /// - Referrer: incentive for order sourcing (immutable)
-    /// - RARE Burn: deflationary mechanism (immutable)
-    /// - Dust: any rounding remainder goes to protocol
-    ///
-    /// ## Non-Reverting Pattern (IMPORTANT)
-    /// This function uses a "soft failure" pattern for non-critical transfers:
-    /// - Beneficiary transfer fails → funds go to protocol (not lost)
-    /// - Referrer transfer fails → funds go to protocol (not lost)
-    /// - Burner deposit fails → funds go to protocol (not lost)
-    /// - Protocol transfer fails → REVERTS THE TRADE (critical)
-    ///
-    /// Why? Malicious/broken recipients shouldn't block trades.
-    /// Protocol is the "catch-all" - if we can't pay someone, protocol gets it.
-    /// Protocol transfer is the only one that reverts because if IT fails, funds would be stuck.
-    ///
-    /// ## Gas Limiting (Security)
-    /// External calls to beneficiary/referrer are gas-limited to 50k.
-    /// This prevents griefing attacks where a malicious recipient consumes
-    /// excessive gas to make trades expensive or fail.
+    /// @notice Distributes fees with split beneficiaries for swap() operations
+    /// @dev Internal helper used by swap() operation. Wraps FeeDistributor.distributeFees()
+    ///      for the two-beneficiary case. Fee split depends on beneficiary configuration:
+    ///      - Two distinct beneficiaries: 33% beneficiaryA, 33% beneficiaryB, 34% protocol
+    ///      - One beneficiary (or two identical): 50% beneficiary, 50% protocol
+    ///      - No beneficiary: 100% protocol
+    ///      Failed beneficiary transfers are absorbed by protocol (handled by FeeDistributor).
+    /// @param _fee The total fee amount to distribute (must equal msg.value when called)
+    /// @param _beneficiaryA The first beneficiary address (tokenIn's beneficiary, address(0) if none)
+    /// @param _beneficiaryB The second beneficiary address (tokenOut's beneficiary, address(0) if none)
+    /// @return protocolFee Actual protocol fee transferred (includes any failed beneficiary transfers)
+    /// @return beneficiaryFeeA Actual beneficiary fee transferred to beneficiaryA (0 if transfer failed)
+    /// @return beneficiaryFeeB Actual beneficiary fee transferred to beneficiaryB (0 if transfer failed)
     function _disperseFeesSwap(
         uint256 _fee,
-        address _orderReferrer,
         address _beneficiaryA,
         address _beneficiaryB
     )
         internal
         returns (
             uint256 protocolFee,
-            uint256 referrerFee,
             uint256 beneficiaryFeeA,
-            uint256 beneficiaryFeeB,
-            uint256 rareBurnFee
+            uint256 beneficiaryFeeB
         )
     {
         return
-            LiquidFeeLib.disperseFees(
+            _feeDistributor.distributeFees{value: _fee}(
                 _fee,
-                _orderReferrer,
                 _beneficiaryA,
-                _beneficiaryB,
-                protocolFeeRecipient,
-                rareBurner,
-                rareBurnFeeBPS,
-                protocolFeeBPS,
-                referrerFeeBPS
+                _beneficiaryB
             );
     }
 

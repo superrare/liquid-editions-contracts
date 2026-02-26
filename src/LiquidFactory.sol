@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {LiquidGraduated} from "liquid-editions/LiquidGraduated.sol";
 import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 import {ILiquidFactory} from "liquid-editions/interfaces/ILiquidFactory.sol";
-import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
+import {ILiquidRegistry} from "liquid-editions/interfaces/ILiquidRegistry.sol";
 import {IDistributionStrategy} from "continuous-clearing-auction/interfaces/external/IDistributionStrategy.sol";
 import {AuctionParameters} from "continuous-clearing-auction/interfaces/IContinuousClearingAuction.sol";
 import {MigratorParameters} from "liquid-editions/types/MigratorParameters.sol";
@@ -22,18 +25,9 @@ import {ILiquidSwapGuard} from "liquid-editions/interfaces/ILiquidSwapGuard.sol"
 ///      Maintains global configuration with individual settable values. Each Liquid token reads
 ///      configuration directly from the factory at call time (no caching).
 ///      Each Liquid token is deployed as a clone of a master implementation.
-contract LiquidFactory is AccessControl, ILiquidFactory {
+contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
     using SafeERC20 for IERC20;
-
-    /// @notice Thrown when pool hooks are configured with a LiquidSwapGuard bound to another factory
-    /// @param poolHooks The hook contract address
-    /// @param configuredFactory The factory already configured on the hook
-    /// @param expectedFactory The factory expected by the liquid factory
-    error SwapGuardFactoryMismatch(
-        address poolHooks,
-        address configuredFactory,
-        address expectedFactory
-    );
+    using Hooks for IHooks;
 
     // ============================================
     // STATE VARIABLES
@@ -58,8 +52,8 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
 
     /// @notice Recipient for LP position at migration (LBP strategy positionRecipient)
     address public protocolFeeRecipient;
-    /// @notice Router used for automatic token registration
-    address public liquidRouter;
+    /// @notice Registry used for token registration and beneficiary mapping
+    address public liquidRegistry;
 
     // Protocol addresses
     address public weth;
@@ -131,13 +125,10 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
         int24 _poolTickSpacing,
         uint16 _internalMaxSlippageBps,
         uint256 _minRareLiquidityWei
-    ) {
-        // Validate owner address
+    ) Ownable(_owner) {
         if (_owner == address(0)) {
             revert AddressZero();
         }
-
-        _grantRole(DEFAULT_ADMIN_ROLE, _owner);
 
         // Validate all addresses are non-zero
         if (
@@ -185,7 +176,11 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     // TOKEN CREATION
     // ============================================
 
-    /// @notice Creates a new Liquid token with single-curve default config
+    /// @notice Creates a new Liquid token with multicurve liquidity (single-curve default)
+    /// @dev This is a convenience overload that creates a multicurve token with a single curve
+    ///      configuration. Even with one curve, this uses the multicurve architecture (LiquidMultiCurve),
+    ///      which distributes liquidity across concentrated positions. The single curve spans the
+    ///      full tick range (lpTickLower to lpTickUpper) with one position.
     /// @param _creator The address of the token creator (receives fees and launch reward)
     /// @param _tokenUri The ERC20z token URI (metadata link)
     /// @param _name The token name
@@ -198,7 +193,7 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
         string memory _name,
         string memory _symbol,
         uint256 _initialRareLiquidity
-    ) public returns (address token) {
+    ) public whenNotPaused returns (address token) {
         Curve[] memory curves = new Curve[](1);
         curves[0] = Curve({
             tickLower: lpTickLower,
@@ -220,7 +215,8 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
 
     /// @notice Creates a new Liquid token with multicurve liquidity
     /// @dev Deploys a clone of liquidMultiCurveImplementation, distributes liquidity across
-    ///      multiple concentrated positions per the provided curves. Uses shared minRareLiquidityWei (250 RARE).
+    ///      multiple concentrated positions per the provided curves. Uses factory's minRareLiquidityWei threshold
+    ///      to validate initial liquidity amount.
     /// @param _creator The address of the token creator (receives fees and launch reward)
     /// @param _tokenUri The ERC20z token URI (metadata link)
     /// @param _name The token name
@@ -235,7 +231,7 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
         string memory _symbol,
         uint256 _initialRareLiquidity,
         Curve[] calldata _curves
-    ) external returns (address token) {
+    ) external whenNotPaused returns (address token) {
         return
             _createLiquidTokenMultiCurve(
                 _creator,
@@ -247,6 +243,28 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
             );
     }
 
+    /// @notice Internal function that creates a LiquidMultiCurve token clone and initializes it
+    /// @dev This function handles the complete deployment flow:
+    ///      1. Validates all inputs (implementation, baseToken, creator, curves, liquidity amount)
+    ///      2. Creates EIP-1167 minimal proxy clone of liquidMultiCurveImplementation
+    ///      3. Transfers RARE tokens from caller to clone (for initial liquidity)
+    ///      4. Validates pool hooks configuration (must have BEFORE_INITIALIZE_FLAG)
+    ///      5. Whitelists clone as allowed pool initializer in hooks contract (CRITICAL: must happen before initialize())
+    ///      6. Calls clone.initialize() which creates the Uniswap V4 pool
+    ///      7. Registers token in LiquidRegistry with creator as beneficiary
+    ///
+    ///      **Security Note**: Hook validation and whitelisting MUST happen before initialize()
+    ///      to prevent pool pre-initialization DoS attacks. If an attacker front-runs token deployment
+    ///      and initializes the pool with a hostile price, the token's initialize() would fail or
+    ///      create a pool at the wrong price. By whitelisting the clone address first, we ensure only
+    ///      the legitimate token contract can initialize its pool.
+    /// @param _creator The address of the token creator (receives fees and launch reward)
+    /// @param _tokenUri The ERC20z token URI (metadata link)
+    /// @param _name The token name
+    /// @param _symbol The token symbol
+    /// @param _initialRareLiquidity The amount of RARE tokens to provide as initial liquidity
+    /// @param _curves Curve configuration array (tick ranges, positions, shares) for multicurve deployment
+    /// @return token The address of the created token clone
     function _createLiquidTokenMultiCurve(
         address _creator,
         string memory _tokenUri,
@@ -255,28 +273,39 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
         uint256 _initialRareLiquidity,
         Curve[] memory _curves
     ) internal returns (address token) {
+        // Validate implementation is set
         if (liquidMultiCurveImplementation == address(0)) {
             revert ImplementationNotSet();
         }
+        // Validate base token is configured
         if (baseToken == address(0)) revert AddressZero();
+        // Validate creator address
         if (_creator == address(0)) revert AddressZero();
+        // Validate curves array is non-empty
         if (_curves.length == 0) revert InvalidAmount();
+        // Validate initial liquidity meets minimum threshold
         if (_initialRareLiquidity < minRareLiquidityWei) revert InvalidAmount();
 
+        // Create EIP-1167 minimal proxy clone (gas-efficient deployment)
         address clone = Clones.clone(liquidMultiCurveImplementation);
 
+        // Transfer RARE tokens from caller to clone (clone will use these for initial liquidity)
         IERC20(baseToken).safeTransferFrom(
             msg.sender,
             clone,
             _initialRareLiquidity
         );
 
-        // Whitelist clone as allowed pool initializer BEFORE initialize() is called
-        // This prevents pool pre-initialization DoS attacks (see LiquidSwapGuard.beforeInitialize)
-        if (poolHooks != address(0)) {
-            ILiquidSwapGuard(poolHooks).addInitializer(clone);
-        }
+        // CRITICAL SECURITY STEP: Validate and whitelist clone BEFORE initialize() is called
+        // This prevents pool pre-initialization DoS attacks where attackers front-run token deployment
+        // by initializing the pool first with a hostile price. Only whitelisted addresses can initialize.
+        if (poolHooks == address(0)) revert PoolHooksNotSet();
+        // Validate hook has correct permissions (BEFORE_INITIALIZE_FLAG required)
+        _validateMultiCurvePoolHook();
+        // Whitelist clone as allowed initializer (must happen before clone.initialize() calls pm.initialize())
+        ILiquidSwapGuard(poolHooks).addInitializer(clone);
 
+        // Initialize the clone (this creates the Uniswap V4 pool with multicurve liquidity)
         LiquidMultiCurve liquid = LiquidMultiCurve(payable(clone));
         liquid.initialize(
             _creator,
@@ -287,8 +316,9 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
             _curves
         );
 
+        // Emit event and register token in registry
         emit LiquidTokenCreated(clone, _creator, _tokenUri);
-        _registerTokenWithRouter(clone, _creator);
+        _registerToken(clone, _creator);
         return clone;
     }
 
@@ -337,7 +367,7 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
         uint256 _auctionSupply,
         bytes calldata _auctionConfigData,
         bytes32 _salt
-    ) external returns (address token, address auction) {
+    ) external whenNotPaused returns (address token, address auction) {
         if (liquidGraduatedImplementation == address(0))
             revert ImplementationNotSet();
         if (lbpStrategyFactory == address(0)) revert AddressZero();
@@ -413,17 +443,22 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
         address auctionAddr = _getInitializer(strategyAddr);
 
         emit LiquidTokenCreated(clone, _creator, _tokenUri);
-        _registerTokenWithRouter(clone, _creator);
+        _registerToken(clone, _creator);
         return (clone, auctionAddr);
     }
 
-    function _registerTokenWithRouter(
+    /// @notice Registers a token with its beneficiary in the LiquidRegistry
+    /// @dev Called after token creation to register the token-beneficiary mapping.
+    ///      Silently skips registration if registry is not set or has no code (allows factory to work without registry).
+    /// @param token The token address to register
+    /// @param beneficiary The beneficiary address (receives creator fees)
+    function _registerToken(
         address token,
         address beneficiary
     ) internal {
-        if (liquidRouter == address(0)) return;
-        if (liquidRouter.code.length == 0) return;
-        ILiquidRouter(liquidRouter).registerToken(token, beneficiary);
+        if (liquidRegistry == address(0)) return;
+        if (liquidRegistry.code.length == 0) return;
+        ILiquidRegistry(liquidRegistry).setBeneficiary(token, beneficiary);
     }
 
     /// @notice Returns the CCA auction address from a strategy contract
@@ -448,7 +483,7 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     /// @param _implementation The implementation address
     function setLiquidGraduatedImplementation(
         address _implementation
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyOwner {
         if (_implementation == address(0)) revert AddressZero();
         liquidGraduatedImplementation = _implementation;
     }
@@ -457,7 +492,7 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     /// @param _implementation The implementation address
     function setLiquidMultiCurveImplementation(
         address _implementation
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyOwner {
         if (_implementation == address(0)) revert AddressZero();
         liquidMultiCurveImplementation = _implementation;
     }
@@ -466,7 +501,7 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     /// @param _ccaFactory The CCA factory address
     function setCcaFactory(
         address _ccaFactory
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyOwner {
         if (_ccaFactory == address(0)) revert AddressZero();
         ccaFactory = _ccaFactory;
     }
@@ -475,7 +510,7 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     /// @dev Required for createLiquidTokenWithAuction - must be set along with positionManager and protocolFeeRecipient
     function setLbpStrategyFactory(
         address _lbpStrategyFactory
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyOwner {
         if (_lbpStrategyFactory == address(0)) revert AddressZero();
         lbpStrategyFactory = _lbpStrategyFactory;
     }
@@ -484,7 +519,7 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     /// @dev Required for createLiquidTokenWithAuction
     function setPositionManager(
         address _positionManager
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyOwner {
         if (_positionManager == address(0)) revert AddressZero();
         positionManager = _positionManager;
     }
@@ -493,7 +528,7 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     /// @dev Required for createLiquidTokenWithAuction. Also used as tokensRecipient for unsold auction tokens and operator for sweeps.
     function setProtocolFeeRecipient(
         address _protocolFeeRecipient
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyOwner {
         if (
             _protocolFeeRecipient == address(0) ||
             _protocolFeeRecipient == address(1) ||
@@ -504,19 +539,19 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
         protocolFeeRecipient = _protocolFeeRecipient;
     }
 
-    /// @notice Sets the router used for automatic token registration
-    /// @dev The router uses tokenCreator checks for factory-originated registrations.
-    function setLiquidRouter(
-        address _liquidRouter
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (_liquidRouter == address(0)) revert AddressZero();
-        address oldLiquidRouter = liquidRouter;
-        liquidRouter = _liquidRouter;
-        emit LiquidRouterUpdated(oldLiquidRouter, _liquidRouter);
+    /// @notice Sets the registry used for automatic token registration
+    /// @dev Factory must be a writer on the registry to register tokens.
+    function setLiquidRegistry(
+        address _liquidRegistry
+    ) external onlyOwner {
+        if (_liquidRegistry == address(0)) revert AddressZero();
+        address oldLiquidRegistry = liquidRegistry;
+        liquidRegistry = _liquidRegistry;
+        emit LiquidRegistryUpdated(oldLiquidRegistry, _liquidRegistry);
     }
 
     /// @notice Sets the WETH address
-    function setWeth(address _weth) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setWeth(address _weth) external onlyOwner {
         if (_weth == address(0)) revert AddressZero();
         weth = _weth;
         emit WethUpdated(_weth);
@@ -525,7 +560,7 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     /// @notice Sets the Uniswap V4 PoolManager address
     function setPoolManager(
         address _poolManager
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyOwner {
         if (_poolManager == address(0)) revert AddressZero();
         poolManager = _poolManager;
         emit PoolManagerUpdated(_poolManager);
@@ -534,7 +569,7 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     /// @notice Sets the Uniswap V4 Quoter address
     function setV4Quoter(
         address _v4Quoter
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyOwner {
         if (_v4Quoter == address(0)) revert AddressZero();
         v4Quoter = _v4Quoter;
         emit V4QuoterUpdated(_v4Quoter);
@@ -544,7 +579,10 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     /// @dev If the hooks contract is a LiquidSwapGuard, also sets this factory as authorized to add initializers
     function setPoolHooks(
         address _poolHooks
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyOwner {
+        if (_poolHooks != address(0) && _poolHooks.code.length == 0) {
+            revert InvalidMultiCurvePoolHook(_poolHooks);
+        }
         poolHooks = _poolHooks;
 
         // If hooks is a LiquidSwapGuard, ensure it is already authorized for this factory
@@ -567,11 +605,52 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
         emit PoolHooksUpdated(_poolHooks);
     }
 
+    /// @notice Validates configured hook for multicurve launches
+    /// @dev Performs comprehensive validation of the pool hooks contract:
+    ///      1. Verifies hook has code (is a contract)
+    ///      2. Checks hook address has BEFORE_INITIALIZE_FLAG set (required to prevent pool pre-initialization DoS)
+    ///      3. Validates hook address format via isValidHookAddress()
+    ///      4. If hook implements ILiquidSwapGuard, verifies factory configuration matches
+    ///      Accepts both LiquidInitGuard (init-only, 0x2000) and LiquidSwapGuard (init+swap, 0x2080).
+    ///      Reverts with specific error codes if validation fails.
+    function _validateMultiCurvePoolHook() internal view {
+        if (poolHooks.code.length == 0) revert InvalidMultiCurvePoolHook(poolHooks);
+
+        uint160 actualFlags = uint160(poolHooks) & Hooks.ALL_HOOK_MASK;
+        uint160 requiredFlags = Hooks.BEFORE_INITIALIZE_FLAG;
+        if ((actualFlags & requiredFlags) != requiredFlags) {
+            revert MultiCurvePoolHookMissingFlags(
+                poolHooks,
+                actualFlags,
+                requiredFlags
+            );
+        }
+
+        if (!IHooks(poolHooks).isValidHookAddress(0)) {
+            revert InvalidMultiCurvePoolHook(poolHooks);
+        }
+
+        try ILiquidSwapGuard(poolHooks).factory() returns (address configuredFactory) {
+            if (
+                configuredFactory != address(0) &&
+                configuredFactory != address(this)
+            ) {
+                revert SwapGuardFactoryMismatch(
+                    poolHooks,
+                    configuredFactory,
+                    address(this)
+                );
+            }
+        } catch {
+            revert MultiCurvePoolHookNotGuard(poolHooks);
+        }
+    }
+
     /// @notice Sets the Uniswap V4 tick spacing
     /// @dev Validates that current lpTickLower and lpTickUpper are multiples of the new spacing
     function setPoolTickSpacing(
         int24 _poolTickSpacing
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyOwner {
         if (_poolTickSpacing <= 0) revert InvalidTickSpacing();
         // Ensure existing tick bounds are compatible with new spacing
         if (
@@ -588,7 +667,7 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     /// @param _slippageBps Maximum slippage for internal protocol swaps (must be <= 5000 BPS / 50%)
     function setInternalMaxSlippageBps(
         uint16 _slippageBps
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyOwner {
         if (_slippageBps > 5000) revert SlippageTooHigh(_slippageBps, 5000);
         internalMaxSlippageBps = _slippageBps;
         emit InternalMaxSlippageBpsUpdated(_slippageBps);
@@ -598,7 +677,7 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     /// @param _minRareLiquidityWei Minimum RARE tokens (in wei) required for pool bootstrap
     function setMinRareLiquidityWei(
         uint256 _minRareLiquidityWei
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyOwner {
         minRareLiquidityWei = _minRareLiquidityWei;
         emit MinRareLiquidityWeiUpdated(_minRareLiquidityWei);
     }
@@ -611,7 +690,7 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     /// @param _lower Lower tick for LP positions
     function setLpTickLower(
         int24 _lower
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyOwner {
         if (_lower >= lpTickUpper) revert InvalidTickRange();
         if (_lower % poolTickSpacing != 0) revert InvalidTickSpacing();
         lpTickLower = _lower;
@@ -626,11 +705,22 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     /// @param _upper Upper tick for LP positions
     function setLpTickUpper(
         int24 _upper
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyOwner {
         if (lpTickLower >= _upper) revert InvalidTickRange();
         if (_upper % poolTickSpacing != 0) revert InvalidTickSpacing();
         lpTickUpper = _upper;
         emit LpTickUpperUpdated(_upper);
+    }
+
+    /// @notice Pauses token creation on this factory.
+    /// @dev Emergency stop used during routing, tokenomics, or swap-guard incidents.
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /// @notice Unpauses token creation on this factory.
+    function unpause() external onlyOwner {
+        _unpause();
     }
 
     /// @notice Sets the base token address (RARE)
@@ -638,7 +728,7 @@ contract LiquidFactory is AccessControl, ILiquidFactory {
     /// @param _baseToken The base token address (RARE)
     function setBaseToken(
         address _baseToken
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyOwner {
         if (_baseToken == address(0)) revert AddressZero();
         baseToken = _baseToken;
         emit BaseTokenUpdated(_baseToken);

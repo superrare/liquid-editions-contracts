@@ -18,9 +18,12 @@ import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
-contract LiquidFactoryTest is Test {
+contract LiquidFactoryTest is Test, InitGuardTestHelper {
     // Test accounts
     address public admin = makeAddr("admin");
     address public tokenCreator = makeAddr("tokenCreator");
@@ -39,10 +42,7 @@ contract LiquidFactoryTest is Test {
 
     function setUp() public {
         // Fork Base mainnet to access Uniswap V4 contracts
-        string memory forkUrl = vm.envOr(
-            "FORK_URL",
-            string("https://mainnet.base.org")
-        );
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
 
         // Get network configuration (Base mainnet chain ID = 8453)
@@ -75,6 +75,7 @@ contract LiquidFactoryTest is Test {
             false // disabled initially
         );
         liquidImplementation = new LiquidMultiCurve();
+        address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factory = new LiquidFactory(
             admin,
             config.weth,
@@ -82,14 +83,15 @@ contract LiquidFactoryTest is Test {
             -180, // lpTickLower - max expensive (after price rises) - multiple of 60
             120000, // lpTickUpper - starting point (cheap tokens) - multiple of 60
             config.uniswapV4Quoter, // Use wrapper instead of raw quoter
-            address(0), // poolHooks (no hooks)
+            initGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
+        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
 
         
-        factory.setLiquidRouter(address(1));
+        factory.setLiquidRegistry(address(1));
 
         // Set the implementation in the factory
         factory.setLiquidMultiCurveImplementation(address(liquidImplementation));
@@ -288,7 +290,7 @@ contract LiquidFactoryTest is Test {
         );
 
         vm.startPrank(admin);
-        newFactory.setLiquidRouter(address(1));
+        newFactory.setLiquidRegistry(address(1));
         // Set baseToken
         newFactory.setBaseToken(address(mockRARE));
         vm.stopPrank();
@@ -456,9 +458,7 @@ contract LiquidFactoryTest is Test {
         vm.startPrank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                factory.DEFAULT_ADMIN_ROLE()
+                Ownable.OwnableUnauthorizedAccount.selector, user1
             )
         );
         factory.setLiquidMultiCurveImplementation(address(newImpl));
@@ -470,9 +470,7 @@ contract LiquidFactoryTest is Test {
         vm.startPrank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                factory.DEFAULT_ADMIN_ROLE()
+                Ownable.OwnableUnauthorizedAccount.selector, user1
             )
         );
         factory.setWeth(address(0x123));
@@ -484,9 +482,7 @@ contract LiquidFactoryTest is Test {
         vm.startPrank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                factory.DEFAULT_ADMIN_ROLE()
+                Ownable.OwnableUnauthorizedAccount.selector, user1
             )
         );
         factory.setInternalMaxSlippageBps(300);
@@ -497,32 +493,26 @@ contract LiquidFactoryTest is Test {
     function test_RevertWhen_NonAdmin_AllAdminFunctions() public {
         LiquidMultiCurve newImpl = new LiquidMultiCurve();
 
-        // Try all admin functions as user2 (user2 does not have DEFAULT_ADMIN_ROLE)
+        // Try all admin functions as user2 (user2 is not the owner)
         vm.startPrank(user2);
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user2,
-                factory.DEFAULT_ADMIN_ROLE()
+                Ownable.OwnableUnauthorizedAccount.selector, user2
             )
         );
         factory.setLiquidMultiCurveImplementation(address(newImpl));
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user2,
-                factory.DEFAULT_ADMIN_ROLE()
+                Ownable.OwnableUnauthorizedAccount.selector, user2
             )
         );
         factory.setWeth(address(0x123));
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user2,
-                factory.DEFAULT_ADMIN_ROLE()
+                Ownable.OwnableUnauthorizedAccount.selector, user2
             )
         );
         factory.setInternalMaxSlippageBps(500);
@@ -726,9 +716,7 @@ contract LiquidFactoryTest is Test {
         vm.startPrank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                factory.DEFAULT_ADMIN_ROLE()
+                Ownable.OwnableUnauthorizedAccount.selector, user1
             )
         );
         factory.setPoolManager(address(0x123));
@@ -740,9 +728,7 @@ contract LiquidFactoryTest is Test {
         vm.startPrank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                factory.DEFAULT_ADMIN_ROLE()
+                Ownable.OwnableUnauthorizedAccount.selector, user1
             )
         );
         factory.setV4Quoter(address(0x123));
@@ -754,9 +740,7 @@ contract LiquidFactoryTest is Test {
         vm.startPrank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                factory.DEFAULT_ADMIN_ROLE()
+                Ownable.OwnableUnauthorizedAccount.selector, user1
             )
         );
         factory.setPoolHooks(address(0x123));
@@ -768,9 +752,7 @@ contract LiquidFactoryTest is Test {
         vm.startPrank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                factory.DEFAULT_ADMIN_ROLE()
+                Ownable.OwnableUnauthorizedAccount.selector, user1
             )
         );
         factory.setMinRareLiquidityWei(1e16);
@@ -782,9 +764,7 @@ contract LiquidFactoryTest is Test {
         vm.startPrank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                factory.DEFAULT_ADMIN_ROLE()
+                Ownable.OwnableUnauthorizedAccount.selector, user1
             )
         );
         factory.setLpTickLower(-240);
@@ -796,9 +776,7 @@ contract LiquidFactoryTest is Test {
         vm.startPrank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                factory.DEFAULT_ADMIN_ROLE()
+                Ownable.OwnableUnauthorizedAccount.selector, user1
             )
         );
         factory.setLpTickUpper(120060);
@@ -810,9 +788,7 @@ contract LiquidFactoryTest is Test {
         vm.startPrank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                factory.DEFAULT_ADMIN_ROLE()
+                Ownable.OwnableUnauthorizedAccount.selector, user1
             )
         );
         factory.setPoolTickSpacing(30);
@@ -824,9 +800,7 @@ contract LiquidFactoryTest is Test {
         vm.startPrank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector,
-                user1,
-                factory.DEFAULT_ADMIN_ROLE()
+                Ownable.OwnableUnauthorizedAccount.selector, user1
             )
         );
         factory.setBaseToken(address(0x123));
@@ -999,7 +973,7 @@ contract LiquidFactoryTest is Test {
             300,
             1e15
         );
-                newFactory.setLiquidRouter(address(1));
+                newFactory.setLiquidRegistry(address(1));
         newFactory.setLiquidMultiCurveImplementation(address(liquidImplementation));
         // Don't set baseToken
         vm.stopPrank();

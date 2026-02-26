@@ -17,8 +17,11 @@ import {DeployConfig} from "script/config/DeployConfig.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
-contract LiquidMultiCurveDatasurfaceTest is Test {
+contract LiquidMultiCurveDatasurfaceTest is Test, InitGuardTestHelper {
     NetworkConfig.Config internal config;
 
     address public admin = makeAddr("admin");
@@ -61,10 +64,7 @@ contract LiquidMultiCurveDatasurfaceTest is Test {
     }
 
     function setUp() public {
-        string memory forkUrl = vm.envOr(
-            "FORK_URL",
-            string("https://mainnet.base.org")
-        );
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
 
         config = NetworkConfig.getConfig(block.chainid);
@@ -76,6 +76,7 @@ contract LiquidMultiCurveDatasurfaceTest is Test {
         mockRARE.mint(tokenCreator, 10_000 ether);
 
         vm.startPrank(admin);
+        address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factory = new LiquidFactory(
             admin,
             config.weth,
@@ -83,12 +84,13 @@ contract LiquidMultiCurveDatasurfaceTest is Test {
             -180,
             120000,
             config.uniswapV4Quoter,
-            address(0),
+            initGuardAddr,
             60,
             300,
             LIQUIDITY
         );
-        factory.setLiquidRouter(address(1));
+        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+        factory.setLiquidRegistry(address(1));
         instantImpl = new LiquidMultiCurve();
         multiCurveImpl = new LiquidMultiCurve();
         factory.setLiquidMultiCurveImplementation(address(instantImpl));

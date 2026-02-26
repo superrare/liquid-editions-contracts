@@ -7,6 +7,7 @@ import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {RoutePolicy} from "liquid-editions/RoutePolicy.sol";
 import {LiquidRouterForkBase} from "liquid-editions-test/helpers/bases/LiquidRouterForkBase.sol";
 import {DeployLiquidSwapGuard} from "script/deployers/DeployLiquidSwapGuard.s.sol";
+import {IFeeDistributor} from "liquid-editions/interfaces/IFeeDistributor.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
@@ -210,7 +211,11 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
     }
 
     function _ethForSwap(uint256 ethAmount) internal view returns (uint256) {
-        return (ethAmount * (10000 - router.TOTAL_FEE_BPS())) / 10000;
+        return
+            (ethAmount *
+                (10000 -
+                    IFeeDistributor(router.feeDistributor()).totalFeeBPS())) /
+            10000;
     }
 
     function _appendWrapEth(
@@ -254,7 +259,6 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         uint256 tokensReceived = router.buy{value: ethAmount}(
             address(liquidToken),
             buyer,
-            address(0),
             1,
             commands,
             inputs,
@@ -278,7 +282,6 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         router.buy{value: buyEth}(
             address(liquidToken),
             buyer,
-            address(0),
             1,
             buyCommands,
             buyInputs,
@@ -299,7 +302,6 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
             address(liquidToken),
             tokensToSell,
             buyer,
-            address(0),
             1,
             sellCommands,
             sellInputs,
@@ -324,7 +326,6 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         uint256 tokensBought = router.buy{value: ethAmount}(
             address(liquidToken),
             buyer,
-            address(0),
             1,
             buyCommands,
             buyInputs,
@@ -341,7 +342,6 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
             address(liquidToken),
             tokensBought,
             buyer,
-            address(0),
             1,
             sellCommands,
             sellInputs,
@@ -393,7 +393,6 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         router.buy{value: ethAmount}(
             address(liquidToken),
             buyer,
-            address(0),
             1,
             commands,
             inputs,
@@ -426,7 +425,6 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         router.buy{value: ethAmount}(
             address(liquidToken),
             buyer,
-            address(0),
             1,
             commands,
             inputs,
@@ -446,7 +444,6 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         uint256 bought = router.buy{value: ethAmount}(
             address(liquidToken),
             buyer,
-            address(0),
             1,
             commands,
             inputs,
@@ -494,28 +491,28 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
 
 /// @notice Attacker contract: calls pm.initialize() from unlock callback (simulates front-run)
 contract AttackerInitializer is IUnlockCallback {
-    IPoolManager public immutable poolManager;
+    IPoolManager public immutable POOL_MANAGER;
 
     constructor(IPoolManager _poolManager) {
-        poolManager = _poolManager;
+        POOL_MANAGER = _poolManager;
     }
 
     function tryInitialize(
         PoolKey memory poolKey,
         uint160 sqrtPriceX96
     ) external {
-        poolManager.unlock(abi.encode(poolKey, sqrtPriceX96));
+        POOL_MANAGER.unlock(abi.encode(poolKey, sqrtPriceX96));
     }
 
     function unlockCallback(
         bytes calldata data
     ) external override returns (bytes memory) {
-        require(msg.sender == address(poolManager), "only pool manager");
+        require(msg.sender == address(POOL_MANAGER), "only pool manager");
         (PoolKey memory poolKey, uint160 sqrtPriceX96) = abi.decode(
             data,
             (PoolKey, uint160)
         );
-        poolManager.initialize(poolKey, sqrtPriceX96);
+        POOL_MANAGER.initialize(poolKey, sqrtPriceX96);
         return "";
     }
 }

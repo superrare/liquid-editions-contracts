@@ -11,6 +11,8 @@ import {ILiquidGraduated} from "liquid-editions/interfaces/ILiquidGraduated.sol"
 import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
 import {ILiquidAuctioneer} from "liquid-editions/interfaces/ILiquidAuctioneer.sol";
 import {IPermit2} from "liquid-editions/interfaces/IPermit2.sol";
+import {IFeeDistributor} from "liquid-editions/interfaces/IFeeDistributor.sol";
+import {ILiquidRegistry} from "liquid-editions/interfaces/ILiquidRegistry.sol";
 
 /// @title LiquidAuctioneer
 /// @notice Router for CCA auction interactions: bid, exit/claim, trigger graduation
@@ -23,20 +25,18 @@ contract LiquidAuctioneer is
 {
     using SafeERC20 for IERC20;
 
-    uint256 public constant TOTAL_FEE_BPS = LiquidFeeLib.TOTAL_FEE_BPS;
+    IFeeDistributor private _feeDistributor;
+    ILiquidRegistry private _liquidRegistry;
     address private constant PERMIT2 =
         0x000000000022D473030F116dDEE9F6B43aC78BA3;
 
-    address public UNIVERSAL_ROUTER;
-    address public PROTOCOL_FEE_RECIPIENT;
-    address public immutable RARE_BURNER;
+    address public universalRouter;
     /// @dev RARE token address (base token for pools)
     address public immutable BASE_TOKEN;
     /// @dev canonical wrapped native token for this chain
     address public immutable WETH;
-    uint256 public immutable RARE_BURN_FEE_BPS;
-    uint256 public immutable PROTOCOL_FEE_BPS;
-    uint256 public immutable REFERRER_FEE_BPS;
+
+    
 
     struct TokenRoute {
         RouteKind kind;
@@ -47,7 +47,6 @@ contract LiquidAuctioneer is
         address[] v2Path;
     }
 
-    mapping(address => address) public tokenBeneficiaries;
     mapping(address => TokenRoute) private tokenToRareRoutes;
 
     address private constant MSG_SENDER =
@@ -70,46 +69,66 @@ contract LiquidAuctioneer is
         bytes hookData;
     }
 
-    /// @notice Creates LiquidAuctioneer with fee configuration
+    /// @notice Creates LiquidAuctioneer with module-backed fee configuration.
     /// @param _owner Owner address
     /// @param _universalRouter Uniswap Universal Router for swaps
-    /// @param _protocolFeeRecipient Protocol fee recipient
-    /// @param _rareBurner RARE burner contract
+    /// @param _feeDistributorAddress FeeDistributor module address
+    /// @param _liquidRegistryAddress LiquidRegistry module address
     /// @param _baseToken RARE token address
     /// @param _weth canonical wrapped native token for this chain
-    /// @param _rareBurnFeeBPS RARE burn fee in BPS (must sum with others to 10000)
-    /// @param _protocolFeeBPS Protocol fee in BPS
-    /// @param _referrerFeeBPS Referrer fee in BPS
     constructor(
         address _owner,
         address _universalRouter,
-        address _protocolFeeRecipient,
-        address _rareBurner,
+        address _feeDistributorAddress,
+        address _liquidRegistryAddress,
         address _baseToken,
-        address _weth,
-        uint256 _rareBurnFeeBPS,
-        uint256 _protocolFeeBPS,
-        uint256 _referrerFeeBPS
+        address _weth
     ) Ownable(_owner) {
         if (
             _owner == address(0) ||
             _universalRouter == address(0) ||
-            _protocolFeeRecipient == address(0) ||
-            _rareBurner == address(0) ||
             _baseToken == address(0) ||
-            _weth == address(0)
-        ) revert ILiquidRouter.AddressZero();
-        if (_rareBurnFeeBPS + _protocolFeeBPS + _referrerFeeBPS != 10000)
-            revert ILiquidRouter.InvalidFeeDistribution();
+            _weth == address(0) ||
+            _feeDistributorAddress == address(0) ||
+            _liquidRegistryAddress == address(0)
+        ) {
+            revert ILiquidRouter.AddressZero();
+        }
 
-        UNIVERSAL_ROUTER = _universalRouter;
-        PROTOCOL_FEE_RECIPIENT = _protocolFeeRecipient;
-        RARE_BURNER = _rareBurner;
         BASE_TOKEN = _baseToken;
         WETH = _weth;
-        RARE_BURN_FEE_BPS = _rareBurnFeeBPS;
-        PROTOCOL_FEE_BPS = _protocolFeeBPS;
-        REFERRER_FEE_BPS = _referrerFeeBPS;
+
+        _initContract(
+            _universalRouter,
+            IFeeDistributor(_feeDistributorAddress),
+            ILiquidRegistry(_liquidRegistryAddress)
+        );
+    }
+
+    /// @notice Read the active fee distributor contract address.
+    function feeDistributor() external view returns (address) {
+        return address(_feeDistributor);
+    }
+
+    /// @notice Read the active liquid registry contract address.
+    function liquidRegistry() external view returns (address) {
+        return address(_liquidRegistry);
+    }
+
+    function _initContract(
+        address _universalRouter,
+        IFeeDistributor feeDistributorModule,
+        ILiquidRegistry liquidRegistryModule
+    ) internal {
+        if (
+            _universalRouter == address(0) ||
+            address(feeDistributorModule) == address(0) ||
+            address(liquidRegistryModule) == address(0)
+        ) revert ILiquidRouter.AddressZero();
+
+        universalRouter = _universalRouter;
+        _feeDistributor = feeDistributorModule;
+        _liquidRegistry = liquidRegistryModule;
 
         // Safe default native ETH -> RARE route; owner can override via route setters.
         TokenRoute storage nativeRoute = tokenToRareRoutes[address(0)];
@@ -119,52 +138,110 @@ contract LiquidAuctioneer is
         nativeRoute.v4Hooks = address(0);
     }
 
+    /// @notice Update fee distributor pointer.
+    function setFeeDistributor(address feeDistributorAddress) external onlyOwner {
+        if (feeDistributorAddress == address(0))
+            revert ILiquidRouter.AddressZero();
+        if (feeDistributorAddress.code.length == 0) {
+            revert ILiquidRouter.InvalidModule();
+        }
+        address old = address(_feeDistributor);
+        _feeDistributor = IFeeDistributor(feeDistributorAddress);
+        emit FeeDistributorUpdated(old, feeDistributorAddress);
+    }
+
+    /// @notice Update liquid registry pointer.
+    function setLiquidRegistry(
+        address liquidRegistryAddress
+    ) external onlyOwner {
+        if (liquidRegistryAddress == address(0))
+            revert ILiquidRouter.AddressZero();
+        if (liquidRegistryAddress.code.length == 0) {
+            revert ILiquidRouter.InvalidModule();
+        }
+        address old = address(_liquidRegistry);
+        _liquidRegistry = ILiquidRegistry(liquidRegistryAddress);
+        emit LiquidRegistryUpdated(old, liquidRegistryAddress);
+    }
+
+    /// @notice Reverts if liquidToken is not registered in the LiquidRegistry
+    /// @dev Security check to ensure only valid Liquid tokens can be bid on
+    /// @param liquidToken The token address to check
+    function _requireRegistered(address liquidToken) internal view {
+        if (!_liquidRegistry.isRegistered(liquidToken)) {
+            revert ILiquidAuctioneer.UnregisteredToken(liquidToken);
+        }
+    }
+
     // Errors defined in ILiquidAuctioneer interface
 
     /// @notice Bid on a CCA auction using a configured preset token->RARE route
-    /// @dev For native ETH (tokenIn = address(0)), deducts 4% fee and distributes ETH fees.
-    ///      For ERC20 token bids, fee distribution is skipped and amountIn is swapped as provided.
-    /// @param liquidToken The LiquidGraduated token (auction not yet graduated)
-    /// @param tokenIn Input token (address(0) for native ETH)
-    /// @param amountIn Input amount for ERC20 bids (ignored for native ETH bids)
-    /// @param maxPrice Maximum price willing to pay (0 = accept any)
+    /// @dev This function supports three distinct bid paths:
+    ///
+    ///      **Path 1: Native ETH (tokenIn = address(0))**
+    ///      - Deducts fee from ETH input (based on FeeDistributor.totalFeeBPS)
+    ///      - Swaps remaining ETH to RARE via Universal Router
+    ///      - Distributes ETH fees to beneficiary/protocol
+    ///      - Submits RARE bid to auction
+    ///
+    ///      **Path 2: BASE_TOKEN (tokenIn = BASE_TOKEN)**
+    ///      - Optimized path: user provides RARE directly (no swap needed)
+    ///      - No fees deducted (fees only apply to ETH input)
+    ///      - Sets up Permit2 approvals for auction to pull RARE
+    ///      - Submits RARE bid to auction
+    ///
+    ///      **Path 3: Other ERC20 tokens**
+    ///      - Pulls tokens from user (with fee-on-transfer check)
+    ///      - Swaps tokens to RARE via Universal Router (no fee deduction)
+    ///      - Sets up Permit2 approvals for auction to pull RARE
+    ///      - Submits RARE bid to auction
+    ///
+    ///      Balance tracking: Uses balance deltas to measure swap outputs and prevent accounting errors.
+    ///      For V4 single-hop swaps, tokens must be held by contract before swap (contractFunds = true).
+    ///      For V2/V3 swaps, Permit2 pull pattern is used (contractFunds = false).
+    /// @param liquidToken The LiquidGraduated token (auction must not be graduated)
+    /// @param tokenIn Input token (address(0) for native ETH, BASE_TOKEN for direct RARE, or other ERC20)
+    /// @param amountIn Input amount for ERC20 bids (ignored for native ETH bids - uses msg.value)
+    /// @param maxPrice Maximum price willing to pay (0 = accept any price, uses auction MAX_BID_PRICE)
     /// @param bidOwner Address that will own the bid and receive filled tokens
-    /// @param orderReferrer Referrer address (receives referrer fee)
     /// @param prevTickPrice Previous tick price for CCA (use floorPrice when maxPrice=0)
-    /// @param minRareOut Minimum RARE amount to bid (slippage protection)
-    /// @param deadline Swap deadline
-    /// @return bidId The CCA bid ID
+    /// @param minRareOut Minimum RARE amount to bid (slippage protection for swap)
+    /// @param deadline Swap deadline timestamp
+    /// @return bidId The CCA bid ID (used for exit/claim operations)
     function bid(
         address tokenIn,
         uint256 amountIn,
         address liquidToken,
         uint256 maxPrice,
         address bidOwner,
-        address orderReferrer,
         uint256 prevTickPrice,
         uint256 minRareOut,
         uint256 deadline
     ) external payable nonReentrant whenNotPaused returns (uint256 bidId) {
         if (liquidToken == address(0) || bidOwner == address(0))
             revert ILiquidRouter.AddressZero();
+        _requireRegistered(liquidToken);
         if (minRareOut == 0) revert ILiquidRouter.InvalidAmount();
 
         uint256 fee = 0;
         uint256 swapAmountIn;
         uint256 tokenBalanceBefore;
+        // Track ETH balance before swap to measure output (excludes msg.value which hasn't been processed yet)
         uint256 ethBalanceBefore = address(this).balance;
 
         if (tokenIn == address(0)) {
+            // PATH 1: Native ETH bid
             if (msg.value == 0) revert ILiquidRouter.InvalidAmount();
-            // Deduct 4% fee from ETH input.
-            fee = LiquidFeeLib.calculateFee(msg.value, TOTAL_FEE_BPS);
+            // Deduct fee from ETH input (fee is distributed after swap)
+            fee = LiquidFeeLib.calculateFee(msg.value, _feeDistributor.totalFeeBPS());
             swapAmountIn = msg.value - fee;
-            // Exclude msg.value to get pre-call baseline.
+            // Exclude msg.value to get pre-call baseline (ETH we had before this transaction)
             ethBalanceBefore = address(this).balance - msg.value;
         } else if (tokenIn == BASE_TOKEN) {
-            // Optimized path: BASE token bids can use user-provided RARE directly.
+            // PATH 2: Direct RARE bid (optimized - no swap needed)
             if (msg.value != 0) revert ILiquidRouter.InvalidAmount();
             if (amountIn == 0) revert ILiquidRouter.InvalidAmount();
+            // Track balance before/after to handle fee-on-transfer tokens
             uint256 tokenBalanceBeforeRare = IERC20(tokenIn).balanceOf(address(this));
             IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
             uint256 tokenBalanceAfterRare = IERC20(tokenIn).balanceOf(address(this));
@@ -172,7 +249,7 @@ contract LiquidAuctioneer is
                 revert ILiquidAuctioneer.UnexpectedTokenBalance();
             }
             uint256 rareAmountInput = tokenBalanceAfterRare - tokenBalanceBeforeRare;
-            // Route and swap are bypassed for BASE token bids.
+            // No swap needed - user provided RARE directly, so slippage check is simple
             if (rareAmountInput < minRareOut) revert SlippageExceeded();
 
             // Get auction address and set up Permit2 for CCA to pull RARE
@@ -198,33 +275,32 @@ contract LiquidAuctioneer is
 
             // Distribute fees for native ETH bids only (fee value is in ETH).
             if (fee > 0) {
-                address beneficiary = tokenBeneficiaries[liquidToken];
-                LiquidFeeLib.disperseFees(
+                address beneficiary = _liquidRegistry.beneficiaryOf(liquidToken);
+                _feeDistributor.distributeFees{value: fee}(
                     fee,
-                    orderReferrer,
                     beneficiary,
-                    beneficiary,
-                    PROTOCOL_FEE_RECIPIENT,
-                    RARE_BURNER,
-                    RARE_BURN_FEE_BPS,
-                    PROTOCOL_FEE_BPS,
-                    REFERRER_FEE_BPS
+                    beneficiary
                 );
             }
             return bidId;
         } else {
+            // PATH 3: ERC20 token bid (swap to RARE)
             if (msg.value != 0) revert ILiquidRouter.InvalidAmount();
             if (amountIn == 0) revert ILiquidRouter.InvalidAmount();
             swapAmountIn = amountIn;
         }
+        // Build Universal Router route for tokenIn -> RARE swap
         (bytes memory commands, bytes[] memory inputs) = _buildTokenToRareRoute(
             tokenIn,
             swapAmountIn,
             minRareOut
         );
+        // Check if swap requires contract-held funds (V4 single-hop) vs Permit2 pull (V2/V3)
         bool contractFunds = _isContractFundsSwap(tokenIn);
 
         if (contractFunds) {
+            // V4 single-hop swaps require tokens to be held by contract before swap execution
+            // Pull tokens from user and track balance to measure actual amount received (handles fee-on-transfer)
             tokenBalanceBefore = IERC20(tokenIn).balanceOf(address(this));
             IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
             uint256 tokenBalanceAfter = IERC20(tokenIn).balanceOf(address(this));
@@ -238,13 +314,13 @@ contract LiquidAuctioneer is
             tokenBalanceBefore = tokenBalanceAfter;
         }
 
-        // Swap tokenIn -> RARE via Universal Router (use balance delta to avoid counting pre-existing RARE)
+        // Track RARE balance before swap to measure output (avoids counting pre-existing RARE in contract)
         uint256 rareBalanceBefore = IERC20(BASE_TOKEN).balanceOf(address(this));
         if (contractFunds) {
             IERC20(tokenIn).forceApprove(PERMIT2, swapAmountIn);
             IPermit2(PERMIT2).approve(
                 tokenIn,
-                UNIVERSAL_ROUTER,
+                universalRouter,
                 uint160(
                     swapAmountIn > type(uint160).max
                         ? type(uint160).max
@@ -254,7 +330,7 @@ contract LiquidAuctioneer is
             );
         }
         LiquidFeeLib.executeSwap(
-            UNIVERSAL_ROUTER,
+            universalRouter,
             tokenIn == address(0) ? swapAmountIn : 0,
             commands,
             inputs,
@@ -269,10 +345,12 @@ contract LiquidAuctioneer is
                 revert ILiquidAuctioneer.UnexpectedTokenBalance();
             }
             IERC20(tokenIn).forceApprove(PERMIT2, 0);
-            IPermit2(PERMIT2).approve(tokenIn, UNIVERSAL_ROUTER, 0, 0);
+            IPermit2(PERMIT2).approve(tokenIn, universalRouter, 0, 0);
         }
 
         // SECURITY: Ensure no ETH was returned by the router when fee accounting depends on ETH input.
+        // Expected balance after swap = ethBalanceBefore + fee (all swap ETH should be consumed)
+        // If balance exceeds expected, router returned ETH which breaks accounting
         if (
             tokenIn == address(0) &&
             address(this).balance > ethBalanceBefore + fee
@@ -280,6 +358,7 @@ contract LiquidAuctioneer is
             revert ILiquidAuctioneer.UnexpectedEthRefund();
         }
 
+        // Calculate RARE received from swap (balance delta)
         uint256 rareAmount = IERC20(BASE_TOKEN).balanceOf(address(this)) -
             rareBalanceBefore;
         if (rareAmount < minRareOut) revert SlippageExceeded();
@@ -310,17 +389,11 @@ contract LiquidAuctioneer is
 
         // Distribute fees for native ETH bids only (fee value is in ETH).
         if (fee > 0) {
-            address beneficiary = tokenBeneficiaries[liquidToken];
-            LiquidFeeLib.disperseFees(
+            address beneficiary = _liquidRegistry.beneficiaryOf(liquidToken);
+            _feeDistributor.distributeFees{value: fee}(
                 fee,
-                orderReferrer,
                 beneficiary,
-                beneficiary,
-                PROTOCOL_FEE_RECIPIENT,
-                RARE_BURNER,
-                RARE_BURN_FEE_BPS,
-                PROTOCOL_FEE_BPS,
-                REFERRER_FEE_BPS
+                beneficiary
             );
         }
         return bidId;
@@ -381,22 +454,9 @@ contract LiquidAuctioneer is
 
     function setUniversalRouter(address _universalRouter) external onlyOwner {
         if (_universalRouter == address(0)) revert ILiquidRouter.AddressZero();
-        address oldRouter = UNIVERSAL_ROUTER;
-        UNIVERSAL_ROUTER = _universalRouter;
+        address oldRouter = universalRouter;
+        universalRouter = _universalRouter;
         emit UniversalRouterUpdated(oldRouter, _universalRouter);
-    }
-
-    function setProtocolFeeRecipient(
-        address _protocolFeeRecipient
-    ) external onlyOwner {
-        if (_protocolFeeRecipient == address(0))
-            revert ILiquidRouter.AddressZero();
-        address oldRecipient = PROTOCOL_FEE_RECIPIENT;
-        PROTOCOL_FEE_RECIPIENT = _protocolFeeRecipient;
-        emit ProtocolFeeRecipientUpdated(
-            oldRecipient,
-            _protocolFeeRecipient
-        );
     }
 
     function getTokenToRareV2Path(
@@ -405,6 +465,14 @@ contract LiquidAuctioneer is
         return tokenToRareRoutes[tokenIn].v2Path;
     }
 
+    /// @notice Builds Universal Router commands/inputs for tokenIn -> RARE swap
+    /// @dev Routes through configured preset (V4_SINGLE, V3_PATH, or V2_PATH).
+    ///      For native ETH, prepends WRAP_ETH command. Handles both native ETH and ERC20 inputs.
+    /// @param tokenIn Input token (address(0) for native ETH)
+    /// @param amountIn Input amount
+    /// @param minRareOut Minimum RARE output (slippage protection)
+    /// @return commands Encoded Universal Router command bytes
+    /// @return inputs Encoded Universal Router command inputs
     function _buildTokenToRareRoute(
         address tokenIn,
         uint256 amountIn,
@@ -470,6 +538,15 @@ contract LiquidAuctioneer is
         revert InvalidPresetRoute();
     }
 
+    /// @notice Encodes V4 swap route for tokenIn -> RARE via Universal Router
+    /// @dev Creates a single-hop V4 swap path (tokenIn -> BASE_TOKEN) with configured pool parameters.
+    ///      Uses SWAP_EXACT_IN, SETTLE_ALL, and TAKE_ALL actions. Handles native ETH (address(0)) as currencyIn.
+    /// @param tokenIn Input token (address(0) for native ETH)
+    /// @param amountIn Input amount
+    /// @param minRareOut Minimum RARE output (slippage protection)
+    /// @param route TokenRoute storage reference with V4 pool parameters
+    /// @return commands Encoded Universal Router command bytes (CMD_V4_SWAP)
+    /// @return inputs Encoded Universal Router command inputs (actions + params)
     function _encodeV4TokenToRareRoute(
         address tokenIn,
         uint256 amountIn,
@@ -507,6 +584,13 @@ contract LiquidAuctioneer is
         inputs[0] = abi.encode(actions, params);
     }
 
+    /// @notice Validates a Uniswap V3 path format
+    /// @dev V3 path format: token(20 bytes) + [fee(3 bytes) + token(20 bytes)] * n hops.
+    ///      Checks path length, format, and that it starts with expectedInput and ends with BASE_TOKEN.
+    ///      For native ETH input, expects WETH as first token.
+    /// @param tokenIn Input token (address(0) for native ETH)
+    /// @param path Encoded V3 path bytes
+    /// @return True if path is valid
     function _isValidV3Path(
         address tokenIn,
         bytes calldata path
@@ -527,6 +611,12 @@ contract LiquidAuctioneer is
         return firstToken == expectedInput && lastToken == BASE_TOKEN;
     }
 
+    /// @notice Validates a Uniswap V2 path format
+    /// @dev Checks that path has at least 2 tokens, starts with expectedInput, ends with BASE_TOKEN,
+    ///      and contains no zero addresses.
+    /// @param expectedInput Expected first token in path (WETH for native ETH, tokenIn for ERC20)
+    /// @param path Array of token addresses representing the swap path
+    /// @return True if path is valid
     function _isValidV2Path(
         address expectedInput,
         address[] calldata path
@@ -590,6 +680,15 @@ contract LiquidAuctioneer is
         return abi.decode(data, (uint256));
     }
 
+    /// @notice Checks if swap should use contract-held funds vs Permit2 pull pattern
+    /// @dev Universal Router supports two token transfer patterns:
+    ///      - **Contract-held funds**: V4 single-hop swaps require tokens to be held by this contract
+    ///        before swap execution. We pull tokens from user first, then Universal Router pulls from us.
+    ///      - **Permit2 pull**: V2/V3 swaps use Permit2's pull pattern where Universal Router pulls
+    ///        directly from user's Permit2 allowance. More gas-efficient for multi-hop routes.
+    ///      Native ETH never uses contract funds (sent via msg.value).
+    /// @param tokenIn Input token (address(0) for native ETH)
+    /// @return True if swap requires contract-held funds (V4_SINGLE route), false for Permit2 pull (V2/V3 routes)
     function _isContractFundsSwap(
         address tokenIn
     ) internal view returns (bool) {
@@ -600,8 +699,11 @@ contract LiquidAuctioneer is
     }
 
     /// @notice Returns (maxValidPrice, floorPrice) for "accept any price" bids
-    ///      maxValidPrice = MAX_BID_PRICE rounded down to tick boundary.
-    ///      floorPrice is used as prevTickPrice since it's always an initialized tick.
+    /// @dev When maxPrice is 0, calculates valid max price from auction's MAX_BID_PRICE rounded down to tick boundary.
+    ///      Uses floorPrice as prevTickPrice since it's always an initialized tick. Reverts if auction calls fail.
+    /// @param auction CCA auction address
+    /// @return maxValidPrice MAX_BID_PRICE rounded down to tickSpacing boundary
+    /// @return floorPrice_ Auction's floorPrice (always an initialized tick)
     function _auctionMaxBidPriceAndFloor(
         address auction
     ) internal view returns (uint256 maxValidPrice, uint256 floorPrice_) {
@@ -674,6 +776,7 @@ contract LiquidAuctioneer is
         uint256 deadline
     ) external nonReentrant whenNotPaused returns (uint256 ethReceived) {
         if (recipient == address(0)) revert ILiquidRouter.AddressZero();
+        _requireRegistered(liquidToken);
 
         // Call CCA exitBid - refunds RARE to bid owner (msg.sender)
         address auction = ILiquidGraduated(liquidToken).auctionAddress();
@@ -700,7 +803,7 @@ contract LiquidAuctioneer is
         // Swap RARE -> ETH via Universal Router (uses Permit2)
         _approvePermit2ForRouter(rareRefund);
         LiquidFeeLib.executeSwap(
-            UNIVERSAL_ROUTER,
+            universalRouter,
             0,
             commands,
             inputs,
@@ -750,6 +853,7 @@ contract LiquidAuctioneer is
         uint256 deadline
     ) external nonReentrant whenNotPaused returns (uint256 ethReceived) {
         if (recipient == address(0)) revert ILiquidRouter.AddressZero();
+        _requireRegistered(liquidToken);
 
         address auction = ILiquidGraduated(liquidToken).auctionAddress();
         uint256 ownerRareBefore = IERC20(BASE_TOKEN).balanceOf(msg.sender);
@@ -779,7 +883,7 @@ contract LiquidAuctioneer is
         // Swap RARE -> ETH via Universal Router (uses Permit2)
         _approvePermit2ForRouter(rareRefund);
         LiquidFeeLib.executeSwap(
-            UNIVERSAL_ROUTER,
+            universalRouter,
             0,
             commands,
             inputs,
@@ -813,6 +917,7 @@ contract LiquidAuctioneer is
         address liquidToken,
         uint256 bidId
     ) external nonReentrant whenNotPaused {
+        _requireRegistered(liquidToken);
         address auction = ILiquidGraduated(liquidToken).auctionAddress();
         (bool ok, ) = auction.call(
             abi.encodeWithSignature("claimTokens(uint256)", bidId)
@@ -825,6 +930,8 @@ contract LiquidAuctioneer is
     /// @dev Call ILBPStrategy(strategy).migrate() on the token's strategy to create the pool.
 
     /// @notice Sets up Permit2 approvals for Universal Router to pull RARE
+    /// @dev Two-step approval: ERC20 approve Permit2, then Permit2 approves Universal Router.
+    ///      Clamps amount to uint160.max if overflow (Permit2 limitation). Used for exitBidToETH swaps.
     /// @param amount RARE amount to approve
     function _approvePermit2ForRouter(uint256 amount) internal {
         IERC20(BASE_TOKEN).forceApprove(PERMIT2, amount);
@@ -834,16 +941,18 @@ contract LiquidAuctioneer is
             : uint160(amount);
         IPermit2(PERMIT2).approve(
             BASE_TOKEN,
-            UNIVERSAL_ROUTER,
+            universalRouter,
             permitAmount,
             uint48(block.timestamp + 1 hours)
         );
     }
 
     /// @notice Clears Permit2 approvals after swap
+    /// @dev Cleans up both ERC20 and Permit2 approvals to prevent lingering permissions.
+    ///      Called after exitBidToETH swap completes.
     function _clearPermit2ForRouter() internal {
         IERC20(BASE_TOKEN).forceApprove(PERMIT2, 0);
-        IPermit2(PERMIT2).approve(BASE_TOKEN, UNIVERSAL_ROUTER, 0, 0);
+        IPermit2(PERMIT2).approve(BASE_TOKEN, universalRouter, 0, 0);
     }
 
     /// @notice Sets beneficiary for a Liquid token (receives creator fee share)
@@ -853,7 +962,14 @@ contract LiquidAuctioneer is
         address token,
         address beneficiary
     ) external onlyOwner {
-        tokenBeneficiaries[token] = beneficiary;
+        _liquidRegistry.setBeneficiary(token, beneficiary);
+    }
+
+    /// @notice Read token beneficiary from registry.
+    function tokenBeneficiaries(
+        address token
+    ) external view returns (address) {
+        return _liquidRegistry.beneficiaryOf(token);
     }
 
     /// @notice Pauses all trading (bid, exitBidToETH, etc.)

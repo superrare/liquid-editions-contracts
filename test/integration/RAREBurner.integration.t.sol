@@ -11,6 +11,7 @@ import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 // Mock PoolManager
 contract MockPoolManager {
@@ -71,10 +72,7 @@ contract RAREBurnerIntegrationTest is Test {
     function setUp() public {
         // Fork Base mainnet for realistic testing
         // Use FORK_URL from Makefile (via environment variable)
-        string memory forkUrl = vm.envOr(
-            "FORK_URL",
-            string("https://mainnet.base.org")
-        );
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
 
         // Get network configuration (Base mainnet chain ID = 8453)
@@ -132,7 +130,7 @@ contract RAREBurnerIntegrationTest is Test {
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-                factory.setLiquidRouter(address(1));
+                factory.setLiquidRegistry(address(1));
 
         // Set implementation
         factory.setLiquidMultiCurveImplementation(address(liquidImpl));

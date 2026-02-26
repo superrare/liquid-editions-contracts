@@ -22,7 +22,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         uint256 tokensReceived = liquidRouter.buy{value: ethAmount}(
             address(token),
             user1,
-            referrer,
             1, // minTokensOut (must be > 0)
             commands,
             inputs,
@@ -42,22 +41,18 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             address(token),
             user1,
             user1,
-            referrer,
             ethAmount,
             0, // ethFee (checked loosely)
             0, // ethSwapped
             0, // tokensReceived
             0, // protocolFee
-            0, // referrerFee
-            0, // beneficiaryFee
-            0 // burnFee
+            0  // beneficiaryFee
         );
 
         vm.prank(user1);
         liquidRouter.buy{value: ethAmount}(
             address(token),
             user1,
-            referrer,
             1, // minTokensOut (must be > 0)
             commands,
             inputs,
@@ -67,36 +62,24 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
 
     function testBuyDistributesFees() public {
         uint256 ethAmount = 1 ether;
-        uint256 totalFee = (ethAmount * TOTAL_FEE_BPS) / 10000; // 4%
         (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         uint256 protocolBalBefore = protocolFeeRecipient.balance;
-        uint256 referrerBalBefore = referrer.balance;
         uint256 beneficiaryBalBefore = beneficiary.balance;
-        uint256 burnerBalBefore = burner.deposited();
 
         vm.prank(user1);
         liquidRouter.buy{value: ethAmount}(
             address(token),
             user1,
-            referrer,
             1, // minTokensOut (must be > 0)
             commands,
             inputs,
             block.timestamp + 1 hours
         );
 
-        // Beneficiary gets 25% (BENEFICIARY_FEE_BPS = 2500)
+        // Beneficiary gets its share
         assertTrue(beneficiary.balance > beneficiaryBalBefore);
-
-        // Remaining 75% fee split among burn/protocol/referrer
-        uint256 beneficiaryFee = (totalFee * 2500) / 10000;
-        uint256 remainingFee = totalFee - beneficiaryFee;
-        uint256 burnFee = (remainingFee * RARE_BURN_FEE_BPS) / 10000;
-        uint256 referrerFee = (remainingFee * REFERRER_FEE_BPS) / 10000;
-
-        assertEq(burner.deposited() - burnerBalBefore, burnFee);
-        assertEq(referrer.balance - referrerBalBefore, referrerFee);
+        // Protocol gets its share
         assertTrue(protocolFeeRecipient.balance > protocolBalBefore);
     }
 
@@ -106,7 +89,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         liquidRouter.buy{value: 1 ether}(
             address(0),
             user1,
-            referrer,
             1, // minTokensOut (must be > 0)
             "",
             new bytes[](0),
@@ -120,7 +102,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         liquidRouter.buy{value: 1 ether}(
             address(token),
             address(0),
-            referrer,
             1, // minTokensOut (must be > 0)
             "",
             new bytes[](0),
@@ -138,7 +119,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         liquidRouter.buy{value: ethAmount}(
             address(token),
             user1,
-            referrer,
             unreasonablyHighMinOut,
             commands,
             inputs,
@@ -155,7 +135,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         liquidRouter.buy{value: 1 ether}(
             address(token),
             user1,
-            referrer,
             1, // minTokensOut (must be > 0)
             commands,
             inputs,
@@ -170,7 +149,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         liquidRouter.buy{value: 1 ether}(
             address(token),
             user1,
-            referrer,
             BoundaryConstants.ZERO, // minTokensOut must be > 0
             commands,
             inputs,
@@ -189,10 +167,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         LiquidRouter fotLiquidRouter = deployLiquidRouter(
             address(fotRouter),
             protocolFeeRecipient,
-            address(burner),
-            RARE_BURN_FEE_BPS,
-            PROTOCOL_FEE_BPS,
-            REFERRER_FEE_BPS,
             admin
         );
 
@@ -222,7 +196,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         fotLiquidRouter.buy{value: ethAmount}(
             address(fot),
             user1,
-            referrer,
             1, // minTokensOut (must be > 0)
             commands,
             inputs,
@@ -239,7 +212,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         liquidRouter.buy{value: 1 ether}(
             address(token),
             user1,
-            referrer,
             1, // minTokensOut (must be > 0)
             commands,
             inputs,
@@ -253,7 +225,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         liquidRouter.buy{value: 1 ether}(
             address(token),
             user1,
-            referrer,
             1, // minTokensOut (must be > 0 to reach routeData check)
             "",
             new bytes[](0),
@@ -271,7 +242,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         uint256 tokensReceived = liquidRouter.buy{value: ethAmount}(
             address(token),
             user2, // recipient is user2
-            referrer,
             1,
             commands,
             inputs,
@@ -292,10 +262,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         LiquidRouter refundRouterInstance = deployLiquidRouter(
             address(refundRouter),
             protocolFeeRecipient,
-            address(burner),
-            RARE_BURN_FEE_BPS,
-            PROTOCOL_FEE_BPS,
-            REFERRER_FEE_BPS,
             admin
         );
 
@@ -311,7 +277,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         refundRouterInstance.buy{value: 1 ether}(
             address(token),
             user1,
-            referrer,
             1, // minTokensOut
             commands,
             inputs,
@@ -329,10 +294,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         LiquidRouter refundRouterInstance = deployLiquidRouter(
             address(refundRouter),
             protocolFeeRecipient,
-            address(burner),
-            RARE_BURN_FEE_BPS,
-            PROTOCOL_FEE_BPS,
-            REFERRER_FEE_BPS,
             admin
         );
 
@@ -348,7 +309,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         refundRouterInstance.buy{value: 1 ether}(
             address(token),
             user1,
-            referrer,
             1, // minTokensOut
             commands,
             inputs,
@@ -374,7 +334,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         uint256 tokensReceived = liquidRouter.buy{value: ethAmount}(
             address(token),
             user1,
-            referrer,
             1, // minTokensOut
             commands,
             inputs,
@@ -395,10 +354,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         LiquidRouter refundRouterInstance = deployLiquidRouter(
             address(refundRouter),
             protocolFeeRecipient,
-            address(burner),
-            RARE_BURN_FEE_BPS,
-            PROTOCOL_FEE_BPS,
-            REFERRER_FEE_BPS,
             admin
         );
 
@@ -421,7 +376,6 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         refundRouterInstance.buy{value: 1 ether}(
             address(token),
             user1,
-            referrer,
             1, // minTokensOut
             commands,
             inputs,

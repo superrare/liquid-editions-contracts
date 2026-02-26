@@ -39,6 +39,15 @@ interface IRAREBurner {
     /// @notice Thrown when trying to sweep more than actual balance
     error InsufficientBalance();
 
+    /// @notice Thrown when callback is invoked by unauthorized caller
+    error OnlyPoolManager();
+
+    /// @notice Thrown when callback is called in unexpected unlock context
+    error UnexpectedUnlock();
+
+    /// @notice Thrown when a callback reports an unexpected swap direction
+    error UnexpectedSwapDirection();
+
     // ============================================
     // EVENTS (Consolidated)
     // ============================================

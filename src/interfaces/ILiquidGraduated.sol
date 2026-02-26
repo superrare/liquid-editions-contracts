@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {ILiquidBase} from "liquid-editions/interfaces/ILiquidBase.sol";
+import {PoolId} from "v4-core/types/PoolId.sol";
 
 /// @title ILiquidGraduated
 /// @notice Interface for Liquid tokens launched via CCA auction; extends ILiquid with auction-specific views
@@ -14,6 +15,12 @@ interface ILiquidGraduated is ILiquid, ILiquidBase {
 
     /// @notice Thrown when the market has already graduated
     error AlreadyGraduated();
+
+    /// @notice Thrown when a new pool ID is invalid
+    error InvalidPoolId();
+
+    /// @notice Emitted when a token contract updates its pool ID
+    event PoolIdUpdated(PoolId indexed oldPoolId, PoolId indexed newPoolId);
 
     /// @notice The CCA auction contract address (strategy.initializer())
     function auctionAddress() external view returns (address);

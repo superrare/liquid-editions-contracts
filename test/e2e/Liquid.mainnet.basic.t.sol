@@ -16,8 +16,11 @@ import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 import {MockBurner} from "liquid-editions-test/helpers/MockBurner.sol";
 import {MockRAREDeployer} from "liquid-editions-test/helpers/MockRAREDeployer.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
+import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
-contract LiquidInstantMainnetBasicTest is Test {
+contract LiquidInstantMainnetBasicTest is Test, InitGuardTestHelper {
     using StateLibrary for IPoolManager;
     // Network configuration
     NetworkConfig.Config internal config;
@@ -39,10 +42,7 @@ contract LiquidInstantMainnetBasicTest is Test {
 
     function setUp() public virtual {
         // Fork Base mainnet to access real Uniswap V4 contracts
-        string memory forkUrl = vm.envOr(
-            "FORK_URL",
-            string("https://mainnet.base.org")
-        );
+        string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
 
         // Get network configuration (Base mainnet chain ID = 8453)
@@ -72,6 +72,7 @@ contract LiquidInstantMainnetBasicTest is Test {
             false // disabled initially
         );
         liquidImplementation = new LiquidMultiCurve();
+        address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factory = new LiquidFactory(
             admin,
             config.weth,
@@ -79,14 +80,15 @@ contract LiquidInstantMainnetBasicTest is Test {
             -180, // lpTickLower - max expensive (after price rises) - multiple of 60
             120000, // lpTickUpper - starting point (cheap tokens)
             config.uniswapV4Quoter, // V4 Quoter
-            address(0), // poolHooks (no hooks)
+            initGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
+        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
 
         
-        factory.setLiquidRouter(address(1));
+        factory.setLiquidRegistry(address(1));
 
         factory.setLiquidMultiCurveImplementation(address(liquidImplementation));
 
@@ -314,6 +316,7 @@ contract LiquidInstantMainnetBasicTest is Test {
 
         // Deploy the factory system
         vm.startPrank(admin);
+        address testInitGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         LiquidFactory testFactory = new LiquidFactory(
             admin,
             config.weth,
@@ -321,12 +324,13 @@ contract LiquidInstantMainnetBasicTest is Test {
             -180, // lpTickLower - max expensive (after price rises) - multiple of 60
             120000, // lpTickUpper - starting point (cheap tokens)
             config.uniswapV4Quoter, // Use wrapper instead of raw quoter
-            address(0), // poolHooks (no hooks)
+            testInitGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
             300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-                testFactory.setLiquidRouter(address(1));
+        LiquidInitGuard(testInitGuardAddr).setFactory(address(testFactory));
+                testFactory.setLiquidRegistry(address(1));
 
         // Create implementation and set it in factory
         LiquidMultiCurve factoryLiquidInstantImplementation = new LiquidMultiCurve();
@@ -507,6 +511,7 @@ contract LiquidInstantMainnetBasicTest is Test {
 
         // Create factory with this RARE token
         vm.startPrank(admin);
+        address testInitGuardAddr2 = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         LiquidFactory testFactory = new LiquidFactory(
             admin,
             config.weth,
@@ -514,12 +519,13 @@ contract LiquidInstantMainnetBasicTest is Test {
             -180, // lpTickLower
             120000, // lpTickUpper
             config.uniswapV4Quoter,
-            address(0),
+            testInitGuardAddr2,
             60,
             300,
             1e15
         );
-                testFactory.setLiquidRouter(address(1));
+        LiquidInitGuard(testInitGuardAddr2).setFactory(address(testFactory));
+                testFactory.setLiquidRegistry(address(1));
         testFactory.setLiquidMultiCurveImplementation(address(liquidImplementation));
         testFactory.setBaseToken(address(testRARE));
         vm.stopPrank();
@@ -591,6 +597,7 @@ contract LiquidInstantMainnetBasicTest is Test {
 
             // Recreate factory with high address RARE
             vm.startPrank(admin);
+            address testInitGuardAddr3 = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
             testFactory = new LiquidFactory(
                     admin,
                     config.weth,
@@ -598,12 +605,13 @@ contract LiquidInstantMainnetBasicTest is Test {
                     -180,
                     120000,
                     config.uniswapV4Quoter,
-                    address(0),
+                    testInitGuardAddr3,
                     60,
                     300,
                     1e15
                 );
-                            testFactory.setLiquidRouter(address(1));
+            LiquidInitGuard(testInitGuardAddr3).setFactory(address(testFactory));
+                            testFactory.setLiquidRegistry(address(1));
                 testFactory.setLiquidMultiCurveImplementation(address(liquidImplementation));
                 testFactory.setBaseToken(address(testRARE));
                 vm.stopPrank();

@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 /// @title ILiquidRouter
 /// @notice Interface for the LiquidRouter contract that enables Liquid-style trading for existing ERC20s
-/// @dev Fee configuration is stored locally in the router contract
+/// @dev Fee configuration is provided by an external FeeDistributor module
 interface ILiquidRouter {
     // ============================================
     // ERRORS
@@ -21,10 +21,13 @@ interface ILiquidRouter {
     /// @notice Thrown when the Universal Router swap fails
     error SwapFailed();
 
+    /// @notice Thrown when a module address is not a contract
+    error InvalidModule();
+
     /// @notice Thrown when an invalid amount is provided
     error InvalidAmount();
 
-    /// @notice Thrown when a token is not in the allowlist
+    /// @notice Thrown when a token is not registered in LiquidRegistry
     error TokenNotAllowed(address token);
 
     /// @notice Thrown when the transaction deadline has expired
@@ -49,9 +52,6 @@ interface ILiquidRouter {
     /// @param received Amount actually received after the token's fee/deflation
     error FeeOnTransferDetected(uint256 expected, uint256 received);
 
-    /// @notice Thrown when TIER 3 fee distribution is invalid (must sum to exactly 10000 BPS / 100%)
-    error InvalidFeeDistribution();
-
     /// @notice Thrown when both leg1 and leg2 are empty in swap()
     error BothLegsEmpty();
 
@@ -66,77 +66,47 @@ interface ILiquidRouter {
     /// @param token The ERC20 token being bought
     /// @param buyer The address initiating the buy
     /// @param recipient The address receiving the tokens
-    /// @param orderReferrer The address of the order referrer
     /// @param totalEth Total ETH sent by the buyer
     /// @param ethFee Fee deducted from ETH
     /// @param ethSwapped ETH sent to swap (after fee)
     /// @param tokensReceived Tokens received by recipient
     /// @param protocolFee Protocol fee amount
-    /// @param referrerFee Referrer fee amount
     /// @param beneficiaryFee Beneficiary fee amount
-    /// @param burnFee RARE burn fee amount
     event RouterBuy(
         address indexed token,
         address indexed buyer,
         address indexed recipient,
-        address orderReferrer,
         uint256 totalEth,
         uint256 ethFee,
         uint256 ethSwapped,
         uint256 tokensReceived,
         uint256 protocolFee,
-        uint256 referrerFee,
-        uint256 beneficiaryFee,
-        uint256 burnFee
+        uint256 beneficiaryFee
     );
 
     /// @notice Emitted when tokens are sold via the router
     /// @param token The ERC20 token being sold
     /// @param seller The address initiating the sell
     /// @param recipient The address receiving the ETH
-    /// @param orderReferrer The address of the order referrer
     /// @param tokensSold Tokens sold by the seller
     /// @param grossEthReceived ETH received from swap (before fee)
     /// @param ethFee Fee deducted from ETH
     /// @param netEthReceived ETH sent to recipient (after fee)
     /// @param protocolFee Protocol fee amount
-    /// @param referrerFee Referrer fee amount
     /// @param beneficiaryFee Beneficiary fee amount
-    /// @param burnFee RARE burn fee amount
     event RouterSell(
         address indexed token,
         address indexed seller,
         address indexed recipient,
-        address orderReferrer,
         uint256 tokensSold,
         uint256 grossEthReceived,
         uint256 ethFee,
         uint256 netEthReceived,
         uint256 protocolFee,
-        uint256 referrerFee,
-        uint256 beneficiaryFee,
-        uint256 burnFee
+        uint256 beneficiaryFee
     );
 
-    /// @notice Emitted when fees are distributed
-    /// @param beneficiary The token beneficiary
-    /// @param orderReferrer The order referrer
-    /// @param protocolFeeRecipient The protocol fee recipient
-    /// @param rareBurnFee RARE burn fee deposited
-    /// @param beneficiaryFee Beneficiary fee transferred
-    /// @param referrerFee Referrer fee transferred
-    /// @param protocolFee Protocol fee transferred
-    event RouterFees(
-        address indexed beneficiary,
-        address indexed orderReferrer,
-        address protocolFeeRecipient,
-        uint256 rareBurnFee,
-        uint256 beneficiaryFee,
-        uint256 referrerFee,
-        uint256 protocolFee
-    );
-
-    /// @notice Emitted when a fee transfer fails
+    /// @notice Emitted when a fee transfer to a recipient fails
     /// @param recipient The intended recipient
     /// @param amount The amount that failed to transfer
     /// @param reason The reason for failure
@@ -146,24 +116,12 @@ interface ILiquidRouter {
         string reason
     );
 
-    /// @notice Emitted when ETH is deposited to the RARE burner
-    /// @param router The router contract address
-    /// @param burner The burner contract address
-    /// @param amount The amount deposited
-    /// @param success Whether the deposit succeeded
-    event BurnerDeposit(
-        address indexed router,
-        address indexed burner,
-        uint256 amount,
-        bool success
-    );
-
     /// @notice Emitted when a token is registered
     /// @param token The token address
     /// @param beneficiary The beneficiary address
     event TokenRegistered(address indexed token, address indexed beneficiary);
 
-    /// @notice Emitted when a token is removed from the allowlist
+    /// @notice Emitted when a token is removed from the registry
     /// @param token The token address
     event TokenRemoved(address indexed token);
 
@@ -177,14 +135,6 @@ interface ILiquidRouter {
         address newBeneficiary
     );
 
-    /// @notice Emitted when the trusted factory address used for auto-registration is updated
-    /// @param oldFactory Previous trusted factory
-    /// @param newFactory New trusted factory
-    event TrustedFactoryUpdated(
-        address indexed oldFactory,
-        address indexed newFactory
-    );
-
     /// @notice Emitted when the Universal Router address is updated
     /// @param oldUniversalRouter Previous Universal Router address
     /// @param newUniversalRouter New Universal Router address
@@ -193,25 +143,17 @@ interface ILiquidRouter {
         address indexed newUniversalRouter
     );
 
-    /// @notice Emitted when the protocol fee recipient is updated
-    /// @param oldProtocolFeeRecipient Previous protocol fee recipient
-    /// @param newProtocolFeeRecipient New protocol fee recipient
-    event ProtocolFeeRecipientUpdated(
-        address indexed oldProtocolFeeRecipient,
-        address indexed newProtocolFeeRecipient
+    /// @notice Emitted when the fee distributor pointer is updated
+    event FeeDistributorUpdated(
+        address indexed oldFeeDistributor,
+        address indexed newFeeDistributor
     );
 
-    /// @notice Emitted when the RARE burner address is updated
-    /// @param oldRareBurner Previous RARE burner address
-    /// @param newRareBurner New RARE burner address
-    event RareBurnerUpdated(
-        address indexed oldRareBurner,
-        address indexed newRareBurner
+    /// @notice Emitted when the liquid registry pointer is updated
+    event LiquidRegistryUpdated(
+        address indexed oldLiquidRegistry,
+        address indexed newLiquidRegistry
     );
-
-    /// @notice Emitted when the allowlist is enabled/disabled
-    /// @param enabled Whether the allowlist is enabled
-    event AllowlistEnabledUpdated(bool enabled);
 
     /// @notice Emitted when stuck ERC20 tokens are rescued
     /// @param token The token address
@@ -233,31 +175,25 @@ interface ILiquidRouter {
     /// @param tokenOut The output token (address(0) for ETH)
     /// @param sender The address initiating the swap
     /// @param recipient The address receiving the output
-    /// @param orderReferrer The address of the order referrer
     /// @param amountIn The input amount (ETH or tokens)
     /// @param ethAtMidpoint The gross ETH at the midpoint (before fee)
     /// @param fee The total ETH fee collected
     /// @param amountOut The output amount (ETH or tokens)
     /// @param protocolFee Protocol fee amount
-    /// @param referrerFee Referrer fee amount
     /// @param beneficiaryFeeA Beneficiary fee amount for tokenIn
     /// @param beneficiaryFeeB Beneficiary fee amount for tokenOut
-    /// @param burnFee RARE burn fee amount
     event RouterSwap(
         address indexed tokenIn,
         address indexed tokenOut,
         address indexed sender,
         address recipient,
-        address orderReferrer,
         uint256 amountIn,
         uint256 ethAtMidpoint,
         uint256 fee,
         uint256 amountOut,
         uint256 protocolFee,
-        uint256 referrerFee,
         uint256 beneficiaryFeeA,
-        uint256 beneficiaryFeeB,
-        uint256 burnFee
+        uint256 beneficiaryFeeB
     );
 
     // ============================================
@@ -268,7 +204,6 @@ interface ILiquidRouter {
     /// @dev Fee is deducted from ETH input before swap
     /// @param token The ERC20 token to buy
     /// @param recipient The address to receive the tokens
-    /// @param orderReferrer The address of the order referrer (receives referrer fee)
     /// @param minTokensOut Minimum tokens to receive (slippage protection)
     /// @param commands Encoded Universal Router command bytes
     /// @param inputs Encoded Universal Router command inputs (one per command)
@@ -277,7 +212,6 @@ interface ILiquidRouter {
     function buy(
         address token,
         address recipient,
-        address orderReferrer,
         uint256 minTokensOut,
         bytes calldata commands,
         bytes[] calldata inputs,
@@ -289,7 +223,6 @@ interface ILiquidRouter {
     /// @param token The ERC20 token to sell
     /// @param tokenAmount The amount of tokens to sell
     /// @param recipient The address to receive the ETH
-    /// @param orderReferrer The address of the order referrer (receives referrer fee)
     /// @param minEthOut Minimum GROSS ETH expected from swap (before fees) - contract adjusts internally
     /// @param commands Encoded Universal Router command bytes
     /// @param inputs Encoded Universal Router command inputs (one per command)
@@ -299,7 +232,6 @@ interface ILiquidRouter {
         address token,
         uint256 tokenAmount,
         address recipient,
-        address orderReferrer,
         uint256 minEthOut,
         bytes calldata commands,
         bytes[] calldata inputs,
@@ -314,7 +246,6 @@ interface ILiquidRouter {
     /// @param amountIn Input amount (ignored if ETH — uses msg.value)
     /// @param tokenOut Output token (address(0) for ETH)
     /// @param recipient Address to receive output
-    /// @param orderReferrer Address of the order referrer (receives referrer fee)
     /// @param minAmountOut Minimum final output after fees
     /// @param leg1Commands Route commands for tokenIn -> ETH (empty if input is ETH)
     /// @param leg1Inputs Route inputs for tokenIn -> ETH
@@ -327,7 +258,6 @@ interface ILiquidRouter {
         uint256 amountIn,
         address tokenOut,
         address recipient,
-        address orderReferrer,
         uint256 minAmountOut,
         bytes calldata leg1Commands,
         bytes[] calldata leg1Inputs,
@@ -341,12 +271,10 @@ interface ILiquidRouter {
     // ============================================
 
     /// @notice Quote the fee breakdown for a given total fee
-    /// @dev Fee percentages are read from router storage
+    /// @dev Fee percentages are read from the active distributor
     /// @param totalFee The total fee amount
     /// @return beneficiaryFee Fee to beneficiary
     /// @return protocolFee Fee to protocol
-    /// @return referrerFee Fee to referrer
-    /// @return burnFee Fee for RARE burn
     function quoteFeeBreakdown(
         uint256 totalFee
     )
@@ -354,43 +282,32 @@ interface ILiquidRouter {
         view
         returns (
             uint256 beneficiaryFee,
-            uint256 protocolFee,
-            uint256 referrerFee,
-            uint256 burnFee
+            uint256 protocolFee
         );
 
     // ============================================
     // ADMIN FUNCTIONS
     // ============================================
 
-    /// @notice Register a token with its beneficiary
+    /// @notice Register a token with its beneficiary (admin only)
     /// @param token The token address
-    /// @param beneficiary The beneficiary address (receives "creator" fees).
-    ///        When called by trusted factory, beneficiary must match tokenCreator.
+    /// @param beneficiary The beneficiary address (receives "creator" fees)
     function registerToken(address token, address beneficiary) external;
-
-    /// @notice Configure the trusted factory address for auto-registrations
-    /// @param trustedFactory The factory address allowed to register with `beneficiary == tokenCreator`
-    function setTrustedFactory(address trustedFactory) external;
 
     /// @notice Update Universal Router address
     /// @param _universalRouter New Universal Router address
     function setUniversalRouter(address _universalRouter) external;
 
-    /// @notice Update protocol fee recipient address
-    /// @param _protocolFeeRecipient New protocol fee recipient address
-    function setProtocolFeeRecipient(address _protocolFeeRecipient) external;
+    /// @notice Update the fee distributor module
+    /// @param _feeDistributor New fee distributor contract
+    function setFeeDistributor(address _feeDistributor) external;
 
-    /// @notice Update RARE burner address
-    /// @param _rareBurner New RARE burner address
-    function setRareBurner(address _rareBurner) external;
+    /// @notice Update the liquid registry module
+    /// @param _liquidRegistry New liquid registry contract
+    function setLiquidRegistry(address _liquidRegistry) external;
 
-    /// @notice Get the trusted factory used for auto-registrations
-    /// @return trustedFactory The trusted factory address
-    function trustedFactory() external view returns (address trustedFactory);
-
-    /// @notice Remove a token from the allowlist
-    /// @dev Also clears the beneficiary mapping
+    /// @notice Remove a token from the registry
+    /// @dev Clears the beneficiary mapping, blocking all trading
     /// @param token The token address
     function removeToken(address token) external;
 
@@ -398,10 +315,6 @@ interface ILiquidRouter {
     /// @param token The token address
     /// @param newBeneficiary The new beneficiary address
     function updateBeneficiary(address token, address newBeneficiary) external;
-
-    /// @notice Enable or disable the allowlist
-    /// @param enabled Whether to enable the allowlist
-    function setAllowlistEnabled(bool enabled) external;
 
     /// @notice Pause the contract (emergency stop)
     /// @dev Only callable by owner. Prevents buy(), sell(), and swap() operations.
@@ -433,46 +346,17 @@ interface ILiquidRouter {
     /// @return The beneficiary address
     function tokenBeneficiaries(address token) external view returns (address);
 
-    /// @notice Check if a token is allowed
-    /// @param token The token address
-    /// @return Whether the token is allowed
-    function allowedTokens(address token) external view returns (bool);
-
-    /// @notice Check if allowlist is enabled
-    /// @return Whether the allowlist is enabled
-    function allowlistEnabled() external view returns (bool);
-
     /// @notice Get the Universal Router address
     /// @return The Universal Router address
     function universalRouter() external view returns (address);
 
-    /// @notice Get the RARE burn fee BPS
-    /// @return The RARE burn fee in basis points
-    function rareBurnFeeBPS() external view returns (uint256);
+    /// @notice Get the active fee distributor
+    /// @return Distributor contract used for fee calculations and payout
+    function feeDistributor() external view returns (address);
 
-    /// @notice Get the protocol fee BPS
-    /// @return The protocol fee in basis points
-    function protocolFeeBPS() external view returns (uint256);
-
-    /// @notice Get the referrer fee BPS
-    /// @return The referrer fee in basis points
-    function referrerFeeBPS() external view returns (uint256);
-
-    /// @notice Get the protocol fee recipient address
-    /// @return The protocol fee recipient address
-    function protocolFeeRecipient() external view returns (address);
-
-    /// @notice Get the RARE burner address
-    /// @return The RARE burner address
-    function rareBurner() external view returns (address);
-
-    /// @notice Get the total fee BPS
-    /// @return The total fee in basis points
-    function TOTAL_FEE_BPS() external view returns (uint256);
-
-    /// @notice Get the beneficiary fee BPS
-    /// @return The beneficiary fee in basis points
-    function BENEFICIARY_FEE_BPS() external view returns (uint256);
+    /// @notice Get the active liquid registry
+    /// @return Registry contract used for token registration and beneficiaries
+    function liquidRegistry() external view returns (address);
 
     // Note: paused() is inherited from OpenZeppelin's Pausable contract
 }

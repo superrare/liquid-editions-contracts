@@ -9,6 +9,7 @@ import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol"
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
 import {IMsgSender} from "v4-periphery/interfaces/IMsgSender.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ILiquidSwapGuard} from "./interfaces/ILiquidSwapGuard.sol";
 
 /// @title LiquidSwapGuard
 /// @notice Uniswap V4 hook that restricts swaps and pool initialization to whitelisted callers.
@@ -20,34 +21,10 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 ///         Uses the IMsgSender trusted-router pattern.
 ///      Deploy via CREATE2 with a mined salt so the hook address has both BEFORE_INITIALIZE_FLAG (bit 13)
 ///      and BEFORE_SWAP_FLAG (bit 7) set in its lowest 14 bits (pattern: 0x2080).
-contract LiquidSwapGuard is IHooks, Ownable {
+contract LiquidSwapGuard is IHooks, Ownable, ILiquidSwapGuard {
     using Hooks for IHooks;
 
-    /// @notice Thrown when the swap router is not in the verified routers list
-    error UnverifiedRouter(address router);
-
-    /// @notice Thrown when the caller returned by msgSender() is not in the allowed callers list
-    error UnauthorizedCaller(address caller);
-
-    /// @notice Thrown when the router does not implement IMsgSender.msgSender()
-    error RouterDoesNotImplementMsgSender(address router);
-
-    /// @notice Thrown when the caller is not the PoolManager
-    error NotPoolManager();
-
-    /// @notice Thrown when an unauthorized address attempts to initialize a pool
-    /// @dev This prevents pool pre-initialization DoS attacks
-    /// @param sender The address that attempted to initialize the pool
-    error UnauthorizedInitializer(address sender);
-
-    /// @notice Thrown when caller is not owner or factory
-    error NotOwnerOrFactory();
-
-    /// @notice Thrown when an invalid factory address is passed
-    error InvalidFactoryAddress();
-
-    // forge-lint: disable-next-line(screaming-snake-case-immutable) -- matches v4 BaseHook/ImmutableState convention
-    IPoolManager public immutable poolManager;
+    IPoolManager public immutable POOL_MANAGER;
     mapping(address => bool) public verifiedRouters;
     mapping(address => bool) public allowedCallers;
 
@@ -80,7 +57,7 @@ contract LiquidSwapGuard is IHooks, Ownable {
     /// @notice Ensures caller is the configured PoolManager
     /// @dev Reverts with NotPoolManager if msg.sender is not the pool manager
     function _onlyPoolManager() internal view {
-        if (msg.sender != address(poolManager)) revert NotPoolManager();
+        if (msg.sender != address(POOL_MANAGER)) revert NotPoolManager();
     }
 
     /// @notice Creates a LiquidSwapGuard hook for the given PoolManager
@@ -93,7 +70,7 @@ contract LiquidSwapGuard is IHooks, Ownable {
         bool _skipValidation
     ) Ownable(_owner) {
         // Store PoolManager reference for callback verification
-        poolManager = _poolManager;
+        POOL_MANAGER = _poolManager;
 
         // Validate hook address has correct permissions (required for V4 hook deployment)
         // Skip in tests where hook address may not match expected bit pattern
@@ -167,10 +144,14 @@ contract LiquidSwapGuard is IHooks, Ownable {
         return IHooks.beforeInitialize.selector;
     }
 
+    /// @notice V4 hook: afterInitialize (no-op, required by interface)
+    /// @dev Returns selector only - no restrictions on post-initialization
     function afterInitialize(address, PoolKey calldata, uint160, int24) external pure override returns (bytes4) {
         return IHooks.afterInitialize.selector;
     }
 
+    /// @notice V4 hook: beforeAddLiquidity (no-op, required by interface)
+    /// @dev Returns selector only - liquidity additions are unrestricted
     function beforeAddLiquidity(
         address,
         PoolKey calldata,
@@ -180,6 +161,8 @@ contract LiquidSwapGuard is IHooks, Ownable {
         return IHooks.beforeAddLiquidity.selector;
     }
 
+    /// @notice V4 hook: afterAddLiquidity (no-op, required by interface)
+    /// @dev Returns selector and zero delta - no modifications to liquidity add
     function afterAddLiquidity(
         address,
         PoolKey calldata,
@@ -191,6 +174,8 @@ contract LiquidSwapGuard is IHooks, Ownable {
         return (IHooks.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
+    /// @notice V4 hook: beforeRemoveLiquidity (no-op, required by interface)
+    /// @dev Returns selector only - liquidity removals are unrestricted
     function beforeRemoveLiquidity(
         address,
         PoolKey calldata,
@@ -200,6 +185,8 @@ contract LiquidSwapGuard is IHooks, Ownable {
         return IHooks.beforeRemoveLiquidity.selector;
     }
 
+    /// @notice V4 hook: afterRemoveLiquidity (no-op, required by interface)
+    /// @dev Returns selector and zero delta - no modifications to liquidity removal
     function afterRemoveLiquidity(
         address,
         PoolKey calldata,
@@ -211,6 +198,8 @@ contract LiquidSwapGuard is IHooks, Ownable {
         return (IHooks.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
+    /// @notice V4 hook: afterSwap (no-op, required by interface)
+    /// @dev Returns selector and zero delta - no modifications to swap
     function afterSwap(
         address,
         PoolKey calldata,
@@ -221,6 +210,8 @@ contract LiquidSwapGuard is IHooks, Ownable {
         return (IHooks.afterSwap.selector, 0);
     }
 
+    /// @notice V4 hook: beforeDonate (no-op, required by interface)
+    /// @dev Returns selector only - donations are unrestricted
     function beforeDonate(address, PoolKey calldata, uint256, uint256, bytes calldata)
         external
         pure
@@ -230,6 +221,8 @@ contract LiquidSwapGuard is IHooks, Ownable {
         return IHooks.beforeDonate.selector;
     }
 
+    /// @notice V4 hook: afterDonate (no-op, required by interface)
+    /// @dev Returns selector only - no post-donation actions
     function afterDonate(address, PoolKey calldata, uint256, uint256, bytes calldata)
         external
         pure

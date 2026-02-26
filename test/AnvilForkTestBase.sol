@@ -6,7 +6,9 @@ import {Curve} from "doppler/libraries/Multicurve.sol";
 import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
 import {LiquidAuctioneer} from "liquid-editions/LiquidAuctioneer.sol";
 import {LiquidRouterForkBase} from "liquid-editions-test/helpers/bases/LiquidRouterForkBase.sol";
+import {ILiquidRegistry} from "liquid-editions/interfaces/ILiquidRegistry.sol";
 import {DeployLiquidAuctioneer} from "script/deployers/DeployLiquidAuctioneer.s.sol";
+import {IFeeDistributor} from "liquid-editions/interfaces/IFeeDistributor.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
@@ -78,17 +80,19 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
             auctioneer = LiquidAuctioneer(
                 payable(
                     DeployLiquidAuctioneer.deploy(
-                        admin,
-                        protocolFeeRecipient,
-                        deployConfig.fees,
-                        config.uniswapUniversalRouter,
-                        address(burner),
-                        config.rareToken,
-                        config.weth,
-                        true
-                    )
+                admin,
+                protocolFeeRecipient,
+                deployConfig.fees,
+                config.uniswapUniversalRouter,
+                config.rareToken,
+                config.weth,
+                true
+            )
                 )
             );
+            ILiquidRegistry(
+                auctioneer.liquidRegistry()
+            ).setWriter(address(auctioneer), true);
         }
     }
 
@@ -195,15 +199,21 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
     }
 
     function _ethForSwap(uint256 ethAmount) internal view returns (uint256) {
-        return (ethAmount * (10000 - router.TOTAL_FEE_BPS())) / 10000;
+        return
+            (ethAmount * (10000 - _totalFeeBpsForRouter(router))) / 10000;
+    }
+
+    function _totalFeeBpsForRouter(
+        LiquidRouter targetRouter
+    ) internal view returns (uint256 totalFeeBps) {
+        return IFeeDistributor(targetRouter.feeDistributor()).totalFeeBPS();
     }
 
     function _doBuy(
         address asUser,
         address token,
         address recipient,
-        uint256 ethAmount,
-        address referrer
+        uint256 ethAmount
     ) internal returns (uint256 tokensReceived) {
         uint256 ethForSwap = _ethForSwap(ethAmount);
         (bytes memory commands, bytes[] memory inputs) = _encodeBuyRoute(
@@ -216,7 +226,6 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
             router.buy{value: ethAmount}(
                 token,
                 recipient,
-                referrer,
                 1,
                 commands,
                 inputs,
@@ -228,8 +237,7 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
         address asUser,
         address token,
         uint256 tokenAmount,
-        address recipient,
-        address referrer
+        address recipient
     ) internal returns (uint256 ethReceived) {
         vm.startPrank(asUser);
         IERC20(token).approve(address(router), tokenAmount);
@@ -242,7 +250,6 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
             token,
             tokenAmount,
             recipient,
-            referrer,
             1,
             commands,
             inputs,
@@ -310,7 +317,7 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
         return
             _encodeBuyRouteWithHooks(
                 liquidTokenAddress,
-                address(0),
+                factory.poolHooks(),
                 ethForSwap,
                 minTokensOut
             );
@@ -375,7 +382,7 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
         return
             _encodeSellRouteWithHooks(
                 liquidTokenAddress,
-                address(0),
+                factory.poolHooks(),
                 tokenAmount,
                 minEthOut
             );
@@ -433,7 +440,7 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
             intermediateCurrency: liquidTokenAddress,
             fee: 0,
             tickSpacing: 60,
-            hooks: address(0),
+            hooks: factory.poolHooks(),
             hookData: bytes("")
         });
 
