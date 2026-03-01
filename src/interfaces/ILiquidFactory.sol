@@ -97,6 +97,10 @@ interface ILiquidFactory {
         address indexed newLiquidRegistry
     );
 
+    /// @notice Emitted when the migration executor address is updated
+    /// @param migrationExecutor The new migration executor address
+    event MigrationExecutorUpdated(address indexed migrationExecutor);
+
     // ============================================
     // FUNCTIONS
     // ============================================
@@ -146,6 +150,10 @@ interface ILiquidFactory {
     /// @notice Registry used by factory for automatic token registration.
     /// @dev When unset or non-contract, registration is skipped to preserve launch flexibility.
     function liquidRegistry() external view returns (address);
+
+    /// @notice Returns the migration executor address.
+    /// @dev Only the migration executor can call migrateLiquidity() on Liquid tokens.
+    function migrationExecutor() external view returns (address);
 
     /// @notice Pause token creation in factory
     function pause() external;

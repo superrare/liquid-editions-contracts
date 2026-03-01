@@ -18,6 +18,8 @@ library NetworkConfig {
         address feeDistributor;
         /// @notice Shared LiquidRegistry module used by router and auctioneer
         address liquidRegistry;
+        /// @notice LiquidMigrationExecutor for atomic liquidity migrations
+        address migrationExecutor;
     }
 
     struct Config {
@@ -68,7 +70,8 @@ library NetworkConfig {
                         initGuard: address(0), // not yet deployed
                         liquidGuard: address(0), // not yet deployed
                         feeDistributor: address(0), // not yet deployed
-                        liquidRegistry: address(0) // not yet deployed
+                        liquidRegistry: address(0), // not yet deployed
+                        migrationExecutor: address(0) // not yet deployed
                     })
                 });
         } else if (chainId == 8453) {
@@ -95,7 +98,8 @@ library NetworkConfig {
                         initGuard: address(0),
                         liquidGuard: address(0),
                         feeDistributor: address(0),
-                        liquidRegistry: address(0)
+                        liquidRegistry: address(0),
+                        migrationExecutor: address(0)
                     })
                 });
         } else if (chainId == 84532) {
@@ -122,7 +126,8 @@ library NetworkConfig {
                         initGuard: address(0),
                         liquidGuard: address(0),
                         feeDistributor: address(0),
-                        liquidRegistry: address(0)
+                        liquidRegistry: address(0),
+                        migrationExecutor: address(0)
                     })
                 });
         } else if (chainId == 11155111) {
@@ -149,7 +154,8 @@ library NetworkConfig {
                         initGuard: address(0),
                         liquidGuard: 0x36F5Ab31b001c8F2AC5eE76Ccf5AfE887503a0Cc,
                         feeDistributor: 0x93e73F99f37b8a195D5E318cc7Bcb1B3a08bDe96,
-                        liquidRegistry: 0xD395973ebb3AEB36d18d376312046d2A8d8D8926
+                        liquidRegistry: 0xD395973ebb3AEB36d18d376312046d2A8d8D8926,
+                        migrationExecutor: address(0) // not yet deployed
                     })
                 });
         }

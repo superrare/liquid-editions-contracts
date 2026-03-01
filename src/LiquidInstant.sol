@@ -25,6 +25,7 @@ import {FixedPoint96} from "v4-core/libraries/FixedPoint96.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
+import {Position} from "doppler/types/Position.sol";
 import {QuoterRevert} from "@uniswap/v4-periphery/libraries/QuoterRevert.sol";
 
 /*                                    
@@ -129,7 +130,7 @@ contract LiquidInstant is
         INITIALIZE_POOL,
         QUOTE_SWAP_BUY,
         QUOTE_SWAP_SELL,
-        REMOVE_LIQUIDITY
+        MIGRATE_LIQUIDITY
     }
 
     struct UnlockContext {
@@ -309,21 +310,33 @@ contract LiquidInstant is
     // LIQUIDITY MANAGEMENT
     // ============================================
 
-    /// @notice Removes all LP liquidity and sends underlying tokens to recipient
-    /// @dev Only callable by the protocolFeeRecipient configured in the token's factory. Enables migration to a new pool.
-    /// @param recipient Address to receive the withdrawn tokens (RARE + LIQUID)
-    function removeLiquidity(address recipient) external {
-        address pfr = ILiquidFactory(factory).protocolFeeRecipient();
-        if (msg.sender != pfr) revert OnlyProtocolFeeRecipient();
+    /// @notice Atomically migrates all LP liquidity to a new pool with a different hook configuration
+    /// @dev Only callable by the migration executor configured in the token's factory.
+    ///      Removes liquidity from the old pool, initializes the new pool, and adds liquidity
+    ///      to the new pool within a single PoolManager unlock callback. Tokens never leave the PoolManager.
+    /// @param newPoolKey The target pool configuration (different hooks, same currencies)
+    /// @param newSqrtPriceX96 The starting price for the new pool
+    /// @param newPositions The liquidity positions to create in the new pool (must be exactly 1 for Instant)
+    /// @param dustRecipient Address to receive any dust from rounding differences
+    function migrateLiquidity(
+        PoolKey calldata newPoolKey,
+        uint160 newSqrtPriceX96,
+        Position[] calldata newPositions,
+        address dustRecipient,
+        uint256 maxDust0,
+        uint256 maxDust1
+    ) external {
+        address me = ILiquidFactory(factory).migrationExecutor();
+        if (msg.sender != me) revert OnlyMigrationExecutor();
         if (lpLiquidity == 0) revert ZeroLiquidity();
-        if (recipient == address(0)) revert AddressZero();
+        if (dustRecipient == address(0)) revert AddressZero();
 
         _unlockExpected = true;
         IPoolManager(poolManager).unlock(
             abi.encode(
                 UnlockContext({
-                    action: UnlockAction.REMOVE_LIQUIDITY,
-                    data: abi.encode(recipient)
+                    action: UnlockAction.MIGRATE_LIQUIDITY,
+                    data: abi.encode(newPoolKey, newSqrtPriceX96, newPositions, dustRecipient, maxDust0, maxDust1)
                 })
             )
         );
@@ -798,8 +811,8 @@ contract LiquidInstant is
             return _unlockQuoteSwapBuy(ctx.data);
         } else if (ctx.action == UnlockAction.QUOTE_SWAP_SELL) {
             return _unlockQuoteSwapSell(ctx.data);
-        } else if (ctx.action == UnlockAction.REMOVE_LIQUIDITY) {
-            return _unlockRemoveLiquidity(ctx.data);
+        } else if (ctx.action == UnlockAction.MIGRATE_LIQUIDITY) {
+            return _unlockMigrateLiquidity(ctx.data);
         }
 
         revert UnexpectedUnlock();
@@ -886,52 +899,114 @@ contract LiquidInstant is
         return "";
     }
 
-    /// @notice Remove all LP liquidity and send tokens to recipient
-    /// @dev Called during unlock callback. Removes all liquidity from the stored position,
-    ///      claims accumulated tokens via take(), and sends them to recipient. Clears stored liquidity.
-    /// @param data Encoded recipient address
+    /// @notice Atomically migrate LP liquidity to a new pool
+    /// @dev Called during unlock callback when migrateLiquidity() is invoked.
+    ///      Removes liquidity from old position, initializes new pool, adds new position,
+    ///      and settles net deltas. Tokens never leave the PoolManager.
+    /// @param data Encoded (PoolKey, uint160, Position[], address, uint256, uint256)
     /// @return Empty bytes on success
-    function _unlockRemoveLiquidity(
+    function _unlockMigrateLiquidity(
         bytes memory data
     ) internal returns (bytes memory) {
-        address recipient = abi.decode(data, (address));
+        (
+            PoolKey memory newKey,
+            uint160 newSqrtPrice,
+            Position[] memory newPositions,
+            address dustRecipient,
+            uint256 maxDust0,
+            uint256 maxDust1
+        ) = abi.decode(data, (PoolKey, uint160, Position[], address, uint256, uint256));
 
         IPoolManager pm = IPoolManager(poolManager);
 
-        uint128 liquidity = lpLiquidity;
+        // Track net deltas across removal and addition
+        int256 netDelta0;
+        int256 netDelta1;
 
-        // Remove all liquidity (negative liquidityDelta)
-        (BalanceDelta delta, ) = pm.modifyLiquidity(
-            poolKey,
-            IPoolManager.ModifyLiquidityParams({
-                tickLower: lpTickLower,
-                tickUpper: lpTickUpper,
-                liquidityDelta: -int128(uint128(liquidity)),
-                salt: bytes32(0)
-            }),
-            ""
-        );
-
-        // Clear stored liquidity
-        lpLiquidity = 0;
-
-        // Positive deltas = pool owes us tokens. Use take() to claim them to recipient.
-        int128 delta0 = delta.amount0();
-        int128 delta1 = delta.amount1();
-
-        uint256 amount0;
-        uint256 amount1;
-
-        if (delta0 > 0) {
-            amount0 = uint128(delta0);
-            pm.take(poolKey.currency0, recipient, amount0);
-        }
-        if (delta1 > 0) {
-            amount1 = uint128(delta1);
-            pm.take(poolKey.currency1, recipient, amount1);
+        // Phase 1: Remove old position (deltas stay in PoolManager)
+        {
+            (BalanceDelta delta, ) = pm.modifyLiquidity(
+                poolKey,
+                IPoolManager.ModifyLiquidityParams({
+                    tickLower: lpTickLower,
+                    tickUpper: lpTickUpper,
+                    liquidityDelta: -int128(uint128(lpLiquidity)),
+                    salt: bytes32(0)
+                }),
+                ""
+            );
+            netDelta0 += delta.amount0();
+            netDelta1 += delta.amount1();
         }
 
-        emit LiquidityRemoved(recipient, amount0, amount1);
+        // Phase 2: Initialize new pool
+        pm.initialize(newKey, newSqrtPrice);
+
+        // Phase 3: Add new position to new pool (use first position from array)
+        Position memory newPos = newPositions[0];
+        if (newPos.liquidity > uint128(type(int128).max)) {
+            revert LiquidityTooLarge(newPos.liquidity);
+        }
+
+        {
+            (BalanceDelta delta, ) = pm.modifyLiquidity(
+                newKey,
+                IPoolManager.ModifyLiquidityParams({
+                    tickLower: newPos.tickLower,
+                    tickUpper: newPos.tickUpper,
+                    liquidityDelta: int128(uint128(newPos.liquidity)),
+                    salt: newPos.salt
+                }),
+                ""
+            );
+            netDelta0 += delta.amount0();
+            netDelta1 += delta.amount1();
+        }
+
+        // Phase 4: Settle net deltas
+        if (netDelta0 > 0) {
+            if (uint256(netDelta0) > maxDust0) {
+                revert DustExceeded(Currency.unwrap(newKey.currency0), uint256(netDelta0), maxDust0);
+            }
+            pm.take(newKey.currency0, dustRecipient, uint256(netDelta0));
+        } else if (netDelta0 < 0) {
+            uint128 owed0 = _toUint128Neg256(netDelta0);
+            address token0 = Currency.unwrap(newKey.currency0);
+            pm.sync(newKey.currency0);
+            if (token0 == address(this)) {
+                _transfer(address(this), address(pm), owed0);
+            } else {
+                IERC20(token0).safeTransfer(address(pm), owed0);
+            }
+            pm.settle();
+        }
+
+        if (netDelta1 > 0) {
+            if (uint256(netDelta1) > maxDust1) {
+                revert DustExceeded(Currency.unwrap(newKey.currency1), uint256(netDelta1), maxDust1);
+            }
+            pm.take(newKey.currency1, dustRecipient, uint256(netDelta1));
+        } else if (netDelta1 < 0) {
+            uint128 owed1 = _toUint128Neg256(netDelta1);
+            address token1 = Currency.unwrap(newKey.currency1);
+            pm.sync(newKey.currency1);
+            if (token1 == address(this)) {
+                _transfer(address(this), address(pm), owed1);
+            } else {
+                IERC20(token1).safeTransfer(address(pm), owed1);
+            }
+            pm.settle();
+        }
+
+        // Phase 5: Update pool state
+        address oldHooks = address(poolKey.hooks);
+        poolKey = newKey;
+        poolId = newKey.toId();
+        lpTickLower = newPos.tickLower;
+        lpTickUpper = newPos.tickUpper;
+        lpLiquidity = newPos.liquidity;
+
+        emit LiquidityMigrated(oldHooks, address(newKey.hooks));
 
         return "";
     }
@@ -1086,6 +1161,20 @@ contract LiquidInstant is
         // Casting to uint128 is safe because we checked bounds above
         // forge-lint: disable-next-line(unsafe-typecast)
         return uint128(uint256(y));
+    }
+
+    /// @notice Converts negative int256 to uint128 (absolute value)
+    /// @dev Wide variant for accumulated deltas that may exceed int128 range.
+    ///      Callers must ensure x <= 0 (enforced by require, not PositiveValue error
+    ///      since that error takes int128 which would itself truncate).
+    /// @param x Negative int256 delta value
+    /// @return uint128 absolute value of x
+    function _toUint128Neg256(int256 x) internal pure returns (uint128) {
+        require(x <= 0, "positive value");
+        uint256 y = uint256(-x);
+        if (y > type(uint128).max)
+            revert AmountExceedsUint128(y);
+        return uint128(y);
     }
 
     /// @notice Calculates the starting sqrtPriceX96 that uses all provided liquidity

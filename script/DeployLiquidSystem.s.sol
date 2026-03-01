@@ -12,11 +12,13 @@ import {DeployLiquidAuctioneer} from "./deployers/DeployLiquidAuctioneer.s.sol";
 import {DeployLiquidSwapGuard} from "./deployers/DeployLiquidSwapGuard.s.sol";
 import {DeployLiquidInitGuard} from "./deployers/DeployLiquidInitGuard.s.sol";
 import {DeployLiquidGuard} from "./deployers/DeployLiquidGuard.s.sol";
+import {DeployLiquidMigrationExecutor} from "./deployers/DeployLiquidMigrationExecutor.s.sol";
 import {DeployLiquidSystemReconcile} from "./deployers/DeployLiquidSystemReconcile.s.sol";
 import {LiquidSwapGuard} from "liquid-editions/LiquidSwapGuard.sol";
 import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
 import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
+import {LiquidMigrationExecutor} from "liquid-editions/LiquidMigrationExecutor.sol";
 import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
 import {LiquidAuctioneer} from "liquid-editions/LiquidAuctioneer.sol";
 import {FeeDistributor} from "liquid-editions/FeeDistributor.sol";
@@ -46,6 +48,7 @@ import {IHooks} from "v4-core/interfaces/IHooks.sol";
  * - DEPLOY_SWAP_GUARD: Set true to deploy LiquidSwapGuard (default: false)
  * - DEPLOY_INIT_GUARD: Set true to deploy LiquidInitGuard (default: false)
  * - DEPLOY_LIQUID_GUARD: Set true to deploy LiquidGuard + FeeDistributor (default: false)
+ * - DEPLOY_MIGRATION_EXECUTOR: Set true to deploy LiquidMigrationExecutor (default: false)
  * - FEE_DISTRIBUTOR: Optional override address for existing FeeDistributor module
  * - LIQUID_REGISTRY: Optional override address for existing LiquidRegistry module
  *
@@ -88,6 +91,7 @@ contract DeployLiquidSystem is Script {
         address router;
         address routerImplementation;
         address auctioneer;
+        address migrationExecutor;
     }
 
     function _resolveModuleAddress(
@@ -140,6 +144,7 @@ contract DeployLiquidSystem is Script {
         bool deploySwapGuard = vm.envOr("DEPLOY_SWAP_GUARD", false);
         bool deployInitGuard = vm.envOr("DEPLOY_INIT_GUARD", false);
         bool deployLiquidGuard = vm.envOr("DEPLOY_LIQUID_GUARD", false);
+        bool deployMigrationExecutor = vm.envOr("DEPLOY_MIGRATION_EXECUTOR", false);
         bool deployLegacyFeeDistributor = !deployConfig.factory.useLiquidGuard &&
             !deployLiquidGuard;
 
@@ -176,6 +181,7 @@ contract DeployLiquidSystem is Script {
         console.log("  DEPLOY_SWAP_GUARD:", deploySwapGuard);
         console.log("  DEPLOY_INIT_GUARD:", deployInitGuard);
         console.log("  DEPLOY_LIQUID_GUARD:", deployLiquidGuard);
+        console.log("  DEPLOY_MIGRATION_EXECUTOR:", deployMigrationExecutor);
         console.log("");
 
         // Preflight validation: if we are not redeploying shared modules, ensure required
@@ -611,6 +617,57 @@ contract DeployLiquidSystem is Script {
         console.log("");
 
         // ============================================
+        // Step 5b: LiquidMigrationExecutor - deploy or use existing
+        // ============================================
+        if (deployMigrationExecutor) {
+            console.log("=== Step 5b: Deploying LiquidMigrationExecutor ===");
+            require(
+                result.factory != address(0),
+                "DEPLOY_MIGRATION_EXECUTOR=true requires a LiquidFactory address"
+            );
+            // Registry is required. For phase-0 testing without a real registry,
+            // set LIQUID_REGISTRY to a non-contract sentinel (e.g. address(1))
+            // which causes the executor to skip the isRegistered check.
+            require(
+                liquidRegistryAddress != address(0),
+                "DEPLOY_MIGRATION_EXECUTOR=true requires a LiquidRegistry address (use sentinel address(1) to skip registration check)"
+            );
+            require(
+                protocolFeeRecipient != address(0),
+                "DEPLOY_MIGRATION_EXECUTOR=true requires protocolFeeRecipient in NetworkConfig"
+            );
+
+            result.migrationExecutor = DeployLiquidMigrationExecutor.deploy(
+                deployer,              // owner (update post-deploy to multisig)
+                protocolFeeRecipient,  // protocolVault
+                liquidRegistryAddress
+            );
+
+            // Wire factory to executor
+            LiquidFactory(result.factory).setMigrationExecutor(result.migrationExecutor);
+            console.log("  factory.setMigrationExecutor(migrationExecutor)");
+
+            // Approve current pool hooks for migration targets
+            LiquidMigrationExecutor executorContract = LiquidMigrationExecutor(result.migrationExecutor);
+            if (effectivePoolHooks != address(0)) {
+                executorContract.approveHook(effectivePoolHooks, true);
+                console.log("  approveHook(effectivePoolHooks)");
+            }
+            executorContract.setAllowedTickSpacing(deployConfig.factory.poolTickSpacing, true);
+            console.log("  setAllowedTickSpacing(poolTickSpacing)");
+            executorContract.setAllowedFee(0, true);
+            console.log("  setAllowedFee(0)");
+        } else {
+            result.migrationExecutor = networkConfig.liquid.migrationExecutor;
+            if (result.migrationExecutor != address(0)) {
+                console.log("=== Step 5b: Using existing LiquidMigrationExecutor ===");
+                console.log("LiquidMigrationExecutor address:");
+                console.logAddress(result.migrationExecutor);
+            }
+        }
+        console.log("");
+
+        // ============================================
         // Step 6: Configure LiquidSwapGuard (addRouter, addCaller) and factory
         // ============================================
         if (
@@ -903,6 +960,11 @@ contract DeployLiquidSystem is Script {
             console.logAddress(result.guard);
             console.log(deploySwapGuard ? "  (deployed)" : "  (existing)");
         }
+        if (result.migrationExecutor != address(0)) {
+            console.log("LiquidMigrationExecutor:");
+            console.logAddress(result.migrationExecutor);
+            console.log(deployMigrationExecutor ? "  (deployed)" : "  (existing)");
+        }
         console.log("");
 
         console.log("Referenced Contracts (from NetworkConfig):");
@@ -928,6 +990,7 @@ contract DeployLiquidSystem is Script {
             deployAuctioneer ||
             deploySwapGuard ||
             deployLiquidGuard ||
+            deployMigrationExecutor ||
             deployFeeDistributor ||
             deployLiquidRegistry
         ) {
@@ -981,6 +1044,11 @@ contract DeployLiquidSystem is Script {
             if (deploySwapGuard && result.guard != address(0)) {
                 console.log("liquidSwapGuard:");
                 console.logAddress(result.guard);
+                console.log(",");
+            }
+            if (deployMigrationExecutor && result.migrationExecutor != address(0)) {
+                console.log("migrationExecutor:");
+                console.logAddress(result.migrationExecutor);
                 console.log(",");
             }
             console.log("");

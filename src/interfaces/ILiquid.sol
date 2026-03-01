@@ -4,7 +4,9 @@ pragma solidity ^0.8.0;
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
+import {Position} from "doppler/types/Position.sol";
 
 /// @title Liquid interface
 /// @dev Extends IERC20Metadata so callers can use a single ILiquid ABI for all token interactions
@@ -64,8 +66,14 @@ interface ILiquid is IERC20Metadata {
     /// @notice Thrown when a value is positive but should be non-positive
     error PositiveValue(int128 value);
 
-    /// @notice Thrown when caller is not the protocol fee recipient
-    error OnlyProtocolFeeRecipient();
+    /// @notice Thrown when caller is not the migration executor
+    error OnlyMigrationExecutor();
+
+    /// @notice Thrown when migration dust exceeds the specified maximum
+    /// @param currency The currency address with excess dust
+    /// @param actual The actual dust amount
+    /// @param max The maximum allowed dust amount
+    error DustExceeded(address currency, uint256 actual, uint256 max);
 
     /// @notice Thrown when quote simulation completes without reverting (unexpected behavior)
     /// @dev Quote simulations use a revert-as-return pattern and should always revert
@@ -107,14 +115,12 @@ interface ILiquid is IERC20Metadata {
         uint256 lpPositionId
     );
 
-    /// @notice Emitted when liquidity is removed from the pool
-    /// @param recipient The address that received the withdrawn tokens
-    /// @param amount0 Amount of currency0 withdrawn
-    /// @param amount1 Amount of currency1 withdrawn
-    event LiquidityRemoved(
-        address indexed recipient,
-        uint256 amount0,
-        uint256 amount1
+    /// @notice Emitted when liquidity is migrated to a new pool
+    /// @param oldHooks The old hook contract address
+    /// @param newHooks The new hook contract address
+    event LiquidityMigrated(
+        address indexed oldHooks,
+        address indexed newHooks
     );
 
     /// @notice Emitted when the render contract is set
@@ -125,10 +131,24 @@ interface ILiquid is IERC20Metadata {
     /// @param amount The amount of tokens to burn
     function burn(uint256 amount) external;
 
-    /// @notice Removes all LP liquidity and sends underlying tokens to recipient
-    /// @dev Callable only by the protocolFeeRecipient configured in the token factory.
-    /// @param recipient Address to receive the withdrawn tokens
-    function removeLiquidity(address recipient) external;
+    /// @notice Atomically migrates all LP liquidity to a new pool with a different hook configuration
+    /// @dev Only callable by the migration executor configured in the token's factory.
+    ///      Removes liquidity from the old pool, initializes the new pool, and adds liquidity
+    ///      to the new pool within a single PoolManager unlock callback. Tokens never leave the PoolManager.
+    /// @param newPoolKey The target pool configuration (different hooks, same currencies)
+    /// @param newSqrtPriceX96 The starting price for the new pool
+    /// @param newPositions The liquidity positions to create in the new pool
+    /// @param dustRecipient Address to receive any dust from rounding differences
+    /// @param maxDust0 Maximum allowed positive net delta for currency0
+    /// @param maxDust1 Maximum allowed positive net delta for currency1
+    function migrateLiquidity(
+        PoolKey calldata newPoolKey,
+        uint160 newSqrtPriceX96,
+        Position[] calldata newPositions,
+        address dustRecipient,
+        uint256 maxDust0,
+        uint256 maxDust1
+    ) external;
 
     /// @notice Returns the initial URI of the token
     /// @return The initial token URI

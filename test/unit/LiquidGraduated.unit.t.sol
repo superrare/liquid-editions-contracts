@@ -11,6 +11,7 @@ import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {Position} from "doppler/types/Position.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
@@ -253,17 +254,19 @@ contract LiquidGraduatedUnitTest is Test {
     }
 
     // ============================================
-    // removeLiquidity() — always reverts in LiquidGraduated (use strategy instead)
+    // migrateLiquidity() — always reverts in LiquidGraduated (use strategy instead)
     // ============================================
 
-    function test_RemoveLiquidity_AlwaysReverts_UseStrategy() public {
+    function test_MigrateLiquidity_AlwaysReverts_UseStrategy() public {
         _createGraduatedToken();
 
-        // LiquidGraduated.removeLiquidity always reverts regardless of caller —
-        // liquidity removal for graduated tokens goes through the strategy contract.
+        // LiquidGraduated.migrateLiquidity always reverts regardless of caller —
+        // liquidity migration for graduated tokens goes through the strategy contract.
+        PoolKey memory newKey;
+        Position[] memory positions = new Position[](0);
         vm.prank(makeAddr("anyone"));
         vm.expectRevert("Graduated: use strategy");
-        graduated.removeLiquidity(makeAddr("anyone"));
+        graduated.migrateLiquidity(newKey, 0, positions, makeAddr("anyone"), 0, 0);
     }
 
     // ============================================

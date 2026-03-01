@@ -18,6 +18,8 @@ import {MockV4PoolManager} from "liquid-editions-test/helpers/MockV4PoolManager.
 import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
 import {DeployConfig} from "script/config/DeployConfig.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {Position} from "doppler/types/Position.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
 import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
@@ -369,25 +371,19 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
     }
 
     // ============================================
-    // removeLiquidity() — access control
+    // migrateLiquidity() — access control
     // ============================================
 
-    function test_RemoveLiquidity_RevertsForNonProtocolFeeRecipient() public {
+    function test_MigrateLiquidity_RevertsForNonMigrationExecutor() public {
         LiquidMultiCurve token = _deployToken();
-        address notPfr = makeAddr("notPfr");
+        address notExecutor = makeAddr("notExecutor");
 
-        vm.prank(notPfr);
-        vm.expectRevert(ILiquid.OnlyProtocolFeeRecipient.selector);
-        token.removeLiquidity(notPfr);
-    }
+        PoolKey memory newKey;
+        Position[] memory positions = new Position[](0);
 
-    function test_RemoveLiquidity_RevertsForZeroRecipient() public {
-        LiquidMultiCurve token = _deployToken();
-        address pfr = factory.protocolFeeRecipient();
-
-        vm.prank(pfr);
-        vm.expectRevert(ILiquid.AddressZero.selector);
-        token.removeLiquidity(address(0));
+        vm.prank(notExecutor);
+        vm.expectRevert(ILiquid.OnlyMigrationExecutor.selector);
+        token.migrateLiquidity(newKey, 0, positions, notExecutor, 0, 0);
     }
 
     // ============================================

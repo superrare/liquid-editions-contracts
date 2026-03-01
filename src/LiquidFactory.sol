@@ -55,6 +55,8 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
     address public protocolFeeRecipient;
     /// @notice Registry used for token registration and beneficiary mapping
     address public liquidRegistry;
+    /// @notice Migration executor address - only this address can call migrateLiquidity() on tokens
+    address public migrationExecutor;
 
     // Protocol addresses
     address public poolManager;
@@ -579,6 +581,15 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
             revert AddressZero();
         }
         protocolFeeRecipient = _protocolFeeRecipient;
+    }
+
+    /// @notice Sets the migration executor address
+    /// @dev Only the migration executor can call migrateLiquidity() on Liquid tokens.
+    function setMigrationExecutor(
+        address _migrationExecutor
+    ) external onlyOwner {
+        migrationExecutor = _migrationExecutor;
+        emit MigrationExecutorUpdated(_migrationExecutor);
     }
 
     /// @notice Sets the registry used for automatic token registration

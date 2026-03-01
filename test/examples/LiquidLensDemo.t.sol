@@ -5,9 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {LiquidLensDemoV1 as LiquidLensDemo} from "liquid-editions/examples/LiquidLensDemoV1.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {Position} from "doppler/types/Position.sol";
 
 /// @notice Mock Liquid Edition contract for testing render contract
 contract MockLiquid is ERC20, ILiquid {
@@ -83,7 +85,7 @@ contract MockLiquid is ERC20, ILiquid {
         revert("Not implemented in mock");
     }
 
-    function removeLiquidity(address /* recipient */) external pure override {
+    function migrateLiquidity(PoolKey calldata, uint160, Position[] calldata, address, uint256, uint256) external pure override {
         revert("Not implemented in mock");
     }
 

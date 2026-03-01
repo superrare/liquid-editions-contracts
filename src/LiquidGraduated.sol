@@ -14,6 +14,7 @@ import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {Position} from "doppler/types/Position.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
 import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol";
@@ -350,7 +351,7 @@ contract LiquidGraduated is
     }
 
     /// @notice Not applicable for graduated tokens (LP managed by strategy/PositionManager)
-    function removeLiquidity(address) external pure {
+    function migrateLiquidity(PoolKey calldata, uint160, Position[] calldata, address, uint256, uint256) external pure {
         revert("Graduated: use strategy");
     }
 

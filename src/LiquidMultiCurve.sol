@@ -90,7 +90,7 @@ contract LiquidMultiCurve is
     ///      is stored in this array. This is necessary because:
     ///      1. Multicurve uses multiple positions (unlike single-curve which has one position)
     ///      2. Each position has its own tickLower, tickUpper, liquidity, and salt
-    ///      3. To remove liquidity later (via removeLiquidity()), we need to know all positions
+    ///      3. To remove liquidity later (via migrateLiquidity()), we need to know all positions
     ///      4. Uniswap V4 requires exact position parameters (including salt) to remove liquidity
     ///      Without storing positions, we cannot remove liquidity because we'd lose the position identifiers.
     Position[] internal _storedPositions;
@@ -99,7 +99,7 @@ contract LiquidMultiCurve is
         INITIALIZE_POOL,
         QUOTE_SWAP_BUY,
         QUOTE_SWAP_SELL,
-        REMOVE_LIQUIDITY
+        MIGRATE_LIQUIDITY
     }
 
     struct UnlockContext {
@@ -222,21 +222,33 @@ contract LiquidMultiCurve is
         emit RenderContractSet(_renderContract);
     }
 
-    /// @notice Removes all LP liquidity and sends underlying tokens to recipient
-    /// @dev Only callable by the protocolFeeRecipient configured in the token's factory. Enables migration to a new pool.
-    /// @param recipient Address to receive the withdrawn tokens (RARE + LIQUID)
-    function removeLiquidity(address recipient) external {
-        address pfr = ILiquidFactory(factory).protocolFeeRecipient();
-        if (msg.sender != pfr) revert OnlyProtocolFeeRecipient();
+    /// @notice Atomically migrates all LP liquidity to a new pool with a different hook configuration
+    /// @dev Only callable by the migration executor configured in the token's factory.
+    ///      Removes liquidity from the old pool, initializes the new pool, and adds liquidity
+    ///      to the new pool within a single PoolManager unlock callback. Tokens never leave the PoolManager.
+    /// @param newPoolKey The target pool configuration (different hooks, same currencies)
+    /// @param newSqrtPriceX96 The starting price for the new pool
+    /// @param newPositions The liquidity positions to create in the new pool
+    /// @param dustRecipient Address to receive any dust from rounding differences
+    function migrateLiquidity(
+        PoolKey calldata newPoolKey,
+        uint160 newSqrtPriceX96,
+        Position[] calldata newPositions,
+        address dustRecipient,
+        uint256 maxDust0,
+        uint256 maxDust1
+    ) external {
+        address me = ILiquidFactory(factory).migrationExecutor();
+        if (msg.sender != me) revert OnlyMigrationExecutor();
         if (_storedPositions.length == 0) revert ZeroLiquidity();
-        if (recipient == address(0)) revert AddressZero();
+        if (dustRecipient == address(0)) revert AddressZero();
 
         _unlockExpected = true;
         IPoolManager(poolManager).unlock(
             abi.encode(
                 UnlockContext({
-                    action: UnlockAction.REMOVE_LIQUIDITY,
-                    data: abi.encode(recipient)
+                    action: UnlockAction.MIGRATE_LIQUIDITY,
+                    data: abi.encode(newPoolKey, newSqrtPriceX96, newPositions, dustRecipient, maxDust0, maxDust1)
                 })
             )
         );
@@ -576,8 +588,8 @@ contract LiquidMultiCurve is
             return _unlockQuoteSwapBuy(ctx.data);
         } else if (ctx.action == UnlockAction.QUOTE_SWAP_SELL) {
             return _unlockQuoteSwapSell(ctx.data);
-        } else if (ctx.action == UnlockAction.REMOVE_LIQUIDITY) {
-            return _unlockRemoveLiquidity(ctx.data);
+        } else if (ctx.action == UnlockAction.MIGRATE_LIQUIDITY) {
+            return _unlockMigrateLiquidity(ctx.data);
         }
 
         revert UnexpectedUnlock();
@@ -666,73 +678,129 @@ contract LiquidMultiCurve is
         return "";
     }
 
-    /// @notice Remove all multicurve LP positions and send underlying tokens to recipient
-    /// @dev This function is called during unlock callback when removeLiquidity() is invoked.
-    ///      It removes liquidity from all stored positions and sends the resulting tokens to recipient.
+    /// @notice Atomically migrate all multicurve LP positions to a new pool
+    /// @dev Called during unlock callback when migrateLiquidity() is invoked.
+    ///      Removes liquidity from all old positions, initializes new pool, adds new positions,
+    ///      and settles net deltas. Tokens never leave the PoolManager.
     ///      Process:
-    ///      1. Decode recipient address from data
-    ///      2. Iterate through all stored positions
-    ///      3. For each position, call modifyLiquidity() with negative liquidity delta (removes liquidity)
-    ///      4. Accumulate token amounts received from each position removal
-    ///      5. Clear stored positions array (liquidity fully removed)
-    ///      6. Claim accumulated tokens from PoolManager to recipient
-    ///      7. Emit event with total amounts removed
-    /// @param data Encoded recipient address (address)
+    ///      1. Remove liquidity from all stored positions (accumulate deltas)
+    ///      2. Initialize new pool at specified price
+    ///      3. Add new positions to new pool (accumulate deltas)
+    ///      4. Settle net deltas (dust to dustRecipient, debts from token balance)
+    ///      5. Update poolKey, poolId, and stored positions
+    /// @param data Encoded (PoolKey, uint160, Position[], address, uint256, uint256)
     /// @return Empty bytes (required by unlock callback interface)
-    function _unlockRemoveLiquidity(
+    function _unlockMigrateLiquidity(
         bytes memory data
     ) internal returns (bytes memory) {
-        // Decode recipient address (where tokens will be sent)
-        address recipient = abi.decode(data, (address));
+        (
+            PoolKey memory newKey,
+            uint160 newSqrtPrice,
+            Position[] memory newPositions,
+            address dustRecipient,
+            uint256 maxDust0,
+            uint256 maxDust1
+        ) = abi.decode(data, (PoolKey, uint160, Position[], address, uint256, uint256));
 
         IPoolManager pm = IPoolManager(poolManager);
 
-        // Track total amounts of currency0 and currency1 to be received
-        uint256 totalAmount0;
-        uint256 totalAmount1;
+        // Track net deltas across removal and addition
+        // Positive = PoolManager owes us, Negative = we owe PoolManager
+        int256 netDelta0;
+        int256 netDelta1;
 
-        // Step 1: Remove liquidity from each stored position
-        // Each position must be removed individually because Uniswap V4 tracks positions separately
+        // Phase 1: Remove all old positions (deltas stay in PoolManager)
         for (uint256 i; i < _storedPositions.length; i++) {
             Position memory pos = _storedPositions[i];
 
-            // Remove liquidity by calling modifyLiquidity with negative delta
-            // Negative delta removes liquidity, positive delta adds liquidity
             (BalanceDelta delta, ) = pm.modifyLiquidity(
                 poolKey,
                 IPoolManager.ModifyLiquidityParams({
-                    tickLower: pos.tickLower,      // Exact tick range from when position was created
-                    tickUpper: pos.tickUpper,      // Must match original position
-                    liquidityDelta: -int128(uint128(pos.liquidity)), // Negative = remove all liquidity
-                    salt: pos.salt                 // Must match original position salt
+                    tickLower: pos.tickLower,
+                    tickUpper: pos.tickUpper,
+                    liquidityDelta: -int128(uint128(pos.liquidity)),
+                    salt: pos.salt
                 }),
                 ""
             );
 
-            // Extract token amounts received from this position removal
-            // Positive deltas mean we receive tokens (negative deltas mean we owe tokens, but we're removing so we receive)
-            int128 delta0 = delta.amount0();
-            int128 delta1 = delta.amount1();
-
-            // Accumulate positive deltas (tokens we receive)
-            if (delta0 > 0) totalAmount0 += uint128(delta0);
-            if (delta1 > 0) totalAmount1 += uint128(delta1);
+            netDelta0 += delta.amount0();
+            netDelta1 += delta.amount1();
         }
-
-        // Step 2: Clear stored positions (all liquidity has been removed)
         delete _storedPositions;
 
-        // Step 3: Claim accumulated tokens from PoolManager and send to recipient
-        // PoolManager holds tokens after modifyLiquidity() calls - we must explicitly take them
-        if (totalAmount0 > 0) {
-            pm.take(poolKey.currency0, recipient, totalAmount0);
-        }
-        if (totalAmount1 > 0) {
-            pm.take(poolKey.currency1, recipient, totalAmount1);
+        // Phase 2: Initialize new pool
+        pm.initialize(newKey, newSqrtPrice);
+
+        // Phase 3: Add new positions to new pool
+        for (uint256 i; i < newPositions.length; i++) {
+            Position memory pos = newPositions[i];
+            if (pos.liquidity == 0) continue;
+
+            if (pos.liquidity > uint128(type(int128).max)) {
+                revert LiquidityTooLarge(pos.liquidity);
+            }
+
+            _storedPositions.push(pos);
+
+            (BalanceDelta delta, ) = pm.modifyLiquidity(
+                newKey,
+                IPoolManager.ModifyLiquidityParams({
+                    tickLower: pos.tickLower,
+                    tickUpper: pos.tickUpper,
+                    liquidityDelta: int128(uint128(pos.liquidity)),
+                    salt: pos.salt
+                }),
+                ""
+            );
+
+            netDelta0 += delta.amount0();
+            netDelta1 += delta.amount1();
         }
 
-        // Emit event with total amounts removed (for off-chain tracking)
-        emit LiquidityRemoved(recipient, totalAmount0, totalAmount1);
+        // Phase 4: Settle net deltas
+        // Positive net = we receive dust (take to dustRecipient)
+        // Negative net = we owe tokens (settle from token's balance)
+        if (netDelta0 > 0) {
+            if (uint256(netDelta0) > maxDust0) {
+                revert DustExceeded(Currency.unwrap(newKey.currency0), uint256(netDelta0), maxDust0);
+            }
+            pm.take(newKey.currency0, dustRecipient, uint256(netDelta0));
+        } else if (netDelta0 < 0) {
+            uint128 owed0 = _toUint128Neg256(netDelta0);
+            address token0 = Currency.unwrap(newKey.currency0);
+            pm.sync(newKey.currency0);
+            if (token0 == address(this)) {
+                _transfer(address(this), address(pm), owed0);
+            } else {
+                IERC20(token0).safeTransfer(address(pm), owed0);
+            }
+            pm.settle();
+        }
+
+        if (netDelta1 > 0) {
+            if (uint256(netDelta1) > maxDust1) {
+                revert DustExceeded(Currency.unwrap(newKey.currency1), uint256(netDelta1), maxDust1);
+            }
+            pm.take(newKey.currency1, dustRecipient, uint256(netDelta1));
+        } else if (netDelta1 < 0) {
+            uint128 owed1 = _toUint128Neg256(netDelta1);
+            address token1 = Currency.unwrap(newKey.currency1);
+            pm.sync(newKey.currency1);
+            if (token1 == address(this)) {
+                _transfer(address(this), address(pm), owed1);
+            } else {
+                IERC20(token1).safeTransfer(address(pm), owed1);
+            }
+            pm.settle();
+        }
+
+        // Phase 5: Update pool state
+        address oldHooks = address(poolKey.hooks);
+        poolKey = newKey;
+        poolId = newKey.toId();
+
+        emit LiquidityMigrated(oldHooks, address(newKey.hooks));
 
         return "";
     }
@@ -858,5 +926,19 @@ contract LiquidMultiCurve is
         if (uint256(y) > type(uint128).max)
             revert AmountExceedsUint128(uint256(y));
         return uint128(uint256(y));
+    }
+
+    /// @notice Converts negative int256 to uint128 (absolute value)
+    /// @dev Wide variant for accumulated deltas that may exceed int128 range.
+    ///      Callers must ensure x <= 0 (enforced by require, not PositiveValue error
+    ///      since that error takes int128 which would itself truncate).
+    /// @param x Negative int256 delta value
+    /// @return uint128 absolute value of x
+    function _toUint128Neg256(int256 x) internal pure returns (uint128) {
+        require(x <= 0, "positive value");
+        uint256 y = uint256(-x);
+        if (y > type(uint128).max)
+            revert AmountExceedsUint128(y);
+        return uint128(y);
     }
 }
