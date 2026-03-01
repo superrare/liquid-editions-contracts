@@ -310,7 +310,7 @@ contract LiquidInstant is
     // ============================================
 
     /// @notice Removes all LP liquidity and sends underlying tokens to recipient
-    /// @dev Only callable by factory's protocolFeeRecipient. Enables migration to a new pool.
+    /// @dev Only callable by the protocolFeeRecipient configured in the token's factory. Enables migration to a new pool.
     /// @param recipient Address to receive the withdrawn tokens (RARE + LIQUID)
     function removeLiquidity(address recipient) external {
         address pfr = ILiquidFactory(factory).protocolFeeRecipient();
@@ -361,6 +361,12 @@ contract LiquidInstant is
             address(0),
             address(0)
         );
+    }
+
+    /// @inheritdoc ILiquid
+    function totalLiquidity() external view returns (uint128) {
+        if (PoolId.unwrap(poolId) == bytes32(0)) return 0;
+        return StateLibrary.getLiquidity(IPoolManager(poolManager), poolId);
     }
 
     function getCurrentPrice()
@@ -479,7 +485,7 @@ contract LiquidInstant is
     /// @dev Simulates the swap via unlock callback. Uses revert-as-return pattern for gas-free simulation.
     ///      Not marked `view` (simulation reverts-to-return); use via eth_call.
     ///      Note: This quotes a direct RARE→LIQUID swap. For ETH→RARE→LIQUID routes, use LiquidRouter or client-side quoter.
-    ///      Fees are handled by LiquidRouter during actual trades.
+    ///      Fees are collected by LiquidGuard at the pool level during swaps (if attached).
     /// @param rareIn Amount of RARE to swap
     /// @return liquidOut LIQUID tokens that would be received from the swap
     /// @return sqrtPriceX96After Post-swap sqrt price (useful for price impact calculations)
@@ -493,7 +499,7 @@ contract LiquidInstant is
     /// @dev Simulates the swap via unlock callback. Uses revert-as-return pattern for gas-free simulation.
     ///      Not marked `view` (simulation reverts-to-return); use via eth_call.
     ///      Note: This quotes a direct LIQUID→RARE swap. For LIQUID→RARE→ETH routes, use LiquidRouter or client-side quoter.
-    ///      Fees are handled by LiquidRouter during actual trades.
+    ///      Fees are collected by LiquidGuard at the pool level during swaps (if attached).
     /// @param liquidIn Amount of LIQUID tokens to swap
     /// @return rareOut RARE that would be received from the swap
     /// @return sqrtPriceX96After Post-swap sqrt price (useful for price impact calculations)
@@ -976,7 +982,10 @@ contract LiquidInstant is
         uint256 tokensReceived = baseTokenIsCurrency0
             ? _toUint128Pos(delta1) // LIQUID is currency1
             : _toUint128Pos(delta0); // LIQUID is currency0
-        (uint160 sqrtPriceAfter, , , ) = StateLibrary.getSlot0(pm, poolKey.toId());
+        (uint160 sqrtPriceAfter, , , ) = StateLibrary.getSlot0(
+            pm,
+            poolKey.toId()
+        );
 
         revert QuoteResult(tokensReceived, sqrtPriceAfter);
     }
@@ -1027,7 +1036,10 @@ contract LiquidInstant is
         uint256 rareReceived = baseTokenIsCurrency0
             ? _toUint128Pos(delta0) // RARE is currency0
             : _toUint128Pos(delta1); // RARE is currency1
-        (uint160 sqrtPriceAfter, , , ) = StateLibrary.getSlot0(pm, poolKey.toId());
+        (uint160 sqrtPriceAfter, , , ) = StateLibrary.getSlot0(
+            pm,
+            poolKey.toId()
+        );
 
         revert QuoteResult(rareReceived, sqrtPriceAfter);
     }

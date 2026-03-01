@@ -117,12 +117,14 @@ contract LiquidMultiCurve is
 
     /// @notice Initializes a new Liquid token with multicurve liquidity (anti-sniping launch)
     /// @dev Called once by factory after cloning. Creates Uniswap V4 pool with liquidity distributed
-    ///      across multiple concentrated positions per the provided curves.
+    ///      across multiple concentrated positions per the provided curves. The bonding curve is funded
+    ///      by LIQUID tokens (900K POOL_LAUNCH_SUPPLY), not by creator RARE. Optional RARE (can be 0)
+    ///      creates a head position beyond the curve range.
     /// @param _creator The address of the liquid token creator (receives launch reward)
     /// @param _tokenUri The location of initial token metadata
     /// @param _name The liquid token name
     /// @param _symbol The liquid token symbol
-    /// @param _minRequiredRareLiquidity Minimum RARE tokens required to bootstrap the pool
+    /// @param _minRequiredRareLiquidity Minimum RARE balance check (0 = no RARE required)
     /// @param _curves Curve configuration (tick ranges, positions) for multicurve deployment
     function initialize(
         address _creator,
@@ -221,7 +223,7 @@ contract LiquidMultiCurve is
     }
 
     /// @notice Removes all LP liquidity and sends underlying tokens to recipient
-    /// @dev Only callable by factory's protocolFeeRecipient. Enables migration to a new pool.
+    /// @dev Only callable by the protocolFeeRecipient configured in the token's factory. Enables migration to a new pool.
     /// @param recipient Address to receive the withdrawn tokens (RARE + LIQUID)
     function removeLiquidity(address recipient) external {
         address pfr = ILiquidFactory(factory).protocolFeeRecipient();
@@ -267,6 +269,12 @@ contract LiquidMultiCurve is
             address(0),
             address(0)
         );
+    }
+
+    /// @inheritdoc ILiquid
+    function totalLiquidity() external view returns (uint128) {
+        if (PoolId.unwrap(poolId) == bytes32(0)) return 0;
+        return IPoolManager(poolManager).getLiquidity(poolId);
     }
 
     /// @notice Returns current pool price in both directions (RARE per token, token per RARE)

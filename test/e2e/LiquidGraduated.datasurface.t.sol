@@ -28,6 +28,7 @@ import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
+import {Curve} from "doppler/libraries/Multicurve.sol";
 
 contract MockCCAFactoryDS is IDistributionStrategy {
     address public rareToken;
@@ -94,6 +95,17 @@ contract LiquidGraduatedDatasurfaceTest is Test, InitGuardTestHelper {
     LiquidMultiCurve public instantToken;
     LiquidGraduated public graduatedToken;
 
+    function _defaultSingleCurve() internal view returns (Curve[] memory) {
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: factory.lpTickLower(),
+            tickUpper: factory.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+        return curves;
+    }
+
     function setUp() public {
         // Fork Base mainnet for realistic testing with deployed contracts
         string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
@@ -110,14 +122,11 @@ contract LiquidGraduatedDatasurfaceTest is Test, InitGuardTestHelper {
 
         vm.startPrank(admin);        factory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager,
             -180,
             120000,
-            config.uniswapV4Quoter,
             initGuardAddr,
             60,
-            300,
             1e15
         );
         LiquidInitGuard(initGuardAddr).setFactory(address(factory));
@@ -133,7 +142,6 @@ contract LiquidGraduatedDatasurfaceTest is Test, InitGuardTestHelper {
                 config.uniswapV4PoolManager
             );
         factory.setLbpStrategyFactory(address(mockStrategyFactory));
-        factory.setPositionManager(config.uniswapV4PositionManager);
         factory.setProtocolFeeRecipient(creator);
         vm.stopPrank();
     }
@@ -147,7 +155,8 @@ contract LiquidGraduatedDatasurfaceTest is Test, InitGuardTestHelper {
             "https://example.com/i",
             "Instant",
             "INST",
-            10e18
+            10e18,
+            _defaultSingleCurve()
         );
         instantToken = LiquidMultiCurve(payable(instantAddr));
 

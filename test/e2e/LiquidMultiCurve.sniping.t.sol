@@ -82,14 +82,11 @@ contract LiquidMultiCurveSnipingTest is Test, InitGuardTestHelper {
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager,
             -180,
             120000,
-            config.uniswapV4Quoter,
             initGuardAddr,
             60,
-            300,
             LIQUIDITY
         );
         LiquidInitGuard(initGuardAddr).setFactory(address(factory));
@@ -113,7 +110,8 @@ contract LiquidMultiCurveSnipingTest is Test, InitGuardTestHelper {
             "ipfs://dummy",
             "Dummy",
             "DMY",
-            LIQUIDITY
+            LIQUIDITY,
+            _defaultCurves()
         );
         mockRARE.approve(address(factory), MULTICURVE_LIQUIDITY);
         address tokenAddr = factory.createLiquidTokenMultiCurve(

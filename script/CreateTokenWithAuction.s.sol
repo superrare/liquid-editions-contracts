@@ -62,7 +62,7 @@ struct AuctionParameters {
  *
  * Prerequisites:
  * - LiquidFactory deployed with liquidGraduatedImplementation, ccaFactory, lbpStrategyFactory,
- *   positionManager, and protocolFeeRecipient set (see DEPLOYMENT_GUIDE.md CCA section)
+ *   and protocolFeeRecipient set (see DEPLOYMENT_GUIDE.md CCA section)
  * - Target chain has ccaFactory in NetworkConfig (e.g. mainnet)
  *
  * Environment Variables Required:
@@ -256,7 +256,7 @@ contract CreateTokenWithAuction is Script {
 
         require(
             factory.lbpStrategyFactory() != address(0),
-            "Factory not configured for Graduated tokens. Run setLbpStrategyFactory, setCcaFactory, setPositionManager, setProtocolFeeRecipient on the factory first."
+            "Factory not configured for Graduated tokens. Run setLbpStrategyFactory, setCcaFactory, setProtocolFeeRecipient on the factory first."
         );
         require(
             factory.ccaFactory() != address(0),

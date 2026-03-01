@@ -10,13 +10,10 @@ import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 abstract contract FactoryTestHelper is Test {
     struct FactoryParams {
         address admin;
-        address weth;
         address poolManager;
         int24 lpTickLower;
         int24 lpTickUpper;
-        address v4Quoter;
         int24 poolTickSpacing;
-        uint16 internalMaxSlippageBps;
         uint256 minRareLiquidityWei;
     }
 
@@ -33,14 +30,11 @@ abstract contract FactoryTestHelper is Test {
             try
                 new LiquidFactory{salt: salt}(
                     params.admin,
-                    params.weth,
                     params.poolManager,
                     params.lpTickLower,
                     params.lpTickUpper,
-                    params.v4Quoter,
                     address(0), // _poolHooks is ignored, factory becomes hook
                     params.poolTickSpacing,
-                    params.internalMaxSlippageBps,
                     params.minRareLiquidityWei
                 )
             returns (LiquidFactory deployed) {
@@ -55,25 +49,19 @@ abstract contract FactoryTestHelper is Test {
 
     function deployFactoryAsHook(
         address _admin,
-        address _weth,
         address _poolManager,
         int24 _lpTickLower,
         int24 _lpTickUpper,
-        address _v4Quoter,
         int24 _poolTickSpacing,
-        uint16 _internalMaxSlippageBps,
         uint256 _minRareLiquidityWei,
         uint256 maxAttempts
     ) internal returns (LiquidFactory) {
         FactoryParams memory params = FactoryParams({
             admin: _admin,
-            weth: _weth,
             poolManager: _poolManager,
             lpTickLower: _lpTickLower,
             lpTickUpper: _lpTickUpper,
-            v4Quoter: _v4Quoter,
             poolTickSpacing: _poolTickSpacing,
-            internalMaxSlippageBps: _internalMaxSlippageBps,
             minRareLiquidityWei: _minRareLiquidityWei
         });
 
@@ -83,24 +71,18 @@ abstract contract FactoryTestHelper is Test {
     /// @notice Helper with default max attempts (3000)
     function deployFactoryAsHook(
         address _admin,
-        address _weth,
         address _poolManager,
         int24 _lpTickLower,
         int24 _lpTickUpper,
-        address _v4Quoter,
         int24 _poolTickSpacing,
-        uint16 _internalMaxSlippageBps,
         uint256 _minRareLiquidityWei
     ) internal returns (LiquidFactory) {
         FactoryParams memory params = FactoryParams({
             admin: _admin,
-            weth: _weth,
             poolManager: _poolManager,
             lpTickLower: _lpTickLower,
             lpTickUpper: _lpTickUpper,
-            v4Quoter: _v4Quoter,
             poolTickSpacing: _poolTickSpacing,
-            internalMaxSlippageBps: _internalMaxSlippageBps,
             minRareLiquidityWei: _minRareLiquidityWei
         });
 

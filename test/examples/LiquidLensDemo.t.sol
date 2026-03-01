@@ -4,9 +4,13 @@ pragma solidity ^0.8.0;
 import {Test} from "forge-std/Test.sol";
 import {LiquidLensDemoV1 as LiquidLensDemo} from "liquid-editions/examples/LiquidLensDemoV1.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {PoolId} from "v4-core/types/PoolId.sol";
+import {Currency} from "v4-core/types/Currency.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
 
 /// @notice Mock Liquid Edition contract for testing render contract
-contract MockLiquid is ILiquid {
+contract MockLiquid is ERC20, ILiquid {
     uint256 public constant MAX_TOTAL_SUPPLY = 1_000_000e18;
     address public tokenCreator;
 
@@ -27,7 +31,7 @@ contract MockLiquid is ILiquid {
         mockCurrentSupply = _value;
     }
 
-    constructor(address _creator) {
+    constructor(address _creator) ERC20("MockLiquid", "MOCK") {
         tokenCreator = _creator;
     }
 
@@ -121,6 +125,18 @@ contract MockLiquid is ILiquid {
 
     function lpLiquidity() external view override returns (uint128) {
         return mockLiquidity;
+    }
+
+    function totalLiquidity() external view override returns (uint128) {
+        return mockLiquidity;
+    }
+
+    function poolKey() external pure override returns (Currency, Currency, uint24, int24, IHooks) {
+        return (Currency.wrap(address(0)), Currency.wrap(address(0)), 0, 0, IHooks(address(0)));
+    }
+
+    function poolId() external pure override returns (PoolId) {
+        return PoolId.wrap(bytes32(0));
     }
 }
 

@@ -47,14 +47,11 @@ contract LiquidGraduatedUnitTest is Test {
         mockCcaFactory = new MockCCAFactory(address(rare));
         factory = new LiquidFactory(
             admin,
-            makeAddr("weth"),
             address(mockPoolManager),
             -180,
             120000,
-            makeAddr("v4Quoter"),
             address(0),
             60,
-            300,
             1e15
         );
 
@@ -64,12 +61,10 @@ contract LiquidGraduatedUnitTest is Test {
         implementation = new LiquidGraduated();
         factory.setLiquidGraduatedImplementation(address(implementation));
         factory.setCcaFactory(address(mockCcaFactory));
-        // Set canonical LBP strategy factory (required)
         MockLBPStrategyFactory mockStrategyFactory = new MockLBPStrategyFactory(
             address(mockPoolManager)
         );
         factory.setLbpStrategyFactory(address(mockStrategyFactory));
-        factory.setPositionManager(makeAddr("positionManager"));
         factory.setProtocolFeeRecipient(makeAddr("protocolFeeRecipient"));
         vm.stopPrank();
     }
@@ -132,6 +127,176 @@ contract LiquidGraduatedUnitTest is Test {
         _createGraduatedToken();
         vm.expectRevert(ILiquid.PoolNotInitialized.selector);
         graduated.getCurrentPrice();
+    }
+
+    // ============================================
+    // burn() — positive path, events, access
+    // ============================================
+
+    function test_Burn_ReducesTotalSupply() public {
+        _createGraduatedToken();
+        uint256 supplyBefore = graduated.totalSupply();
+        uint256 creatorBalance = graduated.balanceOf(creator);
+        assertGt(creatorBalance, 0, "creator should have tokens");
+
+        uint256 burnAmount = 1e18;
+        vm.prank(creator);
+        graduated.burn(burnAmount);
+
+        assertEq(graduated.totalSupply(), supplyBefore - burnAmount, "totalSupply should decrease");
+        assertEq(graduated.balanceOf(creator), creatorBalance - burnAmount, "creator balance should decrease");
+    }
+
+    function test_Burn_ZeroAmount_Succeeds() public {
+        _createGraduatedToken();
+        uint256 supplyBefore = graduated.totalSupply();
+
+        vm.prank(creator);
+        graduated.burn(0);
+
+        assertEq(graduated.totalSupply(), supplyBefore, "supply should not change on zero burn");
+    }
+
+    function test_Burn_EmitsLiquidTransfer() public {
+        _createGraduatedToken();
+        uint256 burnAmount = 1e18;
+
+        vm.expectEmit(true, true, false, false);
+        emit ILiquid.LiquidTransfer(creator, address(0), burnAmount, 0, 0, 0);
+
+        vm.prank(creator);
+        graduated.burn(burnAmount);
+    }
+
+    function test_Burn_RevertsWhen_InsufficientBalance() public {
+        _createGraduatedToken();
+        uint256 creatorBalance = graduated.balanceOf(creator);
+
+        vm.prank(creator);
+        vm.expectRevert();
+        graduated.burn(creatorBalance + 1);
+    }
+
+    // ============================================
+    // setRenderContract() — access control, events
+    // ============================================
+
+    function test_SetRenderContract_ByCreator_Succeeds() public {
+        _createGraduatedToken();
+        address renderAddr = makeAddr("renderContract");
+
+        vm.prank(creator);
+        graduated.setRenderContract(renderAddr);
+
+        assertEq(graduated.renderContract(), renderAddr, "render contract should be set");
+    }
+
+    function test_SetRenderContract_EmitsRenderContractSet() public {
+        _createGraduatedToken();
+        address renderAddr = makeAddr("renderContractEvent");
+
+        vm.expectEmit(true, false, false, false);
+        emit ILiquid.RenderContractSet(renderAddr);
+
+        vm.prank(creator);
+        graduated.setRenderContract(renderAddr);
+    }
+
+    function test_SetRenderContract_RevertsForNonCreator() public {
+        _createGraduatedToken();
+        address notCreator = makeAddr("notCreator");
+
+        vm.prank(notCreator);
+        vm.expectRevert(ILiquid.NotTokenCreator.selector);
+        graduated.setRenderContract(makeAddr("someRender"));
+    }
+
+    // ============================================
+    // Supply and distribution constants
+    // ============================================
+
+    function test_MaxTotalSupply_IsExpected() public {
+        _createGraduatedToken();
+        assertEq(graduated.MAX_TOTAL_SUPPLY(), 1_000_000e18, "MAX_TOTAL_SUPPLY should be 1 million tokens");
+    }
+
+    function test_CreatorLaunchReward_IsDistributedOnInit() public {
+        _createGraduatedToken();
+        uint256 CREATOR_REWARD = 100_000e18;
+        assertEq(graduated.balanceOf(creator), CREATOR_REWARD, "creator should receive exact launch reward");
+    }
+
+    function test_TotalSupply_IsMaxOnInit() public {
+        _createGraduatedToken();
+        assertEq(graduated.totalSupply(), 1_000_000e18, "total supply should equal MAX at init");
+    }
+
+    // ============================================
+    // getLaunchState / getAuctionState — correct enum
+    // ============================================
+
+    function test_GetAuctionState_NotGraduated() public {
+        _createGraduatedToken();
+        (address a, bool grad, address s) = graduated.getAuctionState();
+        assertEq(a, graduated.auctionAddress(), "auction address mismatch");
+        assertFalse(grad, "should not be graduated initially");
+        assertEq(s, graduated.strategy(), "strategy address mismatch");
+    }
+
+    function test_GetAuctionState_AfterGraduation() public {
+        _createGraduatedToken();
+        rare.transfer(graduated.auctionAddress(), 10e18);
+        ILBPStrategy(graduated.strategy()).migrate();
+
+        (, bool grad, ) = graduated.getAuctionState();
+        assertTrue(grad, "should be graduated after migration");
+    }
+
+    // ============================================
+    // removeLiquidity() — always reverts in LiquidGraduated (use strategy instead)
+    // ============================================
+
+    function test_RemoveLiquidity_AlwaysReverts_UseStrategy() public {
+        _createGraduatedToken();
+
+        // LiquidGraduated.removeLiquidity always reverts regardless of caller —
+        // liquidity removal for graduated tokens goes through the strategy contract.
+        vm.prank(makeAddr("anyone"));
+        vm.expectRevert("Graduated: use strategy");
+        graduated.removeLiquidity(makeAddr("anyone"));
+    }
+
+    // ============================================
+    // tokenURI — fallback behavior
+    // ============================================
+
+    function test_TokenURI_ReturnsInitialUri_WhenNoRenderContract() public {
+        _createGraduatedToken();
+        string memory uri = graduated.tokenURI();
+        assertEq(uri, "https://example.com/1", "should return initial token URI");
+    }
+
+    function test_Transfer_EmitsLiquidTransfer_WithExactValues() public {
+        _createGraduatedToken();
+        address recipient = makeAddr("recipient");
+        uint256 transferAmount = 1000e18;
+
+        uint256 creatorBalBefore = graduated.balanceOf(creator);
+        uint256 recipientBalBefore = graduated.balanceOf(recipient);
+        uint256 supplyBefore = graduated.totalSupply();
+
+        vm.expectEmit(true, true, false, true);
+        emit ILiquid.LiquidTransfer(
+            creator,
+            recipient,
+            transferAmount,
+            creatorBalBefore - transferAmount,
+            recipientBalBefore + transferAmount,
+            supplyBefore
+        );
+
+        vm.prank(creator);
+        graduated.transfer(recipient, transferAmount);
     }
 
     function _defaultAuctionParams()

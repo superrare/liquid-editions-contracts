@@ -4,10 +4,10 @@ TypeScript utilities for integrating with the LiquidRouter contract and Uniswap 
 
 ## Overview
 
-The LiquidRouter contract enables fee-wrapped trading of any ERC20 token through Uniswap pools (V2/V3/V4). These scripts help you:
+The LiquidRouter contract enables route-aware trading of any ERC20 token through Uniswap pools (V2/V3/V4). These scripts help you:
 1. Find the best swap route across multiple pool versions
 2. Encode the route for the Universal Router
-3. Calculate fees and slippage protection
+3. Measure slippage protection and validate fee-model assumptions
 
 ## Setup
 
@@ -121,7 +121,7 @@ await tx.wait();
 ### Sell Tokens for ETH
 
 ```typescript
-import { getSmartSellQuote, calculateNetEthAfterFees } from './uniswap-smart-router';
+import { getSmartSellQuote } from './uniswap-smart-router';
 
 // Approve router to spend tokens
 const token = new ethers.Contract(TOKEN_ADDRESS, ERC20_ABI, signer);
@@ -136,9 +136,8 @@ const quote = await getSmartSellQuote({
   slippageBps: 100, // 1%
 }, 8453);
 
-// Calculate what you'll receive after LiquidRouter's 3% fee
-const netEth = calculateNetEthAfterFees(quote.minAmountOut);
-console.log(`You'll receive at least: ${ethers.utils.formatEther(netEth)} ETH`);
+// quote.minAmountOut is the expected ETH after route execution
+console.log(`You'll receive at least: ${ethers.utils.formatEther(quote.minAmountOut)} ETH`);
 
 // Execute sell
 const tx = await liquidRouter.sell(
@@ -146,7 +145,7 @@ const tx = await liquidRouter.sell(
   tokenAmount,
   signer.address,
   ethers.constants.AddressZero,
-  quote.minAmountOut, // GROSS ETH (before router fee)
+  quote.minAmountOut, // expected ETH after route execution
   quote.commands,
   quote.inputs,
   quote.deadline
@@ -155,32 +154,19 @@ const tx = await liquidRouter.sell(
 await tx.wait();
 ```
 
-## Fee Structure
+## Fee Model (canonical)
 
-### LiquidRouter Fees (TIER 1)
-- **Total Fee**: 3% (300 BPS) of trade amount
+### Router fees
+- Router-level fee fields are zeroed in this architecture (`RouterBuy`/`RouterSell`/`RouterSwap` emit `fee=0`).
+- Trading fees are collected inside Uniswap V4 swaps by `LiquidGuard`, then forwarded through `FeeDistributor.notifyFee()`.
 
-### Fee Distribution (TIER 2 & 3)
-From the 3% total fee:
-1. **Beneficiary**: 25% of total fee (0.75% of trade)
-2. **Remainder** split per factory config:
-   - Protocol fee
-   - Referrer fee (if provided)
-   - RARE burn fee
+### V4 fee conversion/distribution
+- `LiquidRouter` forwards the client-provided RARE/ETH price via `setLastRareEthPrice(expectedRareEthSqrtPriceX96)` at the start of each trade.
+- `LiquidGuard` takes RARE fees during swap callbacks and forwards them to `FeeDistributor`.
+- `FeeDistributor.notifyFee()` converts to ETH when price data is fresh and conversion is healthy, otherwise it falls back to direct RARE split.
+- Legacy selector flow in `LiquidAuctioneer` (`totalFeeBPS` + `distributeFees`) is retained for compatibility only.
 
-**Buy Example**:
-```
-User sends: 1.0 ETH
-Router fee: 0.03 ETH (3%)
-Swapped:    0.97 ETH → tokens
-```
-
-**Sell Example**:
-```
-Swap output: 1.0 ETH
-Router fee:  0.03 ETH (3%)
-User gets:   0.97 ETH
-```
+For SDK-facing behavior, see [`../docs/FLOW.md`](../docs/FLOW.md).
 
 ## Supported Networks
 
@@ -268,6 +254,16 @@ const volatileQuote = await getSmartBuyQuote({
 4. **Gas Price**: Monitor gas prices on Base for cost efficiency
 5. **Caching**: Cache route quotes for a few seconds to reduce RPC calls
 6. **Fallback**: Consider having both Smart Router and manual V3 as fallback
+
+## Drift Prevention
+
+Run the repository NatSpec coverage check before merging doc-facing updates:
+
+```bash
+./check-natspec-coverage.sh
+```
+
+This scan flags public/external Solidity functions under `src/**/*.sol` that may be missing a nearby NatSpec comment.
 
 ## Learn More
 

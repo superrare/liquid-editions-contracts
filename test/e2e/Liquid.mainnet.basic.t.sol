@@ -8,6 +8,7 @@ import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
+import {Curve} from "doppler/libraries/Multicurve.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
@@ -39,6 +40,17 @@ contract LiquidInstantMainnetBasicTest is Test, InitGuardTestHelper {
     LiquidFactory public factory;
     LiquidMultiCurve public liquid;
     MockRARE public mockRARE;
+
+    function _defaultSingleCurve(LiquidFactory _factory) internal view returns (Curve[] memory) {
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: _factory.lpTickLower(),
+            tickUpper: _factory.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+        return curves;
+    }
 
     function setUp() public virtual {
         // Fork Base mainnet to access real Uniswap V4 contracts
@@ -75,14 +87,11 @@ contract LiquidInstantMainnetBasicTest is Test, InitGuardTestHelper {
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
             -180, // lpTickLower - max expensive (after price rises) - multiple of 60
             120000, // lpTickUpper - starting point (cheap tokens)
-            config.uniswapV4Quoter, // V4 Quoter
             initGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
-            300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
         LiquidInitGuard(initGuardAddr).setFactory(address(factory));
@@ -112,7 +121,8 @@ contract LiquidInstantMainnetBasicTest is Test, InitGuardTestHelper {
             "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG", // tokenUri
             "LIQUID", // name
             "LIQUID", // symbol
-            initialRareLiquidity
+            initialRareLiquidity,
+            _defaultSingleCurve(factory)
         );
 
         liquid = LiquidMultiCurve(payable(liquidAddress));
@@ -161,7 +171,8 @@ contract LiquidInstantMainnetBasicTest is Test, InitGuardTestHelper {
             "ipfs://test-token-uri-2",
             "MIN_LIQUID",
             "ML",
-            MIN_RARE_AMOUNT
+            MIN_RARE_AMOUNT,
+            _defaultSingleCurve(factory)
         );
         vm.stopPrank();
 
@@ -270,7 +281,8 @@ contract LiquidInstantMainnetBasicTest is Test, InitGuardTestHelper {
             "ipfs://liquidity-test",
             "LIQUIDITY_TEST",
             "LT",
-            LIQUIDITY_RARE
+            LIQUIDITY_RARE,
+            _defaultSingleCurve(factory)
         );
         vm.stopPrank();
 
@@ -319,14 +331,11 @@ contract LiquidInstantMainnetBasicTest is Test, InitGuardTestHelper {
         address testInitGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         LiquidFactory testFactory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
             -180, // lpTickLower - max expensive (after price rises) - multiple of 60
             120000, // lpTickUpper - starting point (cheap tokens)
-            config.uniswapV4Quoter, // Use wrapper instead of raw quoter
             testInitGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
-            300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
         LiquidInitGuard(testInitGuardAddr).setFactory(address(testFactory));
@@ -357,7 +366,8 @@ contract LiquidInstantMainnetBasicTest is Test, InitGuardTestHelper {
             "ipfs://factory-test",
             "FACTORY_TEST",
             "FT",
-            FACTORY_ETH_AMOUNT
+            FACTORY_ETH_AMOUNT,
+            _defaultSingleCurve(testFactory)
         );
         vm.stopPrank();
 
@@ -444,7 +454,8 @@ contract LiquidInstantMainnetBasicTest is Test, InitGuardTestHelper {
             "ipfs://min-liquidity-test",
             "MIN_LIQUIDITY_TEST",
             "MLT",
-            MIN_LIQUIDITY_RARE
+            MIN_LIQUIDITY_RARE,
+            _defaultSingleCurve(factory)
         );
         vm.stopPrank();
 
@@ -514,14 +525,11 @@ contract LiquidInstantMainnetBasicTest is Test, InitGuardTestHelper {
         address testInitGuardAddr2 = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         LiquidFactory testFactory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager,
             -180, // lpTickLower
             120000, // lpTickUpper
-            config.uniswapV4Quoter,
             testInitGuardAddr2,
             60,
-            300,
             1e15
         );
         LiquidInitGuard(testInitGuardAddr2).setFactory(address(testFactory));
@@ -538,7 +546,8 @@ contract LiquidInstantMainnetBasicTest is Test, InitGuardTestHelper {
             "ipfs://currency0-test",
             "CURRENCY0_TEST",
             "C0",
-            initialRareLiquidity
+            initialRareLiquidity,
+            _defaultSingleCurve(testFactory)
         );
         vm.stopPrank();
 
@@ -600,14 +609,11 @@ contract LiquidInstantMainnetBasicTest is Test, InitGuardTestHelper {
             address testInitGuardAddr3 = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
             testFactory = new LiquidFactory(
                     admin,
-                    config.weth,
                     config.uniswapV4PoolManager,
                     -180,
                     120000,
-                    config.uniswapV4Quoter,
                     testInitGuardAddr3,
                     60,
-                    300,
                     1e15
                 );
             LiquidInitGuard(testInitGuardAddr3).setFactory(address(testFactory));
@@ -627,7 +633,8 @@ contract LiquidInstantMainnetBasicTest is Test, InitGuardTestHelper {
                     "ipfs://currency0-forced",
                     "CURRENCY0_FORCED",
                     "C0F",
-                    initialRareLiquidity
+                    initialRareLiquidity,
+                    _defaultSingleCurve(testFactory)
         );
                 vm.stopPrank();
 

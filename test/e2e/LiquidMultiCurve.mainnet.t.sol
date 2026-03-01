@@ -79,14 +79,11 @@ contract LiquidMultiCurveMainnetTest is ForkTestBase, InitGuardTestHelper {
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager,
             -180,
             120000,
-            config.uniswapV4Quoter,
             initGuardAddr,
             60,
-            300,
             MIN_RARE
         );
         LiquidInitGuard(initGuardAddr).setFactory(address(factory));
@@ -107,7 +104,8 @@ contract LiquidMultiCurveMainnetTest is ForkTestBase, InitGuardTestHelper {
             "ipfs://dummy",
             "Dummy",
             "DMY",
-            MIN_RARE
+            MIN_RARE,
+            _defaultCurves()
         );
         vm.stopPrank();
     }

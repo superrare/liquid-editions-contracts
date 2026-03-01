@@ -433,6 +433,12 @@ contract LiquidGraduated is
     // QUOTE HELPERS (STATIC CALL ONLY - NOT VIEW)
     // ============================================
 
+    /// @notice Returns the total active liquidity at the current pool tick
+    function totalLiquidity() external view returns (uint128) {
+        if (PoolId.unwrap(poolId) == bytes32(0)) return 0;
+        return IPoolManager(poolManager).getLiquidity(poolId);
+    }
+
     /**
      * @notice Returns the current raw pool price (no fees) in both directions
      * @dev Reads directly from Uniswap V4 pool slot0. Returns WEI values scaled to 1e18.
@@ -562,7 +568,7 @@ contract LiquidGraduated is
      * @dev Simulates the swap via unlock callback. Uses revert-as-return pattern for gas-free simulation.
      *      Not marked `view` (simulation reverts-to-return); use via eth_call.
      *      Note: This quotes a direct RARE→LIQUID swap. For ETH→RARE→LIQUID routes, use LiquidRouter or client-side quoter.
-     *      Fees are handled by LiquidRouter during actual trades.
+     *      Fees are collected by LiquidGuard at the pool level during swaps (if attached).
      * @param rareIn Amount of RARE to swap
      * @return liquidOut LIQUID tokens that would be received from the swap
      * @return sqrtPriceX96After Post-swap sqrt price (useful for price impact calculations)
@@ -578,7 +584,7 @@ contract LiquidGraduated is
      * @dev Simulates the swap via unlock callback. Uses revert-as-return pattern for gas-free simulation.
      *      Not marked `view` (simulation reverts-to-return); use via eth_call.
      *      Note: This quotes a direct LIQUID→RARE swap. For LIQUID→RARE→ETH routes, use LiquidRouter or client-side quoter.
-     *      Fees are handled by LiquidRouter during actual trades.
+     *      Fees are collected by LiquidGuard at the pool level during swaps (if attached).
      * @param liquidIn Amount of LIQUID tokens to swap
      * @return rareOut RARE that would be received from the swap
      * @return sqrtPriceX96After Post-swap sqrt price (useful for price impact calculations)

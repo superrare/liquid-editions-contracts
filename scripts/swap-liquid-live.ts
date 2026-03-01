@@ -72,9 +72,8 @@ const WETH_ADDRESSES: Record<number, string> = {
 
 // ABIs
 const LIQUID_ROUTER_ABI = [
-  'function swap(address tokenIn, uint256 amountIn, address tokenOut, address recipient, address orderReferrer, uint256 minAmountOut, bytes calldata leg1Commands, bytes[] calldata leg1Inputs, bytes calldata leg2Commands, bytes[] calldata leg2Inputs, uint256 deadline) external payable returns (uint256 amountOut)',
-  'function TOTAL_FEE_BPS() external view returns (uint256)',
-  'event RouterSwap(address indexed tokenIn, address indexed tokenOut, address indexed sender, address recipient, address orderReferrer, uint256 amountIn, uint256 ethAtMidpoint, uint256 fee, uint256 amountOut, uint256 protocolFee, uint256 referrerFee, uint256 beneficiaryFeeA, uint256 beneficiaryFeeB, uint256 burnFee)',
+  'function swap(address tokenIn, uint256 amountIn, address tokenOut, address recipient, uint256 minAmountOut, bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable returns (uint256 amountOut)',
+  'event RouterSwap(address indexed tokenIn, address indexed tokenOut, address indexed sender, address recipient, uint256 amountIn, uint256 ethValue, uint256 fee, uint256 amountOut, uint256 protocolFee, uint256 beneficiaryFeeA, uint256 beneficiaryFeeB)',
 ];
 
 const ERC20_ABI = [
@@ -173,12 +172,8 @@ async function main() {
   
   console.log(`\n💸 Swapping: ${ethers.utils.formatUnits(tokenAmount, tokenInDecimals)} ${tokenInSymbol}`);
   
-  // Get router fee configuration
   const router = new ethers.Contract(CONFIG.liquidRouter, LIQUID_ROUTER_ABI, provider);
-  const totalFeeBps = await router.TOTAL_FEE_BPS();
-  console.log('\n⚙️  Router Configuration:');
-  console.log('  Total Fee:', totalFeeBps.toNumber() / 100, '%');
-  
+
   // Check and set approval if needed
   console.log('\n🔐 Checking token approval...');
   const currentAllowance = await tokenIn.allowance(wallet.address, CONFIG.liquidRouter);
@@ -230,36 +225,25 @@ async function main() {
     throw error;
   }
   
-  // Calculate ETH after router fee (this is what will be available for leg2)
-  const grossEthFromLeg1 = ethers.BigNumber.from(leg1Quote.amountOut);
-  const fee = grossEthFromLeg1.mul(totalFeeBps).div(10000);
-  const ethForLeg2 = grossEthFromLeg1.sub(fee);
-  
-  console.log('\n💰 Fee Calculation:');
-  console.log('  Gross ETH from leg1:', ethers.utils.formatEther(grossEthFromLeg1), 'ETH');
-  console.log('  Router fee:', ethers.utils.formatEther(fee), 'ETH');
+  // The router no longer takes a fee at the midpoint — all ETH from leg1 flows to leg2.
+  const ethForLeg2 = ethers.BigNumber.from(leg1Quote.amountOut);
+
+  console.log('\n💰 Midpoint ETH (no router fee — fees are skimmed by LiquidGuard hook):');
   console.log('  ETH available for leg2:', ethers.utils.formatEther(ethForLeg2), 'ETH');
-  
+
   // ============================================
   // LEG 2: Get quote for ETH -> tokenOut
   // ============================================
-  // Note: getManualBuyQuote expects the full ETH amount and will subtract the router fee.
-  // But in swap(), leg2 receives ethForLeg2 which is already net of fees.
-  // So we need to pass a higher ETH amount such that after getManualBuyQuote subtracts
-  // the fee, we get ethForLeg2. This simulates what tokens we'd get from swapping ethForLeg2.
-  const ethAmountForLeg2Quote = ethForLeg2.mul(10000).div(10000 - totalFeeBps);
-  
   console.log('\n🔍 Getting quote for LEG 2: ETH -> tokenOut...');
   console.log(`  Route: ETH → RARE → ${tokenOutSymbol} (multi-hop)`);
-  console.log(`  Note: Using ${ethers.utils.formatEther(ethAmountForLeg2Quote)} ETH for quote (will result in ${ethers.utils.formatEther(ethForLeg2)} ETH after fee)`);
-  
+
   let leg2Quote;
   try {
     leg2Quote = await getManualBuyQuote(
       {
         token: CONFIG.tokenOut,
         tokenDecimals: tokenOutDecimals,
-        ethAmount: ethAmountForLeg2Quote.toString(),
+        ethAmount: ethForLeg2.toString(),
         slippageBps: CONFIG.slippageBps,
         recipient: wallet.address,
         poolFee: 0, // Liquid tokens use 0% fee V4 pools
@@ -268,7 +252,7 @@ async function main() {
       CONFIG.chainId,
       CONFIG.rpcUrl,
       wethAddress,
-      totalFeeBps.toNumber()
+      0 // No router fee
     );
     
     console.log('\n✅ LEG 2 Quote received:');
@@ -304,20 +288,20 @@ async function main() {
   const routerWithSigner = router.connect(wallet);
   
   try {
+    const mergedCommands = ethers.utils.hexConcat([leg1Quote.commands, leg2Quote.commands]);
+    const mergedInputs = [...leg1Quote.inputs, ...leg2Quote.inputs];
+
     const tx = await routerWithSigner.swap(
       CONFIG.tokenIn,
       tokenAmount,
       CONFIG.tokenOut,
       wallet.address,
-      ethers.constants.AddressZero, // No referrer
       minTokenOut,
-      leg1Quote.commands, // leg1: tokenIn -> ETH
-      leg1Quote.inputs,
-      leg2Quote.commands, // leg2: ETH -> tokenOut
-      leg2Quote.inputs,
+      mergedCommands,
+      mergedInputs,
       leg1Quote.deadline, // Use same deadline for both legs
       { 
-        gasLimit: 1500000, // Higher gas limit for two-leg swap
+        gasLimit: 1500000,
       }
     );
     
@@ -342,15 +326,9 @@ async function main() {
     if (swapEvent) {
       console.log('\n📊 Trade Details:');
       console.log(`  Tokens in: ${ethers.utils.formatUnits(swapEvent.args.amountIn, tokenInDecimals)} ${tokenInSymbol}`);
-      console.log('  ETH at midpoint (gross):', ethers.utils.formatEther(swapEvent.args.ethAtMidpoint), 'ETH');
-      console.log('  Fee collected:', ethers.utils.formatEther(swapEvent.args.fee), 'ETH');
+      console.log('  ETH value passed:', ethers.utils.formatEther(swapEvent.args.ethValue), 'ETH');
       console.log(`  Tokens out: ${ethers.utils.formatUnits(swapEvent.args.amountOut, tokenOutDecimals)} ${tokenOutSymbol}`);
-      console.log('\n  Fee Distribution:');
-      console.log('    Protocol:', ethers.utils.formatEther(swapEvent.args.protocolFee), 'ETH');
-      console.log('    Referrer:', ethers.utils.formatEther(swapEvent.args.referrerFee), 'ETH');
-      console.log(`    Beneficiary (${tokenInSymbol}):`, ethers.utils.formatEther(swapEvent.args.beneficiaryFeeA), 'ETH');
-      console.log(`    Beneficiary (${tokenOutSymbol}):`, ethers.utils.formatEther(swapEvent.args.beneficiaryFeeB), 'ETH');
-      console.log('    RARE Burn:', ethers.utils.formatEther(swapEvent.args.burnFee), 'ETH');
+      console.log('  Note: RARE fees skimmed at pool level by LiquidGuard hook');
     }
     
   } catch (error: any) {

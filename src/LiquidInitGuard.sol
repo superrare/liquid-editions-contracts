@@ -37,10 +37,14 @@ contract LiquidInitGuard is IHooks, Ownable, ILiquidSwapGuard {
         _;
     }
 
+    /// @notice Restrict execution to calls from the Uniswap V4 PoolManager.
+    /// @dev Required for all hook callback entrypoints in this lightweight init-only guard.
     function _onlyPoolManager() internal view {
         if (msg.sender != address(POOL_MANAGER)) revert NotPoolManager();
     }
 
+    /// @notice Restrict execution to owner or factory-maintainer.
+    /// @dev Used for initializer allowlist mutations that affect future pool creation.
     function _onlyOwnerOrFactory() internal view {
         if (msg.sender != owner() && msg.sender != factory) {
             revert NotOwnerOrFactory();

@@ -49,7 +49,7 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
         reentrantBeneficiary.setBeneficiary(address(reentrantBeneficiary));
 
         vm.prank(admin);
-        liquidRouter.registerToken(
+        liquidRegistry.setBeneficiary(
             address(token),
             address(reentrantBeneficiary)
         );
@@ -104,12 +104,14 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
         reentrant.setBeneficiary(beneficiary);
 
         vm.prank(admin);
-        liquidRouter.registerToken(address(token), address(reentrant));
+        liquidRegistry.setBeneficiary(address(token), address(reentrant));
 
         assertTrue(true, "Reentrancy protection prevents state leakage");
     }
 
     function test_Buy_RevertsWhen_ProtocolFeeRecipientReverts() public {
+        // The router no longer sends ETH to a protocol fee recipient - fees are collected by
+        // LiquidGuard in RARE at the pool level. A rejecting recipient does NOT cause a revert.
         RejectingRecipientForRouter rejectingProtocol = new RejectingRecipientForRouter();
 
         LiquidRouter rejectingRouter = deployLiquidRouter(
@@ -119,12 +121,11 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
         );
 
         vm.prank(admin);
-        rejectingRouter.registerToken(address(token), beneficiary);
+        liquidRegistry.setBeneficiary(address(token), beneficiary);
 
-        vm.expectRevert(ILiquidRouter.EthTransferFailed.selector);
         vm.prank(user1);
         (bytes memory commands, bytes[] memory inputs) = _validRoute();
-        rejectingRouter.buy{value: 1 ether}(
+        uint256 tokensReceived = rejectingRouter.buy{value: 1 ether}(
             address(token),
             user1,
             1,
@@ -132,9 +133,13 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
             inputs,
             block.timestamp + 1 hours
         );
+
+        assertTrue(tokensReceived > 0, "Buy should succeed - no ETH sent to protocol recipient");
     }
 
     function test_Sell_RevertsWhen_ProtocolFeeRecipientReverts() public {
+        // The router no longer sends ETH to a protocol fee recipient - fees are collected by
+        // LiquidGuard in RARE at the pool level. A rejecting recipient does NOT cause a revert.
         RejectingRecipientForRouter rejectingProtocol = new RejectingRecipientForRouter();
 
         LiquidRouter rejectingRouter = deployLiquidRouter(
@@ -144,16 +149,15 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
         );
 
         vm.prank(admin);
-        rejectingRouter.registerToken(address(token), beneficiary);
+        liquidRegistry.setBeneficiary(address(token), beneficiary);
 
         uint256 tokenAmount = 1000e18;
         vm.prank(user1);
         token.approve(address(rejectingRouter), tokenAmount);
 
-        vm.expectRevert(ILiquidRouter.EthTransferFailed.selector);
         vm.prank(user1);
         (bytes memory commands, bytes[] memory inputs) = _validRoute();
-        rejectingRouter.sell(
+        uint256 ethReceived = rejectingRouter.sell(
             address(token),
             tokenAmount,
             user1,
@@ -162,5 +166,7 @@ contract LiquidRouterUnitGuardsTest is LiquidRouterUnitTestBase {
             inputs,
             block.timestamp + 1 hours
         );
+
+        assertTrue(ethReceived > 0, "Sell should succeed - no ETH sent to protocol recipient");
     }
 }

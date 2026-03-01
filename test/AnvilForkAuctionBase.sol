@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {AnvilForkTestBase, IStrategyFactory} from "liquid-editions-test/AnvilForkTestBase.sol";
+import {ILiquidRegistry} from "liquid-editions/interfaces/ILiquidRegistry.sol";
 import {LiquidGraduated} from "liquid-editions/LiquidGraduated.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AuctionParameters, IContinuousClearingAuction} from "continuous-clearing-auction/interfaces/IContinuousClearingAuction.sol";
@@ -421,7 +422,7 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
         address tokenCreator
     ) internal {
         vm.prank(admin);
-        router.registerToken(graduatedToken, tokenCreator);
+        ILiquidRegistry(router.liquidRegistry()).setBeneficiary(graduatedToken, tokenCreator);
         address trader = makeAddr("postAuctionTrader");
         vm.deal(trader, 0.5 ether);
         LiquidGraduated graduated = LiquidGraduated(payable(graduatedToken));

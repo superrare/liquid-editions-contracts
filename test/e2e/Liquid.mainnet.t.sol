@@ -13,6 +13,7 @@ import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {Curve} from "doppler/libraries/Multicurve.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
@@ -62,6 +63,17 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
     MockRARE public mockRARE;
     LiquidPoolSwapHelper public swapHelper;
 
+    function _defaultSingleCurve() internal view returns (Curve[] memory) {
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: factory.lpTickLower(),
+            tickUpper: factory.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+        return curves;
+    }
+
     function setUp() public {
         // Fork Base mainnet for contract address verification
         string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
@@ -101,14 +113,11 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
             -180, // lpTickLower - max expensive (after price rises) - multiple of 60
             120000, // lpTickUpper - starting point (cheap tokens)
-            config.uniswapV4Quoter, // Use wrapper instead of raw quoter
             initGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
-            300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
         LiquidInitGuard(initGuardAddr).setFactory(address(factory));
@@ -158,7 +167,8 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
             "ipfs://base-test",
             "BASE_TEST",
             "BT",
-            FACTORY_ETH_AMOUNT
+            FACTORY_ETH_AMOUNT,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -242,7 +252,8 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
             "ipfs://base-min-test",
             "BASE_MIN",
             "BM",
-            MIN_ETH_AMOUNT
+            MIN_ETH_AMOUNT,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -408,7 +419,8 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
             "ipfs://base-rare-test",
             "BASE_RARE",
             "BR",
-            1 ether
+            1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -468,7 +480,8 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -501,7 +514,8 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -533,7 +547,8 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -571,7 +586,8 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -600,7 +616,8 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -636,7 +653,8 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -676,44 +694,6 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         );
     }
 
-    function testQuoteAfterConfigSync() public {
-        // Create a token
-        vm.startPrank(tokenCreator);
-        IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address token = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://test",
-            "Test Token",
-            "TEST",
-            0.1 ether
-        );
-        vm.stopPrank();
-
-        LiquidMultiCurve liquid = LiquidMultiCurve(payable(token));
-
-        // Get initial quote (gross ETH)
-        uint256 buyAmount = 1 ether;
-        // Returns: (liquidOut, sqrtPriceX96After)
-        (uint256 quote1, ) = liquid.quoteBuy(buyAmount);
-
-        // Update factory config values
-        // For this test, we just verify quote still works after config update
-        vm.startPrank(admin);
-        factory.setInternalMaxSlippageBps(300);
-        vm.stopPrank();
-
-        // Get quote after config update (config changes take effect immediately)
-        (uint256 quote2, ) = liquid.quoteBuy(buyAmount);
-
-        console.log("=== Quote After Config Sync ===");
-        console.log("Quote before sync:", quote1);
-        console.log("Quote after sync:", quote2);
-
-        // Both quotes should be valid and similar (pool state hasn't changed much)
-        assertGt(quote1, 0, "Initial quote should be valid");
-        assertGt(quote2, 0, "Quote after sync should be valid");
-    }
-
     function testQuoteRevertWithZeroAmount() public {
         // Create a token
         vm.startPrank(tokenCreator);
@@ -723,7 +703,8 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 

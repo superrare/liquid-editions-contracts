@@ -20,12 +20,13 @@ library DeployConfig {
     struct FactoryConfig {
         int24 lpTickLower;
         int24 lpTickUpper;
-        /// @notice Pool hooks address. When useSwapGuard is true, resolved from liquidSwapGuard (NetworkConfig or deployment).
+        /// @notice Pool hooks address. When useSwapGuard or useLiquidGuard is true, resolved from the guard at deploy time.
         address poolHooks;
         /// @notice When true, use LiquidSwapGuard for Instant/MultiCurve/Graduated pools (restricts swaps to LiquidRouter).
         bool useSwapGuard;
+        /// @notice When true, use LiquidGuard (hook-level fee skimming) instead of LiquidSwapGuard.
+        bool useLiquidGuard;
         int24 poolTickSpacing;
-        uint16 internalMaxSlippageBps;
         uint256 minRareLiquidityWei;
     }
 
@@ -99,11 +100,11 @@ library DeployConfig {
             factory: FactoryConfig({
                 lpTickLower: -180, // max expensive (after price rises) - multiple of 60
                 lpTickUpper: 120000, // starting point (cheap tokens, bonding curve bottom) - multiple of 60
-                poolHooks: address(0), // ignored when useSwapGuard is true (resolved from LiquidSwapGuard at deploy time)
-                useSwapGuard: true, // use LiquidSwapGuard for Instant/MultiCurve/Graduated
+                poolHooks: address(0), // ignored when useSwapGuard/useLiquidGuard is true (resolved from guard at deploy time)
+                useSwapGuard: false, // legacy: use LiquidSwapGuard (restricts swaps to LiquidRouter)
+                useLiquidGuard: true, // use LiquidGuard (hook-level fee skimming, no caller restrictions)
                 poolTickSpacing: 60, // Price granularity (ticks must be multiples of this). Common values: 1, 10, 60, 200
-                internalMaxSlippageBps: 500, // 5%
-                minRareLiquidityWei: 250000000000000000000 // 250 RARE (shared by Instant and MultiCurve)
+                minRareLiquidityWei: 0 // No RARE required — bonding curve is funded by 900K LIQUID tokens, not creator RARE
             }),
             fees: FeeConfig({
                 totalFeeBPS: 400 // 4% gross fees

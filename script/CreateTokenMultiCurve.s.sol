@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 import {Curve} from "doppler/libraries/Multicurve.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
-import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
+
 import {DeployConfig} from "./config/DeployConfig.sol";
 import {NetworkConfig} from "./config/NetworkConfig.sol";
 import {console} from "forge-std/console.sol";
@@ -16,18 +16,17 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  * @dev Uses default curve configuration from DeployConfig (250 RARE anchor, ~$500K FDV ceiling).
  *
  * IMPORTANT REQUIREMENTS:
- * - The deployer must have RARE tokens >= INITIAL_RARE_LIQUIDITY (minimum 250 RARE)
- * - The deployer must approve the factory to spend RARE tokens
+ * - The deployer must approve the factory to spend RARE tokens (if providing initial RARE)
  *
  * Environment Variables Required:
- * - DEPLOYER_PRIVATE_KEY: Private key for the deployer (must have RARE tokens)
+ * - DEPLOYER_PRIVATE_KEY: Private key for the deployer
  * - TOKEN_CREATOR: Address that will receive creator fees and launch reward
  * - TOKEN_URI: Metadata URI for the token
  * - TOKEN_NAME: Name of the token
  * - TOKEN_SYMBOL: Symbol of the token
  *
  * Environment Variables Optional:
- * - INITIAL_RARE_LIQUIDITY: Amount of RARE tokens for initial liquidity (default: 250 ether)
+ * - INITIAL_RARE_LIQUIDITY: Optional RARE for head position beyond curve range (default: 0)
  * - FACTORY_ADDRESS: Factory address (defaults to NetworkConfig)
  * - ROUTER_ADDRESS: Router address for token registration (defaults to NetworkConfig)
  * - CHAIN_ID: Chain ID (defaults to block.chainid)
@@ -47,7 +46,7 @@ contract CreateTokenMultiCurve is Script {
         try vm.envUint("INITIAL_RARE_LIQUIDITY") returns (uint256 rare) {
             initialRareLiquidity = rare;
         } catch {
-            initialRareLiquidity = 250 ether; // Default to 250 RARE (shared minimum)
+            initialRareLiquidity = 0; // No RARE required — bonding curve is funded by LIQUID tokens
         }
 
         uint256 chainId;
@@ -99,21 +98,23 @@ contract CreateTokenMultiCurve is Script {
         address baseToken = factory.baseToken();
         require(baseToken != address(0), "Base token not set in factory");
 
-        uint256 currentAllowance = IERC20(baseToken).allowance(
-            deployerAddress,
-            factoryAddress
-        );
-        if (currentAllowance < initialRareLiquidity) {
-            IERC20(baseToken).approve(factoryAddress, type(uint256).max);
-        }
-
-        uint256 deployerRareBalance = IERC20(baseToken).balanceOf(
-            deployerAddress
-        );
-        if (deployerRareBalance < initialRareLiquidity) {
-            revert(
-                "Insufficient RARE balance. Deployer needs at least initialRareLiquidity RARE tokens (min 250)."
+        if (initialRareLiquidity > 0) {
+            uint256 currentAllowance = IERC20(baseToken).allowance(
+                deployerAddress,
+                factoryAddress
             );
+            if (currentAllowance < initialRareLiquidity) {
+                IERC20(baseToken).approve(factoryAddress, type(uint256).max);
+            }
+
+            uint256 deployerRareBalance = IERC20(baseToken).balanceOf(
+                deployerAddress
+            );
+            if (deployerRareBalance < initialRareLiquidity) {
+                revert(
+                    "Insufficient RARE balance for initial liquidity."
+                );
+            }
         }
 
         address multiCurveImpl = factory.liquidMultiCurveImplementation();
@@ -135,20 +136,8 @@ contract CreateTokenMultiCurve is Script {
         console.log("LiquidMultiCurve token created at:", newToken);
         vm.stopBroadcast();
 
-        if (routerAddress != address(0)) {
-            vm.startBroadcast(deployerPrivateKey);
-            try
-                ILiquidRouter(routerAddress).registerToken(
-                    newToken,
-                    tokenCreator
-                )
-            {
-                console.log("Token successfully registered with router!");
-            } catch {
-                console.log("Failed to register token with router");
-            }
-            vm.stopBroadcast();
-        }
+        // Token registration is handled automatically by LiquidFactory via LiquidRegistry.
+        console.log("Token registered via factory -> LiquidRegistry (automatic).");
 
         console.log("");
         console.log("=== TOKEN CREATION SUMMARY ===");

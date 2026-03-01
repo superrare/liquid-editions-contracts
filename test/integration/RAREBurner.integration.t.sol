@@ -120,14 +120,11 @@ contract RAREBurnerIntegrationTest is Test {
         // Deploy factory with burner (25% burn fee for integration tests)
         factory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
             LP_TICK_LOWER,
             LP_TICK_UPPER,
-            config.uniswapV4Quoter, // Use wrapper instead of raw quoter
             address(0), // poolHooks (no hooks)
             60, // poolTickSpacing (standard for 0.3% fee tier)
-            300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
                 factory.setLiquidRegistry(address(1));

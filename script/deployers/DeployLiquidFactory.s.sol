@@ -17,15 +17,14 @@ import {DeployLiquidGraduated} from "./DeployLiquidGraduated.s.sol";
 library DeployLiquidFactory {
     /// @notice Minimal network addresses needed for LiquidFactory deployment
     struct NetworkAddresses {
-        address weth;
         address uniswapV4PoolManager;
-        address uniswapV4Quoter;
         address rareToken;
     }
 
     /// @notice All addresses produced by a full factory deployment
     struct DeployResult {
         address factory;
+        address instantImplementation;
         address multiCurveImplementation;
         address graduatedImplementation;
     }
@@ -45,9 +44,7 @@ library DeployLiquidFactory {
             admin,
             config,
             NetworkAddresses({
-                weth: network.weth,
                 uniswapV4PoolManager: network.uniswapV4PoolManager,
-                uniswapV4Quoter: network.uniswapV4Quoter,
                 rareToken: network.rareToken
             })
         );
@@ -66,21 +63,13 @@ library DeployLiquidFactory {
     ) internal returns (DeployResult memory result) {
         console.log("=== Deploying LiquidFactory ===");
 
-        // Validate required addresses
-        require(
-            network.weth != address(0),
-            "WETH address not configured for this network"
-        );
         require(
             network.uniswapV4PoolManager != address(0),
             "V4 PoolManager not configured for this network"
         );
-        require(
-            network.uniswapV4Quoter != address(0),
-            "V4 Quoter not configured for this network"
-        );
 
         // Deploy all implementations
+        result.instantImplementation = DeployLiquid.deploy();
         result.multiCurveImplementation = DeployLiquidMultiCurve.deploy();
         result.graduatedImplementation = DeployLiquidGraduated.deploy(false);
 
@@ -90,6 +79,7 @@ library DeployLiquidFactory {
         // Register implementations and base token
         _configureFactory(
             result.factory,
+            result.instantImplementation,
             result.multiCurveImplementation,
             result.graduatedImplementation,
             network.rareToken
@@ -113,21 +103,16 @@ library DeployLiquidFactory {
         console.logAddress(config.poolHooks);
         console.log("  Pool Tick Spacing:");
         console.logInt(config.poolTickSpacing);
-        console.log("  Internal Max Slippage BPS:");
-        console.logUint(config.internalMaxSlippageBps);
         console.log("  Min RARE Liquidity Wei:");
         console.logUint(config.minRareLiquidityWei);
 
         LiquidFactory factoryContract = new LiquidFactory(
             admin,
-            network.weth,
             network.uniswapV4PoolManager,
             config.lpTickLower,
             config.lpTickUpper,
-            network.uniswapV4Quoter,
             config.poolHooks,
             config.poolTickSpacing,
-            config.internalMaxSlippageBps,
             config.minRareLiquidityWei
         );
 
@@ -138,12 +123,15 @@ library DeployLiquidFactory {
 
     function _configureFactory(
         address factory,
+        address instantImpl,
         address multiCurveImpl,
         address graduatedImpl,
         address rareToken
     ) private {
         LiquidFactory factoryContract = LiquidFactory(factory);
 
+        console.log("Setting LiquidInstant implementation in factory...");
+        factoryContract.setLiquidInstantImplementation(instantImpl);
         console.log("Setting LiquidMultiCurve implementation in factory...");
         factoryContract.setLiquidMultiCurveImplementation(multiCurveImpl);
         console.log("Setting LiquidGraduated implementation in factory...");

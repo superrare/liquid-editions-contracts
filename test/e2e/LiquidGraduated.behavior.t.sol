@@ -194,14 +194,11 @@ contract LiquidGraduatedBehaviorTest is LiquidTokenBehaviorBase {
         vm.startPrank(admin);
         LiquidFactory f = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager,
             -180,
             120000,
-            config.uniswapV4Quoter,
             address(0),
             60,
-            300,
             1e15
         );
         f.setLiquidRegistry(address(1));
@@ -213,7 +210,6 @@ contract LiquidGraduatedBehaviorTest is LiquidTokenBehaviorBase {
                 config.uniswapV4PoolManager
             );
         f.setLbpStrategyFactory(address(stratFactory));
-        f.setPositionManager(config.uniswapV4PositionManager);
         f.setProtocolFeeRecipient(tokenCreator);
         vm.stopPrank();
 
@@ -330,14 +326,11 @@ contract LiquidGraduatedPreGradBehaviorTest is LiquidTokenBehaviorBase {
         vm.startPrank(admin);
         LiquidFactory f = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager,
             -180,
             120000,
-            config.uniswapV4Quoter,
             address(0),
             60,
-            300,
             1e15
         );
         f.setLiquidRegistry(address(1));
@@ -349,7 +342,6 @@ contract LiquidGraduatedPreGradBehaviorTest is LiquidTokenBehaviorBase {
                 config.uniswapV4PoolManager
             );
         f.setLbpStrategyFactory(address(stratFactory));
-        f.setPositionManager(config.uniswapV4PositionManager);
         f.setProtocolFeeRecipient(tokenCreator);
         vm.stopPrank();
 

@@ -18,6 +18,9 @@ The main factory contract for deploying new Liquid token instances. Manages prot
 - Protocol fee configuration and recipient
 - Integration with RAREBurner
 - Token deployment and tracking
+- V4 hooks, pool bootstrap parameters, and registry wiring
+- `createLiquidTokenWithAuction` keeps the legacy `_migrator` parameter in its signature for compatibility,
+  but the argument is intentionally ignored in the active architecture.
 
 ### `LiquidInstant.sol`
 The instant-launch ERC-20 token implementation featuring:
@@ -43,40 +46,31 @@ The multicurve anti-sniping ERC-20 token implementation featuring:
 ### `LiquidRouter.sol`
 Router contract enabling fee-wrapped trading for any registered ERC20 token:
 - Routes swaps through Uniswap Universal Router (V2/V3/V4 support)
-- Collects trading fees and distributes to beneficiaries and protocol
+- Does not collect fees itself in-trade; V4 fee collection is performed in `LiquidGuard`
+- through callback hooks, then forwarded to `FeeDistributor.notifyFee`
 - Supports buy (ETH → token), sell (token → ETH), and swap (any → any) operations
 - Uses Permit2 for secure token approvals
+- Emits trade events with fee fields as zeros because the active split is applied downstream.
 
 ### `LiquidAuctioneer.sol`
 Router contract for CCA auction interactions:
 - Bid on auctions using ETH or ERC20 tokens (swapped to RARE)
 - Exit bids and claim filled tokens
 - Routes swaps through Uniswap Universal Router
-- Fee collection and distribution for auction bids
-
-### `LiquidFactory.sol`
-Factory contract for deploying Liquid token instances:
-- Creates LiquidInstant, LiquidGraduated, and LiquidMultiCurve tokens
-- Manages protocol-wide configuration (pool parameters, hooks, registry)
-- Uses EIP-1167 minimal proxy pattern for gas-efficient deployments
-- Centralized configuration management
+- Uses legacy auction compatibility flow for native-ETH bid fees (`totalFeeBPS` + `distributeFees`), which is intentionally a compatibility no-op in current V4 distributor.
 
 ### `FeeDistributor.sol`
 Fee distribution contract that splits trading fees:
-- Supports three fee split scenarios: 50/50 (single beneficiary), 33/33/34 (two distinct beneficiaries), 100% protocol (no beneficiary)
-- Handles failed beneficiary transfers gracefully (absorbed by protocol)
-- Immutable protocol fee recipient (set at deployment)
+- Skims RARE via `LiquidGuard` hooks, then attempts inline RARE→ETH conversion and distribution.
+- Falls back to direct RARE forwarding when conversion is disabled, stale, or fails.
+- Follows compatibility no-op behavior for legacy auction selectors (`totalFeeBPS`, etc.).
+- Protocol fee recipient is immutable at construction.
 
 ### `LiquidRegistry.sol`
 Centralized registry of valid Liquid tokens and their beneficiaries:
 - Token registration requirement for Router and Auctioneer trading
 - Beneficiary mapping for fee distribution
 - Writer-based access control (factory can register tokens)
-
-### `BeneficiaryRegistry.sol`
-Shared mapping from token to beneficiary with explicit writer allowlist:
-- Similar to LiquidRegistry but with different access control model
-- Used for token-beneficiary mapping with writer permissions
 
 ### `LiquidSwapGuard.sol`
 Uniswap V4 hook that restricts swaps and pool initialization:
@@ -102,6 +96,27 @@ Helper contract for managing Uniswap V4 liquidity positions:
 - Simplified V4 position management
 - Liquidity addition and removal
 - Position tracking and queries
+
+## Canonical behavior map
+
+Use [`docs/FLOW.md`](docs/FLOW.md) as the canonical onboarding and behavior reference.
+It includes one concise flow summary each for:
+- Create
+- Buy
+- Sell
+- Swap
+- Auction bid
+- Fee conversion/distribution
+- Burn
+
+This doc also contains the required `Feature -> File -> Functions -> Events` mapping.
+
+## Known compatibility / no-op behavior
+
+- `IFeeDistributor.totalFeeBPS`, `quoteFeeBreakdown`, `distributeFees`, and `setTotalFeeBPS` are compatibility entrypoints for historical interfaces and no-ops in the active V4 path.
+- `LiquidAuctioneer` native-ETH bid fee collection uses the legacy compatibility path via those selectors.
+- `createLiquidTokenWithAuction` keeps `_migrator` as a compatibility-only argument that is intentionally unused.
+- Router event fields `ethFee`, `protocolFee`, and `beneficiaryFee` are intentionally zero in this architecture.
 
 ## Prerequisites
 
@@ -399,9 +414,7 @@ liquid-edition-contracts/
 │   ├── LiquidInitGuard.sol # V4 hook for init-only restrictions
 │   ├── FeeDistributor.sol  # Fee distribution contract
 │   ├── LiquidRegistry.sol  # Token and beneficiary registry
-│   ├── BeneficiaryRegistry.sol # Alternative beneficiary registry
 │   ├── RAREBurner.sol      # RARE token burning
-│   ├── LiquidFeeLib.sol    # Shared fee calculation library
 │   └── RoutePolicy.sol     # Universal Router route validation
 ├── script/                  # Deployment scripts
 │   ├── LiquidFactoryDeploy.s.sol

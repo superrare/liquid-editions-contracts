@@ -15,6 +15,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
 import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
+import {Curve} from "doppler/libraries/Multicurve.sol";
 
 /// @title LiquidMultiCurve Quote → Trade Pattern Tests
 /// @notice Comprehensive tests for quoteBuy() → buy() and quoteSell() → sell() patterns
@@ -51,6 +52,17 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
     address internal constant ORDERING_BASE_TOKEN_HIGH = address(
         uint160(type(uint160).max)
     );
+
+    function _defaultSingleCurve() internal view returns (Curve[] memory) {
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: factory.lpTickLower(),
+            tickUpper: factory.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+        return curves;
+    }
 
     function setUp() public {
         // Fork Base mainnet for realistic testing
@@ -96,14 +108,11 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
         );
         factory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
             LP_TICK_LOWER,
             LP_TICK_UPPER,
-            config.uniswapV4Quoter, // Use wrapper instead of raw quoter
             initGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
-            300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
         LiquidInitGuard(initGuardAddr).setFactory(address(factory));
@@ -130,21 +139,11 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            INITIAL_LIQUIDITY_RARE
+            INITIAL_LIQUIDITY_RARE,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
         token = LiquidMultiCurve(payable(tokenAddr));
-
-        // Verify quoter is configured
-        address quoterAddr = factory.v4Quoter();
-        require(
-            quoterAddr != address(0),
-            "Quoter must be configured for quote tests"
-        );
-        require(
-            quoterAddr == config.uniswapV4Quoter,
-            "Quoter should be raw V4 quoter"
-        );
 
         // Verify pool is initialized
         require(
@@ -153,7 +152,6 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
         );
 
         console.log("=== QUOTE TEST SETUP ===");
-        console.log("Quoter address:", quoterAddr);
         console.log(
             "Pool initialized:",
             PoolId.unwrap(token.poolId()) != bytes32(0)
@@ -195,7 +193,8 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
             "ipfs://ordering-test",
             "Ordering Test",
             "ORDR",
-            INITIAL_LIQUIDITY_RARE
+            INITIAL_LIQUIDITY_RARE,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 

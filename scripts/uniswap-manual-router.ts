@@ -928,7 +928,7 @@ export async function getManualBuyQuote(
   chainId: number,
   rpcUrl: string,
   wethAddress: string,
-  liquidRouterFeeBps: number // Fee that LiquidRouter takes (read from contract)
+  _liquidRouterFeeBps: number = 0 // Unused: kept for call-site compatibility, router takes no fee
 ): Promise<QuoteResult> {
   const {
     token,
@@ -936,13 +936,12 @@ export async function getManualBuyQuote(
     ethAmount,
     slippageBps = 500,
     recipient,
-    poolFee = 3000,
     baseTokenAddress, // Optional: RARE address for Liquid tokens
   } = params;
 
   const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
   const ethAmountBN = ethers.BigNumber.from(ethAmount);
-  const ethForSwap = ethAmountBN.mul(10000 - liquidRouterFeeBps).div(10000);
+  const ethForSwap = ethAmountBN; // Router takes no fee; full ETH goes to swap
 
   console.log(`Getting quote for ${ethers.utils.formatEther(ethForSwap)} ETH → ${token.slice(0, 10)}...`);
   

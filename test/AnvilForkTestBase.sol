@@ -75,7 +75,6 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
         ) {
             factory.setCcaFactory(config.ccaFactory);
             factory.setLbpStrategyFactory(config.lbpStrategyFactory);
-            factory.setPositionManager(config.uniswapV4PositionManager);
             factory.setProtocolFeeRecipient(protocolFeeRecipient);
             auctioneer = LiquidAuctioneer(
                 payable(
@@ -121,9 +120,6 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
         );
         liquidToken = LiquidMultiCurve(payable(tokenAddr));
         vm.stopPrank();
-
-        vm.prank(admin);
-        router.registerToken(tokenAddr, tokenCreator);
 
         vm.deal(buyer, 10 ether);
     }
@@ -198,15 +194,17 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
         return string.concat("0.", fracStr);
     }
 
-    function _ethForSwap(uint256 ethAmount) internal view returns (uint256) {
-        return
-            (ethAmount * (10000 - _totalFeeBpsForRouter(router))) / 10000;
+    /// @notice Fees are now skimmed at the hook level in RARE, not deducted from ETH.
+    ///         Full ETH amount is routed to the swap; helper kept for interface compat.
+    function _ethForSwap(uint256 ethAmount) internal pure returns (uint256) {
+        return ethAmount;
     }
 
+    /// @notice Fee BPS is managed by LiquidGuard hook. Returns 0 for router (no ETH fees deducted).
     function _totalFeeBpsForRouter(
-        LiquidRouter targetRouter
-    ) internal view returns (uint256 totalFeeBps) {
-        return IFeeDistributor(targetRouter.feeDistributor()).totalFeeBPS();
+        LiquidRouter
+    ) internal pure returns (uint256) {
+        return 0;
     }
 
     function _doBuy(

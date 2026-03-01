@@ -12,7 +12,9 @@ library NetworkConfig {
         address swapGuard;
         /// @notice LiquidInitGuard hook (init-only protection); default poolHooks when swapGuard is not used
         address initGuard;
-        /// @notice Shared FeeDistributor module used by router and auctioneer
+        /// @notice LiquidGuard hook (hook-level RARE fee skimming, no caller restrictions)
+        address liquidGuard;
+        /// @notice Shared FeeDistributor module used by LiquidGuard
         address feeDistributor;
         /// @notice Shared LiquidRegistry module used by router and auctioneer
         address liquidRegistry;
@@ -64,6 +66,7 @@ library NetworkConfig {
                         auctioneer: address(0), // not yet deployed
                         swapGuard: address(0), // not yet deployed
                         initGuard: address(0), // not yet deployed
+                        liquidGuard: address(0), // not yet deployed
                         feeDistributor: address(0), // not yet deployed
                         liquidRegistry: address(0) // not yet deployed
                     })
@@ -90,6 +93,7 @@ library NetworkConfig {
                         auctioneer: address(0),
                         swapGuard: address(0),
                         initGuard: address(0),
+                        liquidGuard: address(0),
                         feeDistributor: address(0),
                         liquidRegistry: address(0)
                     })
@@ -116,6 +120,7 @@ library NetworkConfig {
                         auctioneer: address(0),
                         swapGuard: address(0),
                         initGuard: address(0),
+                        liquidGuard: address(0),
                         feeDistributor: address(0),
                         liquidRegistry: address(0)
                     })
@@ -137,13 +142,14 @@ library NetworkConfig {
                     lbpStrategyFactory: 0x89Dd5691e53Ea95d19ED2AbdEdCf4cBbE50da1ff,
                     protocolFeeRecipient: 0xBa68422A154e459f7b4992a95Ad358d412b6bd1d,
                     liquid: LiquidAddresses({
-                        factory: 0xcA94DC0001929E9BB2aB6a053f61411Ab8E62879,
-                        router: 0x7E0e7cF5514705ff7E91d6bEA4Cd633d55fB1184,
-                        auctioneer: 0x6D9cDe40169Beb1e819395B8b62ad2b1a07b4754,
+                        factory: 0x074598D92570915940aFC6662E9268FAa21533E4,
+                        router: 0x5428da796D33dFb99d1E2EFB095028302edFA636,
+                        auctioneer: 0x67a5b1Bc2c4834206dA31844C172572F05099D87,
                         swapGuard: 0x69E682bde73c1906CCcE0B0aA0587D63B4C4E080,
                         initGuard: address(0),
-                        feeDistributor: address(0),
-                        liquidRegistry: address(0)
+                        liquidGuard: 0x36F5Ab31b001c8F2AC5eE76Ccf5AfE887503a0Cc,
+                        feeDistributor: 0x93e73F99f37b8a195D5E318cc7Bcb1B3a08bDe96,
+                        liquidRegistry: 0xD395973ebb3AEB36d18d376312046d2A8d8D8926
                     })
                 });
         }

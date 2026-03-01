@@ -17,11 +17,10 @@ import {ILiquidRegistry} from "liquid-editions/interfaces/ILiquidRegistry.sol";
 ///      - Beneficiary mapping (token address → beneficiary address)
 ///      - Registration gating (Router/Auctioneer check isRegistered() before allowing trades)
 ///
-///      **Relationship to BeneficiaryRegistry:**
-///      - LiquidRegistry extends BeneficiaryRegistry's concept with registration requirements
+///      **Relationship to beneficiary mapping patterns:**
+///      - LiquidRegistry combines beneficiary resolution with token registration requirements
 ///      - LiquidRegistry adds isRegistered() function which Router/Auctioneer use for security
-///      - Both registries can coexist - LiquidRegistry is used for trading security,
-///        BeneficiaryRegistry can be used for other purposes that don't require registration gating
+///      - The registry enforces trading security checks at the protocol level.
 ///
 ///      **Registration Requirements:**
 ///      - LiquidRouter.buy()/sell()/swap() check isRegistered() before executing trades
@@ -68,6 +67,9 @@ contract LiquidRegistry is ILiquidRegistry, Ownable {
     /// @param writer The writer address to enable/disable
     /// @param enabled True to enable, false to disable
     function setWriter(address writer, bool enabled) external onlyOwner {
+        if (writer == address(0)) {
+            revert ZeroAddress();
+        }
         isWriter[writer] = enabled;
         emit WriterUpdated(writer, enabled);
     }

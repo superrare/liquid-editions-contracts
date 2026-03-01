@@ -7,6 +7,7 @@ import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
 import {IRAREBurner} from "liquid-editions/interfaces/IRAREBurner.sol";
 import {ILiquidFactory} from "liquid-editions/interfaces/ILiquidFactory.sol";
+import {Curve} from "doppler/libraries/Multicurve.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
@@ -63,6 +64,17 @@ contract LiquidInstantMainnetInvariantTest is Test, InitGuardTestHelper {
         uint256 orderReferrerFee,
         uint256 protocolFee
     );
+
+    function _defaultSingleCurve(LiquidFactory _factory) internal view returns (Curve[] memory) {
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: _factory.lpTickLower(),
+            tickUpper: _factory.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+        return curves;
+    }
 
     // Helper function to compute correct PoolId from parameters
     function _computePoolId(
@@ -132,14 +144,11 @@ contract LiquidInstantMainnetInvariantTest is Test, InitGuardTestHelper {
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
             LP_TICK_LOWER,
             LP_TICK_UPPER,
-            config.uniswapV4Quoter, // Use wrapper instead of raw quoter
             initGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
-            300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
         LiquidInitGuard(initGuardAddr).setFactory(address(factory));
@@ -163,14 +172,11 @@ contract LiquidInstantMainnetInvariantTest is Test, InitGuardTestHelper {
         address burnInitGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factoryWithBurn = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
             LP_TICK_LOWER,
             LP_TICK_UPPER,
-            config.uniswapV4Quoter, // Use wrapper instead of raw quoter
             burnInitGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
-            300, // internalMaxSlippageBps
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
         LiquidInitGuard(burnInitGuardAddr).setFactory(address(factoryWithBurn));
@@ -284,14 +290,11 @@ contract LiquidInstantMainnetInvariantTest is Test, InitGuardTestHelper {
         address reentryInitGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factoryWithBurn = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
             LP_TICK_LOWER,
             LP_TICK_UPPER,
-            config.uniswapV4Quoter, // Use wrapper instead of raw quoter
             reentryInitGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
-            300, // internalMaxSlippageBps
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
         LiquidInitGuard(reentryInitGuardAddr).setFactory(address(factoryWithBurn));
@@ -308,7 +311,8 @@ contract LiquidInstantMainnetInvariantTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve(factoryWithBurn)
         );
         vm.stopPrank();
         token = LiquidMultiCurve(payable(tokenAddr));

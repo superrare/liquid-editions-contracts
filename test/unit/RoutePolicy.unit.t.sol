@@ -187,4 +187,35 @@ contract RoutePolicyUnitTest is Test {
         );
         harness.validate(commands, inputs, true);
     }
+
+    function testValidateRouteRevertsOnInputLengthTooShort() public {
+        bytes memory commands = hex"00"; // V3_SWAP_EXACT_IN
+        bytes[] memory inputs = new bytes[](1);
+        inputs[0] = hex"1234"; // less than 32 bytes
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RoutePolicy.InvalidCommandInput.selector,
+                bytes1(0x00)
+            )
+        );
+        harness.validate(commands, inputs, false);
+    }
+
+    function testValidateRouteRevertsWhenTokenOutputLastCommandWrapEth() public {
+        bytes memory commands = hex"0b"; // WRAP_ETH
+        bytes[] memory inputs = new bytes[](1);
+        inputs[0] = abi.encode(
+            ROUTER_ADDRESS,
+            uint256(1)
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RoutePolicy.InvalidFinalRouteCommand.selector,
+                bytes1(0x0b)
+            )
+        );
+        harness.validate(commands, inputs, false);
+    }
 }

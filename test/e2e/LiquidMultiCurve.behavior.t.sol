@@ -70,14 +70,11 @@ contract LiquidMultiCurveBehaviorTest is LiquidTokenBehaviorBase, InitGuardTestH
         vm.startPrank(admin);
         LiquidFactory f = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager,
             -180,
             120000,
-            config.uniswapV4Quoter,
             initGuardAddr,
             60,
-            300,
             LIQUIDITY
         );
         LiquidInitGuard(initGuardAddr).setFactory(address(f));

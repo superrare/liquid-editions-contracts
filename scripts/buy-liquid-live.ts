@@ -69,9 +69,8 @@ const WETH_ADDRESSES: Record<number, string> = {
 
 // ABIs
 const LIQUID_ROUTER_ABI = [
-  'function buy(address token, address recipient, address orderReferrer, uint256 minTokensOut, bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable returns (uint256 tokensReceived)',
-  'function TOTAL_FEE_BPS() external view returns (uint256)',
-  'event RouterBuy(address indexed token, address indexed buyer, address indexed recipient, address orderReferrer, uint256 ethAmount, uint256 ethFee, uint256 ethSwapped, uint256 tokensReceived, uint256 protocolFee, uint256 referrerFee, uint256 beneficiaryFee, uint256 burnFee)',
+  'function buy(address token, address recipient, uint256 minTokensOut, bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable returns (uint256 tokensReceived)',
+  'event RouterBuy(address indexed token, address indexed buyer, address indexed recipient, uint256 totalEth, uint256 ethFee, uint256 ethSwapped, uint256 tokensReceived, uint256 protocolFee, uint256 beneficiaryFee)',
 ];
 
 const ERC20_ABI = [
@@ -134,12 +133,8 @@ async function main() {
   console.log('  ETH:', ethers.utils.formatEther(ethBalanceBefore), 'ETH');
   console.log('  Token:', ethers.utils.formatEther(tokenBalanceBefore), tokenSymbol);
   
-  // Get router fee configuration
   const router = new ethers.Contract(CONFIG.liquidRouter, LIQUID_ROUTER_ABI, provider);
-  const totalFeeBps = await router.TOTAL_FEE_BPS();
-  console.log('\n⚙️  Router Configuration:');
-  console.log('  Total Fee:', totalFeeBps.toNumber() / 100, '%');
-  
+
   // Get quote from Uniswap
   console.log('\n🔍 Getting quote from Uniswap...');
   console.log('  Route: ETH → RARE → Liquid token (multi-hop)');
@@ -158,7 +153,7 @@ async function main() {
       recipient: wallet.address,
       poolFee: 0, // Liquid tokens use 0% fee V4 pools
       baseTokenAddress: rareToken, // REAL RARE token for multi-hop
-    }, CONFIG.chainId, CONFIG.rpcUrl, wethAddress, totalFeeBps.toNumber());
+    }, CONFIG.chainId, CONFIG.rpcUrl, wethAddress, 0);
     
     console.log('\n✅ Quote received:');
     console.log('  Route:', quote.route);
@@ -188,7 +183,6 @@ async function main() {
     const tx = await routerWithSigner.buy(
       CONFIG.liquidToken,
       wallet.address,
-      ethers.constants.AddressZero,
       quote.minAmountOut,
       quote.commands,
       quote.inputs,
@@ -220,13 +214,8 @@ async function main() {
     if (buyEvent) {
       console.log('\n📊 Trade Details:');
       console.log('  Tokens received:', ethers.utils.formatEther(buyEvent.args.tokensReceived), tokenSymbol);
-      console.log('  ETH fee:', ethers.utils.formatEther(buyEvent.args.ethFee), 'ETH');
-      console.log('  ETH swapped:', ethers.utils.formatEther(buyEvent.args.ethSwapped), 'ETH');
-      console.log('\n  Fee Distribution:');
-      console.log('    Protocol:', ethers.utils.formatEther(buyEvent.args.protocolFee), 'ETH');
-      console.log('    Referrer:', ethers.utils.formatEther(buyEvent.args.referrerFee), 'ETH');
-      console.log('    Beneficiary:', ethers.utils.formatEther(buyEvent.args.beneficiaryFee), 'ETH');
-      console.log('    RARE Burn:', ethers.utils.formatEther(buyEvent.args.burnFee), 'ETH');
+      console.log('  ETH sent:', ethers.utils.formatEther(buyEvent.args.totalEth), 'ETH');
+      console.log('  Note: RARE fees skimmed at pool level by LiquidGuard hook');
     }
     
   } catch (error: any) {

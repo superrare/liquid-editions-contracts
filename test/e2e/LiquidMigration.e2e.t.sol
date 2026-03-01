@@ -3,7 +3,6 @@ pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
 import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
-import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
@@ -36,6 +35,17 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
     LiquidMultiCurve public multiCurveImpl;
     MockRARE public mockRARE;
 
+    function _defaultSingleCurve() internal view returns (Curve[] memory) {
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: factory.lpTickLower(),
+            tickUpper: factory.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+        return curves;
+    }
+
     function setUp() public {
         string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
@@ -56,14 +66,11 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager,
             -180, // lpTickLower
             120000, // lpTickUpper
-            config.uniswapV4Quoter,
             initGuardAddr, // poolHooks
             60, // poolTickSpacing
-            300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei
         );
         LiquidInitGuard(initGuardAddr).setFactory(address(factory));
@@ -91,7 +98,8 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
             "ipfs://test-instant",
             "Test Instant",
             "TINST",
-            rareLiquidity
+            rareLiquidity,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
         return LiquidMultiCurve(payable(tokenAddr));
@@ -155,6 +163,10 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
 
         // Remove liquidity as protocolFeeRecipient
         vm.prank(protocolFeeRecipient);
+        
+        vm.expectEmit(true, false, false, false);
+        emit ILiquid.LiquidityRemoved(protocolFeeRecipient, 0, 0); // Can't easily pre-calculate exact amounts here, check for emission
+
         token.removeLiquidity(protocolFeeRecipient);
 
         // Verify liquidity removed
@@ -226,6 +238,10 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
 
         // Remove liquidity as protocolFeeRecipient
         vm.prank(protocolFeeRecipient);
+        
+        vm.expectEmit(true, false, false, false);
+        emit ILiquid.LiquidityRemoved(protocolFeeRecipient, 0, 0); // Can't easily pre-calculate exact amounts here, check for emission
+
         token.removeLiquidity(protocolFeeRecipient);
 
         // Verify positions cleared
@@ -289,7 +305,8 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
             "ipfs://test-migrated",
             "Migrated Token",
             "TMIG",
-            recoveredRare
+            recoveredRare,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 

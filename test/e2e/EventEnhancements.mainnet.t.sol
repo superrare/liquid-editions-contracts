@@ -16,6 +16,7 @@ import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
 import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
+import {Curve} from "doppler/libraries/Multicurve.sol";
 
 // Mock PoolManager
 contract MockPoolManager {
@@ -57,6 +58,17 @@ contract EventEnhancementsMainnetTest is Test, InitGuardTestHelper {
         uint256 ethAmount,
         bool depositSuccess
     );
+
+    function _defaultSingleCurve() internal view returns (Curve[] memory) {
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: factory.lpTickLower(),
+            tickUpper: factory.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+        return curves;
+    }
 
     // Helper function to compute correct PoolId from parameters
     function _computePoolId(
@@ -133,14 +145,11 @@ contract EventEnhancementsMainnetTest is Test, InitGuardTestHelper {
         // Deploy factory (fee config moved to LiquidRouter)
         factory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
             LP_TICK_LOWER,
             LP_TICK_UPPER,
-            config.uniswapV4Quoter, // Use wrapper instead of raw quoter
             initGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
-            300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
         LiquidInitGuard(initGuardAddr).setFactory(address(factory));
@@ -164,46 +173,22 @@ contract EventEnhancementsMainnetTest is Test, InitGuardTestHelper {
         // Deploy new factory and verify config values are set correctly
         vm.startPrank(admin);
 
-        LiquidFactory newFactory = new LiquidFactory(
+        new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
             LP_TICK_LOWER,
             LP_TICK_UPPER,
-            config.uniswapV4Quoter, // Use wrapper instead of raw quoter
             address(0), // poolHooks (no hooks)
             60, // poolTickSpacing (standard for 0.3% fee tier)
-            300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-
-        vm.stopPrank();
-
-        // Verify config values are set correctly (fee config moved to LiquidRouter)
-        assertEq(newFactory.internalMaxSlippageBps(), 300);
-    }
-
-    /// @notice Test individual setters update configuration immediately
-    function testIndividualSettersUpdateConfig() public {
-        vm.startPrank(admin);
-
-        // Test updating slippage
-        vm.expectEmit(true, false, false, true);
-        emit ILiquidFactory.InternalMaxSlippageBpsUpdated(500);
-        factory.setInternalMaxSlippageBps(500);
-        assertEq(factory.internalMaxSlippageBps(), 500);
 
         vm.stopPrank();
     }
 
     /// @notice Test individual setters update values correctly
     function testIndividualSettersUpdateValues() public {
-        // Test that individual setters update values correctly
         vm.startPrank(admin);
-
-        // Update slippage
-        factory.setInternalMaxSlippageBps(400);
-        assertEq(factory.internalMaxSlippageBps(), 400);
 
         // Test setting base token
         factory.setBaseToken(address(mockRARE));
@@ -222,7 +207,8 @@ contract EventEnhancementsMainnetTest is Test, InitGuardTestHelper {
             "ipfs://test3",
             "Test Token 3",
             "TEST3",
-            initialRareLiquidity
+            initialRareLiquidity,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 

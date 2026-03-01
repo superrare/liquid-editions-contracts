@@ -12,6 +12,7 @@ import {DeployConfig} from "script/config/DeployConfig.sol";
 import {DeployRAREBurner} from "script/deployers/DeployRAREBurner.s.sol";
 import {DeployLiquidFactory} from "script/deployers/DeployLiquidFactory.s.sol";
 import {DeployLiquidRouter} from "script/deployers/DeployLiquidRouter.s.sol";
+import {LiquidRegistry} from "liquid-editions/LiquidRegistry.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
@@ -114,22 +115,15 @@ abstract contract LiquidRouterForkBase is Test, InitGuardTestHelper {
 
         _configureFactory();
 
+        LiquidRegistry liquidRegistry = new LiquidRegistry(admin);
         (address routerAddr, ) = DeployLiquidRouter.deploy(
             admin,
-            protocolFeeRecipient,
-            deployConfig.fees,
-            config.uniswapUniversalRouter
+            config.uniswapUniversalRouter,
+            address(liquidRegistry)
         );
         router = LiquidRouter(payable(routerAddr));
-        ILiquidRegistry(router.liquidRegistry()).setWriter(
-            address(router),
-            true
-        );
-        ILiquidRegistry(router.liquidRegistry()).setWriter(
-            address(factory),
-            true
-        );
-        factory.setLiquidRegistry(router.liquidRegistry());
+        liquidRegistry.setWriter(address(factory), true);
+        factory.setLiquidRegistry(address(liquidRegistry));
 
         vm.stopPrank();
     }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
+import {ILiquidRegistry} from "liquid-editions/interfaces/ILiquidRegistry.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {NetworkConfig} from "./config/NetworkConfig.sol";
 import {console} from "forge-std/console.sol";
@@ -9,16 +9,16 @@ import {Script} from "forge-std/Script.sol";
 
 /**
  * @title RegisterToken
- * @notice Script to register a Liquid token with LiquidRouter
+ * @notice Script to register a Liquid token with LiquidRegistry
  * @dev
  *
  * Environment Variables Required:
- * - DEPLOYER_PRIVATE_KEY: Private key for the deployer
+ * - DEPLOYER_PRIVATE_KEY: Private key for the deployer (must be registry owner or writer)
  * - TOKEN_ADDRESS: Address of the Liquid token to register
  * - BENEFICIARY_ADDRESS: Address that will receive beneficiary fees (typically the token creator)
  *
  * Environment Variables Optional:
- * - ROUTER_ADDRESS: Router address (defaults to NetworkConfig)
+ * - LIQUID_REGISTRY: Registry address (defaults to NetworkConfig)
  * - CHAIN_ID: Chain ID (defaults to block.chainid)
  *
  * Usage:
@@ -28,7 +28,7 @@ contract RegisterToken is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address tokenAddress = vm.envAddress("TOKEN_ADDRESS");
-        
+
         // Get beneficiary from env, or default to token creator
         address beneficiaryAddress;
         try vm.envAddress("BENEFICIARY_ADDRESS") returns (address beneficiary) {
@@ -46,18 +46,18 @@ contract RegisterToken is Script {
         }
 
         NetworkConfig.Config memory config = NetworkConfig.getConfig(chainId);
-        address routerAddress;
-        try vm.envAddress("ROUTER_ADDRESS") returns (address _router) {
-            routerAddress = _router;
+        address registryAddress;
+        try vm.envAddress("LIQUID_REGISTRY") returns (address _registry) {
+            registryAddress = _registry;
         } catch {
-            routerAddress = config.liquid.router;
+            registryAddress = config.liquid.liquidRegistry;
         }
 
-        require(routerAddress != address(0), "Router address not configured");
+        require(registryAddress != address(0), "Registry address not configured");
 
         address deployerAddress = vm.addr(deployerPrivateKey);
 
-        console.log("=== REGISTERING TOKEN WITH LIQUID ROUTER ===");
+        console.log("=== REGISTERING TOKEN WITH LIQUID REGISTRY ===");
         console.log("");
         console.log("Deployer address:");
         console.logAddress(deployerAddress);
@@ -65,8 +65,8 @@ contract RegisterToken is Script {
         console.logAddress(tokenAddress);
         console.log("Beneficiary address:");
         console.logAddress(beneficiaryAddress);
-        console.log("Router address:");
-        console.logAddress(routerAddress);
+        console.log("Registry address:");
+        console.logAddress(registryAddress);
         console.log("");
 
         // Validate token and get token creator
@@ -88,12 +88,11 @@ contract RegisterToken is Script {
 
         console.log("");
 
-        // Register token with router
+        // Register token with registry
         vm.startBroadcast(deployerPrivateKey);
 
-        try ILiquidRouter(routerAddress).registerToken(tokenAddress, beneficiaryAddress) {
-            console.log("Token successfully registered with router!");
-            console.log("Creator will receive beneficiary fees (25% of total fee)");
+        try ILiquidRegistry(registryAddress).setBeneficiary(tokenAddress, beneficiaryAddress) {
+            console.log("Token successfully registered with registry!");
         } catch Error(string memory reason) {
             console.log("Failed to register token:");
             console.log(reason);

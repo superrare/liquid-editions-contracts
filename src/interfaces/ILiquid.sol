@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {Currency} from "v4-core/types/Currency.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {PoolId} from "v4-core/types/PoolId.sol";
+
 /// @title Liquid interface
-interface ILiquid {
+/// @dev Extends IERC20Metadata so callers can use a single ILiquid ABI for all token interactions
+///      including balanceOf, totalSupply, transfer, approve, name, symbol, decimals, etc.
+interface ILiquid is IERC20Metadata {
     /// @notice Thrown when an operation is attempted with a zero address
     error AddressZero();
 
@@ -104,7 +111,11 @@ interface ILiquid {
     /// @param recipient The address that received the withdrawn tokens
     /// @param amount0 Amount of currency0 withdrawn
     /// @param amount1 Amount of currency1 withdrawn
-    event LiquidityRemoved(address indexed recipient, uint256 amount0, uint256 amount1);
+    event LiquidityRemoved(
+        address indexed recipient,
+        uint256 amount0,
+        uint256 amount1
+    );
 
     /// @notice Emitted when the render contract is set
     /// @param renderContract The address of the render contract
@@ -115,7 +126,7 @@ interface ILiquid {
     function burn(uint256 amount) external;
 
     /// @notice Removes all LP liquidity and sends underlying tokens to recipient
-    /// @dev Only callable by factory's protocolFeeRecipient
+    /// @dev Callable only by the protocolFeeRecipient configured in the token factory.
     /// @param recipient Address to receive the withdrawn tokens
     function removeLiquidity(address recipient) external;
 
@@ -152,6 +163,15 @@ interface ILiquid {
     /// @return The Uniswap V4 PoolManager address
     function poolManager() external view returns (address);
 
+    /// @notice Returns the Uniswap V4 pool key (currency pair, fee, tick spacing, hooks)
+    /// @dev Struct fields are returned individually (Solidity auto-getter for public struct state variables).
+    ///      Reconstruct the PoolKey on the client side from the five return values.
+    function poolKey() external view returns (Currency currency0, Currency currency1, uint24 fee, int24 tickSpacing, IHooks hooks);
+
+    /// @notice Returns the Uniswap V4 pool ID derived from the pool key
+    /// @return The PoolId for this token's pool (bytes32(0) if not yet initialized)
+    function poolId() external view returns (PoolId);
+
     /// @notice Returns the maximum total supply of tokens
     /// @return The maximum total supply (1,000,000 tokens)
     function MAX_TOTAL_SUPPLY() external view returns (uint256);
@@ -165,8 +185,18 @@ interface ILiquid {
     function lpTickUpper() external view returns (int24);
 
     /// @notice Returns the LP position liquidity amount
+    /// @dev For LiquidInstant this is the single position's liquidity.
+    ///      For LiquidMultiCurve this is always 0 (liquidity is tracked per-position).
+    ///      Prefer totalLiquidity() for a unified view across token types.
     /// @return The liquidity amount
     function lpLiquidity() external view returns (uint128);
+
+    /// @notice Returns the total active liquidity at the current pool tick
+    /// @dev Reads directly from the Uniswap V4 PoolManager. Works identically for all
+    ///      token types (Instant, MultiCurve, Graduated). Returns 0 if pool not initialized
+    ///      or if liquidity has been removed.
+    /// @return The active liquidity at the current tick
+    function totalLiquidity() external view returns (uint128);
 
     /// @notice Returns the current raw pool price (no fees) in both directions
     /// @dev Reads directly from Uniswap V4 pool slot0. Returns WEI values scaled to 1e18.
@@ -203,7 +233,7 @@ interface ILiquid {
     /// @dev Simulates the swap via unlock callback. Uses revert-as-return pattern for gas-free simulation.
     ///      Not marked `view` (simulation reverts-to-return); use via eth_call.
     ///      Note: This quotes a direct RARE→LIQUID swap. For ETH→RARE→LIQUID routes, use LiquidRouter or client-side quoter.
-    ///      Fees are handled by LiquidRouter during actual trades.
+    ///      Fees are collected by LiquidGuard at the pool level during swaps (if attached).
     /// @param rareIn Amount of RARE to swap
     /// @return liquidOut LIQUID tokens that would be received from the swap
     /// @return sqrtPriceX96After Post-swap sqrt price (useful for price impact calculations)
@@ -215,7 +245,7 @@ interface ILiquid {
     /// @dev Simulates the swap via unlock callback. Uses revert-as-return pattern for gas-free simulation.
     ///      Not marked `view` (simulation reverts-to-return); use via eth_call.
     ///      Note: This quotes a direct LIQUID→RARE swap. For LIQUID→RARE→ETH routes, use LiquidRouter or client-side quoter.
-    ///      Fees are handled by LiquidRouter during actual trades.
+    ///      Fees are collected by LiquidGuard at the pool level during swaps (if attached).
     /// @param liquidIn Amount of LIQUID tokens to swap
     /// @return rareOut RARE that would be received from the swap
     /// @return sqrtPriceX96After Post-swap sqrt price (useful for price impact calculations)

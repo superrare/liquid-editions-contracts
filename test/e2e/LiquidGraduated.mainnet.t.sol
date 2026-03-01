@@ -104,14 +104,11 @@ contract LiquidGraduatedMainnetForkTest is Test {
 
         vm.startPrank(admin);        factory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager,
             -180,
             120000,
-            config.uniswapV4Quoter,
             address(0),
             60,
-            300,
             1e15
         );
                 factory.setLiquidRegistry(address(1));
@@ -124,11 +121,6 @@ contract LiquidGraduatedMainnetForkTest is Test {
                 config.uniswapV4PoolManager
             );
         factory.setLbpStrategyFactory(address(mockStrategyFactory));
-        // Use poolManager as positionManager if not set in config (for testing)
-        address posManager = config.uniswapV4PositionManager != address(0)
-            ? config.uniswapV4PositionManager
-            : config.uniswapV4PoolManager;
-        factory.setPositionManager(posManager);
         factory.setProtocolFeeRecipient(creator);
         vm.stopPrank();
     }

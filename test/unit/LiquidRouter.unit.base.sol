@@ -7,13 +7,12 @@ import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
 import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
-import {IFeeDistributor} from "liquid-editions/interfaces/IFeeDistributor.sol";
-import {FeeDistributor} from "liquid-editions/FeeDistributor.sol";
 import {LiquidRegistry} from "liquid-editions/LiquidRegistry.sol";
 
 /// @title Mock Universal Router for LiquidRouter testing
 contract MockUniversalRouterForRouter {
     MockERC20 public token;
+    MockERC20 public outputToken;
     uint256 public tokenPerEth = 1000e18;
     bool public shouldFail;
     uint256 public pullAmountOverride;
@@ -23,6 +22,11 @@ contract MockUniversalRouterForRouter {
 
     constructor(address _token) {
         token = MockERC20(_token);
+        outputToken = MockERC20(_token);
+    }
+
+    function setOutputToken(address _outputToken) external {
+        outputToken = MockERC20(_outputToken);
     }
 
     function setTokenPerEth(uint256 _rate) external {
@@ -40,12 +44,12 @@ contract MockUniversalRouterForRouter {
     receive() external payable {
         if (msg.value > 0 && !shouldFail) {
             uint256 tokensOut = (msg.value * tokenPerEth) / 1e18;
-            token.mint(msg.sender, tokensOut);
+            outputToken.mint(msg.sender, tokensOut);
         }
     }
 
     function execute(
-        bytes calldata,
+        bytes calldata commands,
         bytes[] calldata,
         uint256
     ) external payable virtual {
@@ -53,7 +57,7 @@ contract MockUniversalRouterForRouter {
 
         if (msg.value > 0) {
             uint256 tokensOut = (msg.value * tokenPerEth) / 1e18;
-            token.mint(msg.sender, tokensOut);
+            outputToken.mint(msg.sender, tokensOut);
         } else {
             uint256 approved = token.allowance(msg.sender, PERMIT2);
             if (approved > 0) {
@@ -63,9 +67,17 @@ contract MockUniversalRouterForRouter {
                 if (amountToPull > approved) amountToPull = approved;
 
                 token.transferFrom(msg.sender, address(this), amountToPull);
-                uint256 ethOut = (amountToPull * 1e18) / tokenPerEth;
-                (bool success, ) = msg.sender.call{value: ethOut}("");
-                require(success, "ETH transfer failed");
+                // Test-only switch: multi-command routes emulate token output.
+                // Single-command routes emulate ETH output.
+                if (commands.length > 1) {
+                    uint256 tokensOut = (amountToPull * tokenPerEth) / 1e18;
+                    outputToken.mint(msg.sender, tokensOut);
+                } else {
+                    uint256 ethOut = (amountToPull * 1e18) / tokenPerEth;
+                    (bool success, ) = msg.sender.call{value: ethOut}("");
+                    require(success, "ETH transfer failed");
+                }
+
             }
         }
     }
@@ -91,7 +103,7 @@ contract MockUniversalRouterWithRefundForRouter is
     }
 
     function execute(
-        bytes calldata,
+        bytes calldata commands,
         bytes[] calldata,
         uint256
     ) external payable override {
@@ -99,7 +111,7 @@ contract MockUniversalRouterWithRefundForRouter is
 
         if (msg.value > 0) {
             uint256 tokensOut = (msg.value * tokenPerEth) / 1e18;
-            token.mint(msg.sender, tokensOut);
+            outputToken.mint(msg.sender, tokensOut);
 
             if (shouldRefund && refundAmount > 0) {
                 (bool success, ) = msg.sender.call{value: refundAmount}("");
@@ -114,9 +126,19 @@ contract MockUniversalRouterWithRefundForRouter is
                 if (amountToPull > approved) amountToPull = approved;
 
                 token.transferFrom(msg.sender, address(this), amountToPull);
-                uint256 ethOut = (amountToPull * 1e18) / tokenPerEth;
-                (bool success, ) = msg.sender.call{value: ethOut}("");
-                require(success, "ETH transfer failed");
+                if (commands.length > 1) {
+                    uint256 tokensOut = (amountToPull * tokenPerEth) / 1e18;
+                    outputToken.mint(msg.sender, tokensOut);
+                } else {
+                    uint256 ethOut = (amountToPull * 1e18) / tokenPerEth;
+                    (bool success, ) = msg.sender.call{value: ethOut}("");
+                    require(success, "ETH transfer failed");
+                }
+
+                if (shouldRefund && refundAmount > 0) {
+                    (bool refundSuccess, ) = msg.sender.call{value: refundAmount}("");
+                    require(refundSuccess, "Refund failed");
+                }
             }
         }
     }
@@ -255,38 +277,29 @@ abstract contract LiquidRouterUnitTestBase is Test {
         inputs[0] = abi.encode(actions, params);
     }
 
+    /// @notice Shared registry exposed for tests that need to register tokens directly
+    LiquidRegistry internal liquidRegistry;
+
     function deployLiquidRouter(
         address universalRouter,
-        address _protocolFeeRecipient,
+        address, // _protocolFeeRecipient — no longer used by router (fees handled by LiquidGuard)
         address owner
     ) internal returns (LiquidRouter) {
-        FeeDistributor feeDistributor = new FeeDistributor(
-            owner,
-            uint16(TOTAL_FEE_BPS),
-            _protocolFeeRecipient
-        );
-        LiquidRegistry registry = new LiquidRegistry(owner);
+        liquidRegistry = new LiquidRegistry(owner);
         LiquidRouter newLiquidRouter = new LiquidRouter(
             owner,
             universalRouter,
-            address(feeDistributor),
-            address(registry)
+            address(liquidRegistry)
         );
-        vm.prank(owner);
-        registry.setWriter(address(newLiquidRouter), true);
         return newLiquidRouter;
     }
 
+    /// @notice Fee BPS is now managed by LiquidGuard hook, not the router.
+    ///         Returns TOTAL_FEE_BPS constant for backward compat with existing test math.
     function _totalFeeBpsForRouter(
-        LiquidRouter targetRouter
-    ) internal view returns (uint256 totalFeeBps) {
-        return IFeeDistributor(targetRouter.feeDistributor()).totalFeeBPS();
-    }
-
-    function _distributorForRouter(
-        LiquidRouter targetRouter
-    ) internal view returns (IFeeDistributor) {
-        return IFeeDistributor(targetRouter.feeDistributor());
+        LiquidRouter
+    ) internal pure returns (uint256) {
+        return TOTAL_FEE_BPS;
     }
 
     function setUp() public virtual {
@@ -308,7 +321,7 @@ abstract contract LiquidRouterUnitTestBase is Test {
         );
 
         vm.prank(admin);
-        liquidRouter.registerToken(address(token), beneficiary);
+        liquidRegistry.setBeneficiary(address(token), beneficiary);
 
         vm.deal(user1, 100 ether);
         vm.deal(user2, 100 ether);

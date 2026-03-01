@@ -28,6 +28,7 @@ import {DeployLiquidFactory} from "script/deployers/DeployLiquidFactory.s.sol";
 import {DeployLiquidRouter} from "script/deployers/DeployLiquidRouter.s.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
 import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {LiquidRegistry} from "liquid-editions/LiquidRegistry.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 contract LiquidMultiCurveIntegrationTest is Test, InitGuardTestHelper {
@@ -115,14 +116,15 @@ contract LiquidMultiCurveIntegrationTest is Test, InitGuardTestHelper {
         multiCurveImpl = new LiquidMultiCurve();
         factory.setLiquidMultiCurveImplementation(address(multiCurveImpl));
 
+        LiquidRegistry registry = new LiquidRegistry(admin);
         (address routerAddr, ) = DeployLiquidRouter.deploy(
             admin,
-            protocolFeeRecipient,
-            deployConfig.fees,
-            config.uniswapUniversalRouter
+            config.uniswapUniversalRouter,
+            address(registry)
         );
         router = LiquidRouter(payable(routerAddr));
-        factory.setLiquidRegistry(address(1));
+        registry.setWriter(address(factory), true);
+        factory.setLiquidRegistry(address(registry));
 
         swapHelper = new LiquidPoolSwapHelper(IPoolManager(config.uniswapV4PoolManager));
 

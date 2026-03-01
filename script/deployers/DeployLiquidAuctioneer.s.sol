@@ -13,14 +13,13 @@ import {NetworkConfig} from "../config/NetworkConfig.sol";
 /**
  * @title DeployLiquidAuctioneer
  * @notice Library for deploying LiquidAuctioneer (CCA bid/exit/claim/triggerGraduation)
- * @dev Same fee config pattern as LiquidRouter; uses LiquidFeeLib
+ * @dev Same fee config pattern as LiquidRouter
  */
 library DeployLiquidAuctioneer {
     /**
      * @notice Deploy LiquidAuctioneer contract
      * @param owner Owner address
-     * @param protocolFeeRecipient Address to receive protocol fees
-     * @param config Fee distribution config (shared with router)
+     * @param protocolFeeRecipient Address that receives protocol fee distributions.
      * @param universalRouter Uniswap Universal Router address
      * @param baseToken RARE token address (base token for auctions)
      * @param weth wrapped native token address for preset ETH route
@@ -30,7 +29,7 @@ library DeployLiquidAuctioneer {
     function deploy(
         address owner,
         address protocolFeeRecipient,
-        DeployConfig.FeeConfig memory config,
+        DeployConfig.FeeConfig memory, /* config - unused, fees managed by LiquidGuard */
         address universalRouter,
         address baseToken,
         address weth,
@@ -53,10 +52,14 @@ library DeployLiquidAuctioneer {
 
         FeeDistributor feeDistributor = new FeeDistributor(
             owner,
-            config.totalFeeBPS,
-            protocolFeeRecipient
+            address(0), // poolManager: not used for legacy auctioneer fee distribution
+            address(0), // rareToken: not used for legacy auctioneer fee distribution
+            protocolFeeRecipient,
+            5000,       // 50% beneficiary share (legacy default)
+            400         // 4% total fee
         );
         LiquidRegistry liquidRegistry = new LiquidRegistry(owner);
+        feeDistributor.setBeneficiaryRegistry(address(liquidRegistry));
 
         LiquidAuctioneer auctioneerContract = new LiquidAuctioneer(
             owner,

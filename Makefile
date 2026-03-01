@@ -10,7 +10,7 @@ export
 export FORK_URL
 
 # Test commands
-.PHONY: test test-factory test-liquid test-mainnet test-bonding test-bonding-explorer test-unit test-rare test-burner test-invariants test-mev coverage coverage-report help
+.PHONY: test test-factory test-liquid test-mainnet test-bonding test-bonding-explorer test-unit test-rare test-burner test-invariants test-mev coverage coverage-report deploy-sepolia deploy-sepolia-dry help
 
 help:
 	@echo "Available commands:"
@@ -27,6 +27,10 @@ help:
 	@echo "  test-rare         - Run RARE burn config tests (no fork)"
 	@echo "  coverage          - Generate test coverage summary"
 	@echo "  coverage-report   - Generate HTML coverage report (requires lcov)"
+	@echo ""
+	@echo "Deploy commands:"
+	@echo "  deploy-sepolia     - Full Liquid System deploy to Sepolia (broadcast + slow)"
+	@echo "  deploy-sepolia-dry - Dry-run simulation only (no broadcast)"
 	@echo ""
 	@echo "ℹ️  Mainnet fork tests create their own forks automatically in setUp()"
 	@echo "   Set FORK_URL in .env (required for make test)"
@@ -109,6 +113,23 @@ deploy-factory:
 
 deploy-factory-dry:
 	forge script script/LiquidFactoryDeploy.s.sol --fork-url $(FORK_URL)
+
+# Full Liquid System deployment (Sepolia)
+# --slow is required: sends transactions one-by-one and waits for each receipt
+# before sending the next. Without it, nonce collisions can cause broadcast failures.
+deploy-sepolia:
+	@[ -f .env ] && set -a && . ./.env && set +a || true; \
+	forge script script/DeployLiquidSystem.s.sol:DeployLiquidSystem \
+		--rpc-url $$ETH_SEPOLIA \
+		--broadcast \
+		--slow
+
+# Dry-run (simulate only, no broadcast) — use this to verify before deploying
+deploy-sepolia-dry:
+	@[ -f .env ] && set -a && . ./.env && set +a || true; \
+	forge script script/DeployLiquidSystem.s.sol:DeployLiquidSystem \
+		--rpc-url $$ETH_SEPOLIA \
+		--slow
 
 # Clean
 clean:

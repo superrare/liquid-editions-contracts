@@ -338,14 +338,11 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager,
             -180, // lpTickLower
             120000, // lpTickUpper
-            config.uniswapV4Quoter,
             initGuardAddr, // poolHooks
             60, // poolTickSpacing
-            300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
         LiquidInitGuard(initGuardAddr).setFactory(address(factory));
@@ -467,14 +464,11 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
         address badInitGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         LiquidFactory badFactory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager,
             -180,
             120000,
-            config.uniswapV4Quoter,
             badInitGuardAddr,
             60,
-            300,
             1e15
         );
         LiquidInitGuard(badInitGuardAddr).setFactory(address(badFactory));
@@ -557,7 +551,8 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -586,7 +581,8 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -636,7 +632,8 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -665,7 +662,8 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -689,7 +687,8 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -712,7 +711,8 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             "ipfs://stored-uri",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -732,7 +732,8 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             "ipfs://stored-uri",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -760,7 +761,8 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             "ipfs://stored-uri",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -788,7 +790,8 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             "ipfs://stored-uri",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -818,7 +821,8 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -843,7 +847,8 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -867,7 +872,8 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -890,7 +896,8 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -926,7 +933,8 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -947,7 +955,8 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -981,7 +990,8 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
 

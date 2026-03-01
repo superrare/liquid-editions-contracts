@@ -147,7 +147,8 @@ contract LiquidInstantMainnetBondingTest is LiquidBondingForkBase {
             string(abi.encodePacked("ipfs://test-", tickConfig.name)),
             string(abi.encodePacked("LIQUID_", tickConfig.name)),
             string(abi.encodePacked("LQ_", tickConfig.name)),
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve(tempFactory)
         );
         vm.stopPrank();
         LiquidMultiCurve liquidImpl = LiquidMultiCurve(payable(tokenAddr));

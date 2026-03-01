@@ -14,6 +14,7 @@ import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
 import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
+import {Curve} from "doppler/libraries/Multicurve.sol";
 
 /// @title LiquidMultiCurve Optimal Price Calculation Tests
 /// @notice Tests that verify optimal starting price calculation uses all provided RARE and LIQUID tokens
@@ -35,6 +36,17 @@ contract LiquidInstantOptimalPriceTest is Test, InitGuardTestHelper {
     // LP tick range
     int24 constant LP_TICK_LOWER = -180; // Multiple of 60
     int24 constant LP_TICK_UPPER = 120000; // Multiple of 60
+
+    function _defaultSingleCurve() internal pure returns (Curve[] memory) {
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: LP_TICK_LOWER,
+            tickUpper: LP_TICK_UPPER,
+            numPositions: 1,
+            shares: 1e18
+        });
+        return curves;
+    }
 
     function setUp() public {
         // Fork Base mainnet for realistic testing
@@ -59,14 +71,11 @@ contract LiquidInstantOptimalPriceTest is Test, InitGuardTestHelper {
         // Deploy factory
         factory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager,
             LP_TICK_LOWER,
             LP_TICK_UPPER,
-            config.uniswapV4Quoter,
             initGuardAddr, // poolHooks
             60, // poolTickSpacing
-            300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
         LiquidInitGuard(initGuardAddr).setFactory(address(factory));
@@ -95,7 +104,8 @@ contract LiquidInstantOptimalPriceTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            rareAmount
+            rareAmount,
+            _defaultSingleCurve()
         );
         vm.stopPrank();
         return LiquidMultiCurve(payable(tokenAddress));

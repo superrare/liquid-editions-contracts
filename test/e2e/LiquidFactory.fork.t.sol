@@ -16,6 +16,7 @@ import {ILiquidFactory} from "liquid-editions/interfaces/ILiquidFactory.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
+import {Curve} from "doppler/libraries/Multicurve.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -39,6 +40,19 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
     LiquidMultiCurve public liquidImplementation;
     LiquidFactory public factory;
     MockRARE public mockRARE;
+
+    function _defaultSingleCurve(
+        LiquidFactory _factory
+    ) internal view returns (Curve[] memory) {
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: _factory.lpTickLower(),
+            tickUpper: _factory.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+        return curves;
+    }
 
     function setUp() public {
         // Fork Base mainnet to access Uniswap V4 contracts
@@ -78,14 +92,11 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
             -180, // lpTickLower - max expensive (after price rises) - multiple of 60
             120000, // lpTickUpper - starting point (cheap tokens) - multiple of 60
-            config.uniswapV4Quoter, // Use wrapper instead of raw quoter
             initGuardAddr, // poolHooks
             60, // poolTickSpacing (standard for 0.3% fee tier)
-            300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
         LiquidInitGuard(initGuardAddr).setFactory(address(factory));
@@ -120,9 +131,7 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
         assertTrue(address(factory) != address(0));
 
         // Verify factory configuration (fee config moved to LiquidInstantRouter)
-        assertEq(factory.weth(), config.weth);
         assertEq(factory.poolManager(), config.uniswapV4PoolManager);
-        assertEq(factory.v4Quoter(), config.uniswapV4Quoter);
         assertEq(factory.liquidMultiCurveImplementation(), address(liquidImplementation));
     }
 
@@ -142,7 +151,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             tokenUri,
             tokenName,
             tokenSymbol,
-            initialRareLiquidity
+            initialRareLiquidity,
+            _defaultSingleCurve(factory)
         );
 
         vm.stopPrank();
@@ -172,7 +182,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://token1",
             "Token1",
             "TK1",
-            initialRareLiquidity
+            initialRareLiquidity,
+            _defaultSingleCurve(factory)
         );
 
         // Create second token
@@ -181,7 +192,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://token2",
             "Token2",
             "TK2",
-            initialRareLiquidity
+            initialRareLiquidity,
+            _defaultSingleCurve(factory)
         );
 
         vm.stopPrank();
@@ -200,7 +212,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://token1",
             "Token1",
             "TK1",
-            initialRareLiquidity
+            initialRareLiquidity,
+            _defaultSingleCurve(factory)
         );
         vm.stopPrank();
 
@@ -211,7 +224,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://token2",
             "Token2",
             "TK2",
-            initialRareLiquidity
+            initialRareLiquidity,
+            _defaultSingleCurve(factory)
         );
         vm.stopPrank();
 
@@ -230,7 +244,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test",
             "TEST",
-            initialRareLiquidity
+            initialRareLiquidity,
+            _defaultSingleCurve(factory)
         );
 
         vm.stopPrank();
@@ -250,7 +265,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test",
             "TEST",
-            initialRareLiquidity
+            initialRareLiquidity,
+            _defaultSingleCurve(factory)
         );
 
         vm.stopPrank();
@@ -278,14 +294,11 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
         // Create a new factory without setting implementation
         LiquidFactory newFactory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager, // V4 PoolManager
             -180, // lpTickLower - max expensive (after price rises) - multiple of 60
             120000, // lpTickUpper - starting point (cheap tokens) - multiple of 60
-            config.uniswapV4Quoter, // Use wrapper instead of raw quoter
             address(0), // poolHooks (no hooks)
             60, // poolTickSpacing (standard for 0.3% fee tier)
-            300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
 
@@ -295,6 +308,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
         newFactory.setBaseToken(address(mockRARE));
         vm.stopPrank();
 
+        Curve[] memory curves = _defaultSingleCurve(newFactory);
+
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(newFactory), 0.1 ether);
         vm.expectRevert(ILiquidFactory.ImplementationNotSet.selector);
@@ -303,12 +318,15 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            curves
         );
         vm.stopPrank();
     }
 
     function test_RevertWhen_CreateTokenWithZeroCreator() public {
+        Curve[] memory curves = _defaultSingleCurve(factory);
+
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
         vm.expectRevert(ILiquidFactory.AddressZero.selector);
@@ -317,7 +335,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            curves
         );
         vm.stopPrank();
     }
@@ -326,6 +345,7 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
     /// @dev Verifies InvalidAmount() error when RARE amount < minRareLiquidityWei
     function test_RevertWhen_CreateTokenBelowMinInitialLiquidity() public {
         uint256 minInitialLiquidity = factory.minRareLiquidityWei();
+        Curve[] memory curves = _defaultSingleCurve(factory);
 
         // Try to create token with RARE below minimum
         vm.startPrank(tokenCreator);
@@ -336,7 +356,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test",
             "TEST",
-            minInitialLiquidity - 1
+            minInitialLiquidity - 1,
+            curves
         );
         vm.stopPrank();
     }
@@ -354,7 +375,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://exact-min",
             "ExactMin",
             "EMIN",
-            minInitialLiquidity
+            minInitialLiquidity,
+            _defaultSingleCurve(factory)
         );
         vm.stopPrank();
 
@@ -390,7 +412,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve(factory)
         );
         vm.stopPrank();
 
@@ -405,25 +428,6 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
         vm.stopPrank();
     }
 
-    function testUpdateConfig() public {
-        // Create new config values
-        vm.startPrank(admin);
-        address newWeth = makeAddr("newWeth");
-
-        factory.setWeth(newWeth);
-        vm.stopPrank();
-
-        // Verify new config values are active
-        assertEq(factory.weth(), newWeth);
-    }
-
-    function test_RevertWhen_SetConfigWithZeroAddress() public {
-        vm.startPrank(admin);
-        vm.expectRevert(ILiquidFactory.AddressZero.selector);
-        factory.setWeth(address(0));
-        vm.stopPrank();
-    }
-
     function testLiquidInstantTokenCreatedEvent() public {
         uint256 initialRareLiquidity = 0.1 ether;
         vm.startPrank(tokenCreator);
@@ -435,7 +439,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test Token",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve(factory)
         );
         vm.stopPrank();
 
@@ -465,30 +470,6 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
         vm.stopPrank();
     }
 
-    /// @notice Test that non-admin cannot call setWeth
-    function test_RevertWhen_NonAdmin_SetWeth() public {
-        vm.startPrank(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                Ownable.OwnableUnauthorizedAccount.selector, user1
-            )
-        );
-        factory.setWeth(address(0x123));
-        vm.stopPrank();
-    }
-
-    /// @notice Test that non-admin cannot call setTradingKnobs
-    function test_RevertWhen_NonAdmin_SetTradingKnobs() public {
-        vm.startPrank(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                Ownable.OwnableUnauthorizedAccount.selector, user1
-            )
-        );
-        factory.setInternalMaxSlippageBps(300);
-        vm.stopPrank();
-    }
-
     /// @notice Test that regular user (non-admin) cannot call any admin functions
     function test_RevertWhen_NonAdmin_AllAdminFunctions() public {
         LiquidMultiCurve newImpl = new LiquidMultiCurve();
@@ -502,20 +483,6 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             )
         );
         factory.setLiquidMultiCurveImplementation(address(newImpl));
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                Ownable.OwnableUnauthorizedAccount.selector, user2
-            )
-        );
-        factory.setWeth(address(0x123));
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                Ownable.OwnableUnauthorizedAccount.selector, user2
-            )
-        );
-        factory.setInternalMaxSlippageBps(500);
 
         vm.stopPrank();
     }
@@ -620,14 +587,11 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
         vm.expectRevert(ILiquidFactory.InvalidTickSpacing.selector);
         new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager,
             -200, // lpTickLower - NOT a multiple of 60
             120000, // lpTickUpper
-            config.uniswapV4Quoter,
             address(0), // poolHooks
             60, // poolTickSpacing
-            300, // internalMaxSlippageBps
             1e15 // minRareLiquidityWei
         );
         vm.stopPrank();
@@ -640,14 +604,11 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
         // Create factory with properly aligned ticks
         LiquidFactory validFactory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager,
             -240, // lpTickLower - multiple of 60
             120060, // lpTickUpper - multiple of 60
-            config.uniswapV4Quoter,
             address(0), // poolHooks
             60, // poolTickSpacing
-            300, // internalMaxSlippageBps
             1e15 // minRareLiquidityWei
         );
         vm.stopPrank();
@@ -674,7 +635,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve(factory)
         );
         vm.stopPrank();
 
@@ -695,7 +657,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve(factory)
         );
         vm.stopPrank();
 
@@ -720,18 +683,6 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             )
         );
         factory.setPoolManager(address(0x123));
-        vm.stopPrank();
-    }
-
-    /// @notice Test that non-admin cannot call setV4Quoter
-    function test_RevertWhen_NonAdmin_SetV4Quoter() public {
-        vm.startPrank(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                Ownable.OwnableUnauthorizedAccount.selector, user1
-            )
-        );
-        factory.setV4Quoter(address(0x123));
         vm.stopPrank();
     }
 
@@ -821,7 +772,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://tokenA",
             "TokenA",
             "TKA",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve(factory)
         );
         vm.stopPrank();
 
@@ -846,7 +798,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://tokenB",
             "TokenB",
             "TKB",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve(factory)
         );
         vm.stopPrank();
 
@@ -875,7 +828,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://tokenA",
             "TokenA",
             "TKA",
-            0.1 ether
+            0.1 ether,
+            _defaultSingleCurve(factory)
         );
         vm.stopPrank();
 
@@ -908,6 +862,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
     function test_CreateToken_RevertsWhen_TokenURIEmpty_BubblesFromLiquidInstant()
         public
     {
+        Curve[] memory curves = _defaultSingleCurve(factory);
+
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
 
@@ -917,13 +873,16 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "", // Empty tokenURI
             "Test",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            curves
         );
         vm.stopPrank();
     }
 
     /// @notice Test that createLiquidToken reverts when allowance is insufficient
     function test_CreateToken_RevertsWhen_InsufficientAllowance() public {
+        Curve[] memory curves = _defaultSingleCurve(factory);
+
         vm.startPrank(tokenCreator);
         // Don't approve or approve less than needed
         IERC20(mockRARE).approve(address(factory), 0.05 ether); // Less than 0.1 ether
@@ -934,13 +893,16 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            curves
         );
         vm.stopPrank();
     }
 
     /// @notice Test that createLiquidToken reverts when balance is insufficient
     function test_CreateToken_RevertsWhen_InsufficientBalance() public {
+        Curve[] memory curves = _defaultSingleCurve(factory);
+
         vm.startPrank(tokenCreator);
         // Approve but don't have enough balance
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
@@ -952,7 +914,8 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             "ipfs://test",
             "Test",
             "TEST",
-            1000 ether // More than balance
+            1000 ether, // More than balance
+            curves
         );
         vm.stopPrank();
     }
@@ -963,31 +926,31 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
         vm.startPrank(admin);
         LiquidFactory newFactory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager,
             -180,
             120000,
-            config.uniswapV4Quoter,
             address(0),
             60,
-            300,
             1e15
         );
-                newFactory.setLiquidRegistry(address(1));
+        newFactory.setLiquidRegistry(address(1));
         newFactory.setLiquidMultiCurveImplementation(address(liquidImplementation));
         // Don't set baseToken
         vm.stopPrank();
 
+        Curve[] memory curves = _defaultSingleCurve(newFactory);
+
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(newFactory), 0.1 ether);
 
-        vm.expectRevert(ILiquid.AddressZero.selector);
+        vm.expectRevert(ILiquidFactory.AddressZero.selector);
         newFactory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://test",
             "Test",
             "TEST",
-            0.1 ether
+            0.1 ether,
+            curves
         );
         vm.stopPrank();
     }
@@ -1004,14 +967,6 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
         vm.stopPrank();
     }
 
-    /// @notice Test that setV4Quoter reverts when address is zero
-    function test_SetV4Quoter_RevertsWhen_AddressZero() public {
-        vm.startPrank(admin);
-        vm.expectRevert(ILiquidFactory.AddressZero.selector);
-        factory.setV4Quoter(address(0));
-        vm.stopPrank();
-    }
-
     /// @notice Test that setBaseToken reverts when address is zero
     function test_SetBaseToken_RevertsWhen_AddressZero() public {
         vm.startPrank(admin);
@@ -1020,17 +975,4 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
         vm.stopPrank();
     }
 
-    /// @notice Test that setInternalMaxSlippageBps reverts when too high
-    function test_SetInternalMaxSlippageBps_RevertsWhen_TooHigh() public {
-        vm.startPrank(admin);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ILiquidFactory.SlippageTooHigh.selector,
-                5001,
-                5000
-            )
-        );
-        factory.setInternalMaxSlippageBps(5001); // > 50%
-        vm.stopPrank();
-    }
 }

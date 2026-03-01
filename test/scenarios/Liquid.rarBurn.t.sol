@@ -95,7 +95,8 @@ contract LiquidRarBurnTest is LiquidBondingForkBase {
                 string(abi.encodePacked("ipfs://test-", vm.toString(i))),
                 string(abi.encodePacked("TEST_", vm.toString(i))),
                 string(abi.encodePacked("T", vm.toString(i))),
-                0.1 ether
+                0.1 ether,
+                _defaultSingleCurve(tempFactory)
             );
             vm.stopPrank();
         }

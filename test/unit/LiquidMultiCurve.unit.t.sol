@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 /**
  * @title LiquidMultiCurve Unit Tests
  * @notice Tests for LiquidMultiCurve with mock pool manager
- * @dev Uses MockV4PoolManager, MockV4Quoter for unit testing without fork
+ * @dev Uses MockV4PoolManager for unit testing without fork
  */
 
 import "forge-std/Test.sol";
@@ -15,7 +15,6 @@ import {ILiquidBase} from "liquid-editions/interfaces/ILiquidBase.sol";
 import {ILiquidFactory} from "liquid-editions/interfaces/ILiquidFactory.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 import {MockV4PoolManager} from "liquid-editions-test/helpers/MockV4PoolManager.sol";
-import {MockV4Quoter} from "liquid-editions-test/helpers/MockV4Quoter.sol";
 import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
 import {DeployConfig} from "script/config/DeployConfig.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -28,8 +27,6 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
     address public creator = makeAddr("creator");
 
     MockV4PoolManager public poolManager;
-    MockV4Quoter public quoter;
-    MockERC20 public weth;
     MockERC20 public baseToken;
 
     LiquidFactory public factory;
@@ -39,20 +36,15 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
 
     function setUp() public {
         poolManager = new MockV4PoolManager();
-        quoter = new MockV4Quoter();
-        weth = new MockERC20();
         baseToken = new MockERC20();
         address initGuardAddr = _deployInitGuardForTest(address(poolManager), admin);
         factory = new LiquidFactory(
             admin,
-            address(weth),
             address(poolManager),
             -180,
             120000,
-            address(quoter),
             initGuardAddr,
             60,
-            300,
             MIN_RARE
         );
         vm.prank(admin);
@@ -159,14 +151,11 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
         address newInitGuardAddr = _deployInitGuardForTest(address(poolManager), admin);
         LiquidFactory newFactory = new LiquidFactory(
             admin,
-            address(weth),
             address(poolManager),
             -180,
             120000,
-            address(quoter),
             newInitGuardAddr,
             60,
-            300,
             MIN_RARE
         );
         vm.prank(admin);
@@ -267,5 +256,214 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
         vm.prank(admin);
         vm.expectRevert(ILiquidFactory.AddressZero.selector);
         factory.setLiquidMultiCurveImplementation(address(0));
+    }
+
+    // ============================================
+    // Shared helper: deploy a token
+    // ============================================
+
+    function _deployToken() internal returns (LiquidMultiCurve) {
+        Curve[] memory curves = _defaultCurves();
+        vm.startPrank(creator);
+        baseToken.approve(address(factory), MIN_RARE);
+        address tokenAddr = factory.createLiquidTokenMultiCurve(
+            creator, "ipfs://test", "Test", "TMC", MIN_RARE, curves
+        );
+        vm.stopPrank();
+        return LiquidMultiCurve(payable(tokenAddr));
+    }
+
+    // ============================================
+    // burn() — positive path, access, events
+    // ============================================
+
+    function test_Burn_ReducesTotalSupply() public {
+        LiquidMultiCurve token = _deployToken();
+        uint256 supplyBefore = token.totalSupply();
+        uint256 creatorBalance = token.balanceOf(creator);
+        assertGt(creatorBalance, 0, "creator should have tokens");
+
+        uint256 burnAmount = 1e18;
+        vm.prank(creator);
+        token.burn(burnAmount);
+
+        assertEq(token.totalSupply(), supplyBefore - burnAmount, "totalSupply should decrease by burned amount");
+        assertEq(token.balanceOf(creator), creatorBalance - burnAmount, "creator balance should decrease");
+    }
+
+    function test_Burn_ZeroAmount_Succeeds() public {
+        LiquidMultiCurve token = _deployToken();
+        uint256 supplyBefore = token.totalSupply();
+
+        vm.prank(creator);
+        token.burn(0); // burning 0 should succeed (no-op)
+
+        assertEq(token.totalSupply(), supplyBefore, "supply should not change on zero burn");
+    }
+
+    function test_Burn_EmitsLiquidTransfer() public {
+        LiquidMultiCurve token = _deployToken();
+        uint256 burnAmount = 1e18;
+
+        vm.expectEmit(true, true, false, false);
+        emit ILiquid.LiquidTransfer(creator, address(0), burnAmount, 0, 0, 0);
+
+        vm.prank(creator);
+        token.burn(burnAmount);
+    }
+
+    function test_Burn_RevertsWhen_InsufficientBalance() public {
+        LiquidMultiCurve token = _deployToken();
+        uint256 creatorBalance = token.balanceOf(creator);
+
+        vm.prank(creator);
+        vm.expectRevert(); // ERC20 insufficient balance
+        token.burn(creatorBalance + 1);
+    }
+
+    // ============================================
+    // setRenderContract() — access control, events
+    // ============================================
+
+    function test_SetRenderContract_ByCreator_Succeeds() public {
+        LiquidMultiCurve token = _deployToken();
+        address renderAddr = makeAddr("renderContract");
+
+        vm.prank(creator);
+        token.setRenderContract(renderAddr);
+
+        assertEq(token.renderContract(), renderAddr, "render contract should be set");
+    }
+
+    function test_SetRenderContract_EmitsRenderContractSet() public {
+        LiquidMultiCurve token = _deployToken();
+        address renderAddr = makeAddr("renderContractEvent");
+
+        vm.expectEmit(true, false, false, false);
+        emit ILiquid.RenderContractSet(renderAddr);
+
+        vm.prank(creator);
+        token.setRenderContract(renderAddr);
+    }
+
+    function test_SetRenderContract_ByZeroAddress_ClearsRenderContract() public {
+        LiquidMultiCurve token = _deployToken();
+        address renderAddr = makeAddr("renderContractClear");
+
+        vm.prank(creator);
+        token.setRenderContract(renderAddr);
+        assertEq(token.renderContract(), renderAddr);
+
+        vm.prank(creator);
+        token.setRenderContract(address(0));
+        assertEq(token.renderContract(), address(0), "render contract should be cleared");
+    }
+
+    function test_SetRenderContract_RevertsForNonCreator() public {
+        LiquidMultiCurve token = _deployToken();
+        address notCreator = makeAddr("notCreator");
+
+        vm.prank(notCreator);
+        vm.expectRevert(ILiquid.NotTokenCreator.selector);
+        token.setRenderContract(makeAddr("someRender"));
+    }
+
+    // ============================================
+    // removeLiquidity() — access control
+    // ============================================
+
+    function test_RemoveLiquidity_RevertsForNonProtocolFeeRecipient() public {
+        LiquidMultiCurve token = _deployToken();
+        address notPfr = makeAddr("notPfr");
+
+        vm.prank(notPfr);
+        vm.expectRevert(ILiquid.OnlyProtocolFeeRecipient.selector);
+        token.removeLiquidity(notPfr);
+    }
+
+    function test_RemoveLiquidity_RevertsForZeroRecipient() public {
+        LiquidMultiCurve token = _deployToken();
+        address pfr = factory.protocolFeeRecipient();
+
+        vm.prank(pfr);
+        vm.expectRevert(ILiquid.AddressZero.selector);
+        token.removeLiquidity(address(0));
+    }
+
+    // ============================================
+    // tokenURI() — fallback to initialTokenUri
+    // ============================================
+
+    function test_TokenURI_ReturnsInitialTokenUri_WhenNoRenderContract() public {
+        LiquidMultiCurve token = _deployToken();
+
+        string memory uri = token.tokenURI();
+        assertEq(uri, "ipfs://test", "should return initialTokenUri when no render contract");
+    }
+
+    // ============================================
+    // Constants — MAX_TOTAL_SUPPLY and CREATOR_LAUNCH_REWARD
+    // ============================================
+
+    function test_MaxTotalSupply_IsExpected() public {
+        LiquidMultiCurve token = _deployToken();
+        assertEq(token.MAX_TOTAL_SUPPLY(), 1_000_000e18, "MAX_TOTAL_SUPPLY should be 1 million tokens");
+    }
+
+    function test_CreatorLaunchReward_IsDistributedOnInit() public {
+        LiquidMultiCurve token = _deployToken();
+        uint256 CREATOR_REWARD = 100_000e18;
+        assertEq(token.balanceOf(creator), CREATOR_REWARD, "creator should receive exact launch reward");
+    }
+
+    function test_PoolSupply_IsMaxMinusCreatorReward() public {
+        LiquidMultiCurve token = _deployToken();
+        uint256 POOL_SUPPLY = 900_000e18;
+        uint256 CREATOR_REWARD = 100_000e18;
+        assertEq(
+            token.totalSupply(),
+            POOL_SUPPLY + CREATOR_REWARD,
+            "total supply should equal MAX_TOTAL_SUPPLY at init"
+        );
+    }
+
+    // ============================================
+    // Transfer — emits LiquidTransfer with exact values
+    // ============================================
+
+    function test_Transfer_EmitsLiquidTransfer_WithExactValues() public {
+        LiquidMultiCurve token = _deployToken();
+        address recipient = makeAddr("recipient");
+        uint256 transferAmount = 1000e18;
+
+        uint256 creatorBalBefore = token.balanceOf(creator);
+        uint256 recipientBalBefore = token.balanceOf(recipient);
+        uint256 supplyBefore = token.totalSupply();
+
+        vm.expectEmit(true, true, false, true);
+        emit ILiquid.LiquidTransfer(
+            creator,
+            recipient,
+            transferAmount,
+            creatorBalBefore - transferAmount,
+            recipientBalBefore + transferAmount,
+            supplyBefore
+        );
+
+        vm.prank(creator);
+        token.transfer(recipient, transferAmount);
+    }
+
+    // ============================================
+    // getLaunchState() — correct enum
+    // ============================================
+
+    function test_GetLaunchState_LaunchType_IsMultiCurve() public {
+        LiquidMultiCurve token = _deployToken();
+        (ILiquidBase.LaunchType launchType, bool poolLive, address auction, address strategy) = token.getLaunchState();
+        assertEq(uint8(launchType), uint8(ILiquidBase.LaunchType.MULTICURVE), "launch type must be MULTICURVE");
+        assertTrue(poolLive, "pool should be live immediately");
+        assertEq(auction, address(0), "no auction for MultiCurve");
+        assertEq(strategy, address(0), "no strategy for MultiCurve");
     }
 }

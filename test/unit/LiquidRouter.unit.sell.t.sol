@@ -62,8 +62,8 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
     function testSellBasic() public {
         uint256 tokenAmount = 1000e18;
         uint256 grossEth = (tokenAmount * 1e18) / router.tokenPerEth();
-        uint256 fee = (grossEth * TOTAL_FEE_BPS) / 10000; // 4%
-        uint256 expectedEth = grossEth - fee;
+        // Router passes full ETH to recipient — no ETH fee deducted (fees handled by LiquidGuard in RARE)
+        uint256 expectedEth = grossEth;
         (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         // Approve tokens
@@ -88,28 +88,29 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
     }
 
     function testSellDistributesFees() public {
+        // ETH fees no longer distributed by router — LiquidGuard collects RARE fees at the pool level.
+        // This test verifies the sell succeeds and the router does NOT retain any ETH.
         uint256 tokenAmount = 1000e18;
         (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.prank(user1);
         token.approve(address(liquidRouter), tokenAmount);
 
-        uint256 protocolBalBefore = protocolFeeRecipient.balance;
-        uint256 beneficiaryBalBefore = beneficiary.balance;
+        uint256 routerBalBefore = address(liquidRouter).balance;
 
         vm.prank(user1);
         liquidRouter.sell(
             address(token),
             tokenAmount,
             user1,
-            1, // minTokensOut (must be > 0)
+            1,
             commands,
             inputs,
             block.timestamp + 1 hours
         );
 
-        assertTrue(beneficiary.balance > beneficiaryBalBefore);
-        assertTrue(protocolFeeRecipient.balance > protocolBalBefore);
+        // Router should not retain any ETH
+        assertEq(address(liquidRouter).balance, routerBalBefore);
     }
 
     function testSellRevertsOnZeroAmount() public {
@@ -190,7 +191,7 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
         );
 
         vm.prank(admin);
-        fotLiquidRouter.registerToken(address(fot), beneficiary);
+        liquidRegistry.setBeneficiary(address(fot), beneficiary);
 
         fot.mint(user1, tokenAmount);
         vm.prank(user1);
@@ -252,8 +253,8 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
         token.approve(address(liquidRouter), tokenAmount);
 
         uint256 grossEth = (tokenAmount * 1e18) / router.tokenPerEth();
-        uint256 fee = (grossEth * TOTAL_FEE_BPS) / 10000;
-        uint256 expectedEth = grossEth - fee;
+        // Full ETH returned to user — no router-level fee
+        uint256 expectedEth = grossEth;
 
         uint256 balBefore = user1.balance;
 
@@ -287,6 +288,33 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             1, // minEthOut (must be > 0)
             "", // Empty routeData
             new bytes[](0),
+            block.timestamp + 1 hours
+        );
+    }
+
+    function testSellRevertsOnCommandInputLengthMismatch() public {
+        uint256 tokenAmount = 1000e18;
+
+        vm.prank(user1);
+        token.approve(address(liquidRouter), tokenAmount);
+
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
+        
+        bytes[] memory mismatchedInputs = new bytes[](inputs.length + 1);
+        for (uint256 i = 0; i < inputs.length; i++) {
+            mismatchedInputs[i] = inputs[i];
+        }
+        mismatchedInputs[inputs.length] = "";
+
+        vm.expectRevert(ILiquidRouter.CommandInputLengthMismatch.selector);
+        vm.prank(user1);
+        liquidRouter.sell(
+            address(token),
+            tokenAmount,
+            user1,
+            1,
+            commands,
+            mismatchedInputs,
             block.timestamp + 1 hours
         );
     }
@@ -333,8 +361,8 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
             block.timestamp + 1 hours
         );
 
-        uint256 fee = (grossEth * TOTAL_FEE_BPS) / 10000;
-        assertEq(ethReceived, grossEth - fee);
+        // No fee deducted — user receives full grossEth
+        assertEq(ethReceived, grossEth);
     }
 
     function testSellSlippageWithGrossMinEthOut() public {
@@ -463,8 +491,8 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
 
         uint256 tokenAmount = 1000e18;
         uint256 grossEthOut = (tokenAmount * 1e18) / router.tokenPerEth();
-        uint256 expectedFee = (grossEthOut * TOTAL_FEE_BPS) / 10000;
-        uint256 expectedEthOut = grossEthOut - expectedFee;
+        // Full ETH returned to user — no router-level fee deduction
+        uint256 expectedEthOut = grossEthOut;
         (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.prank(user1);
@@ -500,7 +528,7 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
         );
 
         vm.prank(admin);
-        refundRouterInstance.registerToken(address(token), beneficiary);
+        liquidRegistry.setBeneficiary(address(token), beneficiary);
 
         uint256 forcedEth = 1;
         vm.deal(user2, 100 ether);
@@ -513,8 +541,8 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
         uint256 grossEthOut = (tokenAmount * 1e18) / refundRouter.tokenPerEth();
         uint256 unexpectedEthRefund = 1 wei;
         uint256 expectedGross = grossEthOut + unexpectedEthRefund;
-        uint256 expectedFee = (expectedGross * TOTAL_FEE_BPS) / 10000;
-        uint256 expectedEthOut = expectedGross - expectedFee;
+        // No router-level fee — user receives full gross amount (including any unexpected ETH refund)
+        uint256 expectedEthOut = expectedGross;
         (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         refundRouter.setShouldRefund(true);

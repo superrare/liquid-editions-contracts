@@ -1,43 +1,41 @@
 # Liquid Editions Security Audit Plan (Non-Mutating)
 
 ## 1) Title
-Comprehensive exploit-focused audit of `LiquidFactory`, `LiquidSwapGuard`, `LiquidGraduated`, `LiquidMultiCurve`, `LiquidRouter`, `LiquidAuctioneer`, `FeeDistributor`, and `BeneficiaryRegistry` with minimal, testable remediations.
+Comprehensive exploit-focused audit of `LiquidFactory`, `LiquidGuard`, `LiquidGraduated`, `LiquidMultiCurve`, `LiquidRouter`, `FeeDistributor`, and `LiquidRegistry` with minimal, testable remediations.
 
 ## 2) Current System Architecture Notes
-- `FeeDistributor` (`src/FeeDistributor.sol`) owns fee policy and split execution; `LiquidRouter`/`LiquidAuctioneer` consume it.
+- `FeeDistributor` (`src/FeeDistributor.sol`) owns active fee policy execution and split behavior; `LiquidRouter` consumes it.
   - Intentionally immutable and designed to be replaced via module swaps.
-- `BeneficiaryRegistry` (`src/BeneficiaryRegistry.sol`) owns beneficiary address resolution and is read by both `LiquidRouter` and `LiquidAuctioneer`.
-- `LiquidRouter` and `LiquidAuctioneer` are orchestration layers:
+- `LiquidRegistry` (`src/LiquidRegistry.sol`) owns beneficiary address resolution and is read by `LiquidRouter`.
+- `LiquidRouter` is an orchestration layer:
   - route validation and policy gating,
   - permissioned administration,
   - delegating all ETH fee split/transfer execution to `FeeDistributor`.
-- Protocol economics updates are operationally managed by module swaps (`setFeeDistributor`, `setBeneficiaryRegistry`) rather than redeployment of all system contracts.
+- Protocol economics updates are operationally managed by module swaps (`setFeeDistributor` on router/guard, `setLiquidRegistry` on router, `setBeneficiaryRegistry` on `FeeDistributor`) rather than redeployment of all system contracts.
 - `FeeDistributor` is immutable for:
-  - `protocolFeeRecipient` (deployment-time only),
-  - `BENEFICIARY_FEE_BPS` (fixed constant).
-- `FeeDistributor` keeps mutability where required (`totalFeeBPS`, `setTier3FeeBPS`), with broader policy replacement done via module swaps.
+  - `protocolFeeRecipient` (deployment-time only).
+- Runtime routing/economic split is now driven by `notifyFee()` and conversion fallback in `FeeDistributor`.
+  Policy replacement is therefore handled through module swaps rather than live auction-compatibility knobs.
    
 ## 3) Summary
 - Deliver a security audit report focused on concrete exploitability (no speculative claims).
 - Keep scope bounded to the listed liquid system contracts.
 - Assume Uniswap and the `RARE` token are trusted and non-compromised for this pass.
-- Exclude `RAREBurner` from this pass.
 - Prioritize exploitability, business impact, and minimal patch surface.
 
 ## 4) Scope and Trust Assumptions
 1. In-scope contracts:
    - `src/LiquidFactory.sol`
-   - `src/LiquidSwapGuard.sol`
+   - `src/LiquidGuard.sol`
    - `src/LiquidGraduated.sol`
    - `src/LiquidMultiCurve.sol`
    - `src/LiquidRouter.sol`
-   - `src/LiquidAuctioneer.sol`
    - `src/FeeDistributor.sol`
-   - `src/BeneficiaryRegistry.sol`
+   - `src/LiquidRegistry.sol`
    - `src/interfaces/IFeeDistributor.sol`
-   - `src/interfaces/IBeneficiaryRegistry.sol`
 2. Out-of-scope for this pass:
-   - `RAREBurner` and any unlisted helper/infra contracts.
+   - `RAREBurner`, `LiquidAuctioneer`, and any unlisted helper/infra contracts.
+   - currently unused hooks like `LiquidInitGuard` and `LiquidSwapGuard`.
 3. Trust assumptions:
    - External Uniswap dependencies are trusted and bug-free for this audit.
    - `RARE` token is trusted.
@@ -56,35 +54,34 @@ Comprehensive exploit-focused audit of `LiquidFactory`, `LiquidSwapGuard`, `Liqu
 7. Can unauthorized governance actions produce unsafe immutability assumptions (e.g., zero / wrong module addresses)?
 8. Can users be denied service through state-lock conditions, hooks, or pool-id/initialization assumptions?
 9. Are rescue/governance override paths sufficiently constrained and auditable?
-10. Can swap guard hook be manipulated to permanently brick all pools? 
+10. Can hook functions be manipulated to permanently brick pools or deny service? 
 
 ## 6) Audit Procedure (Execution Order)
 1. Static threat mapping pass by attack path
    - Map every external entry and outbound call in:
      - `LiquidFactory.sol`
      - `LiquidRouter.sol`
-     - `LiquidAuctioneer.sol`
-     - `LiquidSwapGuard.sol`
+     - `LiquidGuard.sol`
      - `LiquidMultiCurve.sol`
      - `LiquidGraduated.sol`
      - `FeeDistributor.sol`
-     - `BeneficiaryRegistry.sol`
+     - `LiquidRegistry.sol`
 2. Control-flow and trust boundary review
    - Trace user-originated calls and callback origin checks.
    - Verify module handoff assumptions around protocol recipient and beneficiary resolution.
 3. Token accounting and balance-delta validation
-   - Trace ETH/token deltas per buy/sell/swap/bid path including fees.
+   - Trace ETH/token deltas per buy/sell/swap path including fees.
    - Validate exact-balance checks, refund behavior, and stale-payment edge cases.
    - Include failure path accounting where transfers fall back to protocol recipient.
 4. Route/command-policy validation
-   - Verify every `RoutePolicy` gate in `LiquidRouter` and `LiquidAuctioneer`.
+   - Verify every `RoutePolicy` gate in `LiquidRouter`.
    - Confirm malformed commands cannot bypass action constraints or recipient controls.
 5. Permission and configurability audit
    - Review all owner/admin setters and module-pointer transitions.
    - Validate what is immutable by design (`FeeDistributor` protocol recipient) versus mutable via module swap.
-   - Verify writer allowlists and owner permissions in `BeneficiaryRegistry`.
+   - Verify writer allowlists and owner permissions in `LiquidRegistry`.
 6. Cross-contract consistency checks
-   - Ensure factory config assumptions align with `LiquidRouter`/`LiquidAuctioneer` behavior.
+   - Ensure factory config assumptions align with `LiquidRouter` behavior.
    - Verify all modules are consistently consumed from active pointers.
 7. Compile-time and fuzz-level risk review
    - Inspect edge ranges, zero-value paths, rounding boundaries, and unchecked math expectations.
@@ -105,36 +102,36 @@ Comprehensive exploit-focused audit of `LiquidFactory`, `LiquidSwapGuard`, `Liqu
    - clone deployment safety for deterministic salt and factory callback assumptions
    - pool/token initialization invariants and upgradeability assumptions
    - mutable configuration setters and ownership boundaries
-2. `src/LiquidSwapGuard.sol`
-   - `beforeSwap`/`beforeInitialize` caller chain checks
-   - `setFactory` transition semantics and one-time protections
-   - hook verification assumptions for non-initialized pools
+2. `src/LiquidGuard.sol`
+   - beforeInitialize hook verification assumptions for non-initialized pools
+   - beforeSwap hook verification assumptions for non-initialized pools
+   - afterSwap hook verification assumptions for non-initialized pools
+   - beforeSwapReturnDelta hook verification assumptions for non-initialized pools
+   - afterSwapReturnDelta hook verification assumptions for non-initialized pools
 3. `src/LiquidGraduated.sol`
    - init flow (`poolId` and hook registration expectations)
    - token minting distribution, vesting/supply checks, migration ownership path
+   - CCA auction integration and graduation flow
 4. `src/LiquidMultiCurve.sol`
    - curve parameter math and overflow safety
    - position creation/unwind consistency after callbacks
    - swap/initialize/remove-liquidity callback reentrancy and ordering
 5. `src/LiquidRouter.sol`
    - route entry/exit handling for direct swap/buy/sell paths and route policy
-   - module pointer safety (`setFeeDistributor`, `setBeneficiaryRegistry`)
+   - module pointer safety (`setFeeDistributor`, `setLiquidRegistry`)
    - fallback/revert behavior when distribution module reverts unexpectedly
    - token rescue and ETH rescue governance boundary
-6. `src/LiquidAuctioneer.sol`
-   - route and bid-path policy assumptions
-   - bidder flow, exit accounting, and callback ordering
-   - module-backed protocol recipient/beneficiary trust boundaries
-   - transferability under edge route/recipient outputs
-7. `src/FeeDistributor.sol`
+6. `src/FeeDistributor.sol`
    - immutable protocol recipient and bootstrap guardrails
-   - mutability boundaries (`setTotalFeeBPS`, `setTier3FeeBPS`) and their safety checks
+   - runtime split boundary checks (`setBeneficiaryShareBPS`) and their safety checks
+   - beneficiary resolution via `setBeneficiaryRegistry` (points to `LiquidRegistry` address)
    - beneficiary/rule splitting, rounding, fallback transfer behavior
    - zero-value and misrouting transfer outcomes
-8. `src/BeneficiaryRegistry.sol`
+   - RARE→ETH conversion path and price staleness checks
+7. `src/LiquidRegistry.sol`
    - writer allowlist controls and ownership separation
    - mapping mutation safety and zero-address handling
-   - dependency on module wiring in router/auctioneer
+   - dependency on module wiring in router
 
 ## 9) Minimal Testable Fixes to Prepare
 1. Add explicit invariants and negative tests for:
@@ -152,12 +149,14 @@ Comprehensive exploit-focused audit of `LiquidFactory`, `LiquidSwapGuard`, `Liqu
    - owner-only transitions and event visibility
    - immutable module config assumptions and module replacement safety
 5. Add integration tests for factory->pool->router flows:
-   - `create` + trade path + auctioneer path under minimal liquidity and post-unwind scenarios
+   - `create` + trade path under minimal liquidity and post-unwind scenarios
 
 ## 10) Public/API/Type Changes
 1. Keep interface boundaries explicit and auditable across module seams.
 2. Prefer module-level configuration changes over inline logic mutation:
-   - `setFeeDistributor` and `setBeneficiaryRegistry` transitions
+   - `setFeeDistributor` on router/guard
+   - `setLiquidRegistry` on router
+   - `setBeneficiaryRegistry` on `FeeDistributor` (sets `LiquidRegistry` address)
    - `FeeDistributor` constructor-bound immutable recipient/economic invariants
 3. Ensure sensitive transitions emit stable events with old/new module addresses.
 4. Keep behavior changes minimal:

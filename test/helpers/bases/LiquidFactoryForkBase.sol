@@ -39,14 +39,11 @@ abstract contract LiquidFactoryForkBase is ForkTestBase, InitGuardTestHelper {
 
         LiquidFactory f = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager,
             LP_TICK_LOWER,
             LP_TICK_UPPER,
-            config.uniswapV4Quoter,
             initGuardAddr,
             60, // poolTickSpacing
-            300, // internalMaxSlippageBps (3%)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
         LiquidInitGuard(initGuardAddr).setFactory(address(f));

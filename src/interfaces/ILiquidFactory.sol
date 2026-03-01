@@ -22,12 +22,6 @@ interface ILiquidFactory {
     /// @notice Thrown when tick values are not multiples of poolTickSpacing
     error InvalidTickSpacing();
 
-    /// @notice Thrown when a fee value exceeds the maximum allowed
-    error FeeTooHigh(uint256 fee, uint256 maxFee);
-
-    /// @notice Thrown when slippage value exceeds the maximum allowed
-    error SlippageTooHigh(uint256 slippage, uint256 maxSlippage);
-
     /// @notice Thrown when an invalid amount is provided
     error InvalidAmount();
 
@@ -38,17 +32,17 @@ interface ILiquidFactory {
         address expectedFactory
     );
 
-    /// @notice Thrown when an invalid pool hooks contract is configured for multicurve
-    error InvalidMultiCurvePoolHook(address poolHooks);
+    /// @notice Thrown when an invalid pool hooks contract is configured
+    error InvalidPoolHook(address poolHooks);
 
-    /// @notice Thrown when a configured multicurve pool hook is not a LiquidSwapGuard
-    error MultiCurvePoolHookNotGuard(address poolHooks);
+    /// @notice Thrown when a configured pool hook is not a LiquidGuard-compatible hook
+    error PoolHookNotGuard(address poolHooks);
 
-    /// @notice Thrown when multicurve hook flags do not include required permissions
+    /// @notice Thrown when pool hook flags do not include required permissions
     /// @param poolHooks The hook address
     /// @param actualFlags Flags reported by the hook
     /// @param requiredFlags Minimum required flags mask
-    error MultiCurvePoolHookMissingFlags(
+    error PoolHookMissingFlags(
         address poolHooks,
         uint160 actualFlags,
         uint160 requiredFlags
@@ -71,23 +65,14 @@ interface ILiquidFactory {
         string tokenUri
     );
 
-    /// @notice Emitted when WETH address is updated
-    event WethUpdated(address weth);
-
     /// @notice Emitted when the Uniswap V4 PoolManager address is updated
     event PoolManagerUpdated(address poolManager);
-
-    /// @notice Emitted when the Uniswap V4 Quoter address is updated
-    event V4QuoterUpdated(address v4Quoter);
 
     /// @notice Emitted when the Uniswap V4 hooks address is updated
     event PoolHooksUpdated(address poolHooks);
 
     /// @notice Emitted when the Uniswap V4 tick spacing is updated
     event PoolTickSpacingUpdated(int24 poolTickSpacing);
-
-    /// @notice Emitted when internal max slippage BPS is updated
-    event InternalMaxSlippageBpsUpdated(uint16 internalMaxSlippageBps);
 
     /// @notice Emitted when minimum RARE liquidity requirement is updated
     event MinRareLiquidityWeiUpdated(uint256 minRareLiquidityWei);
@@ -116,35 +101,50 @@ interface ILiquidFactory {
     // FUNCTIONS
     // ============================================
 
-    // Implementation addresses
+    /// @notice Returns the LiquidInstant implementation used for two-sided AMM token creation.
+    /// @dev This implementation is required for all instant launches; `ImplementationNotSet` is thrown
+    ///      if create paths are invoked before it is configured.
+    function liquidInstantImplementation() external view returns (address);
+
+    /// @notice Returns the LiquidMultiCurve implementation used for multicurve token creation.
+    /// @dev This implementation is required for all multicurve launches; `ImplementationNotSet` is thrown
+    ///      if create paths are invoked before it is configured.
     function liquidMultiCurveImplementation() external view returns (address);
 
-    // Protocol addresses (all public)
-    function weth() external view returns (address);
-
+    /// @notice Returns the Uniswap V4 PoolManager address.
+    /// @dev Required for pool bootstrap, liquidity ops, and router-owned fee policy enforcement.
     function poolManager() external view returns (address);
 
-    function v4Quoter() external view returns (address);
-
+    /// @notice Returns the configured V4 hook contract used for new token pools.
+    /// @dev New multicurve tokens must pass pool-hook validation before first launch through this hook.
     function poolHooks() external view returns (address);
 
-    // Trading knobs (individual public values)
-    function internalMaxSlippageBps() external view returns (uint16);
-
+    /// @notice Returns the minimum RARE liquidity required for launch-time pool setup.
+    /// @dev Applied when creating multicurve launches via `createLiquidTokenMultiCurve`.
     function minRareLiquidityWei() external view returns (uint256);
 
-    // LP band (individual public values, used only at pool create)
+    /// @notice Returns the lower LP tick used for pool creation.
+    /// @dev Interpreted relative to token ordering against `baseToken`; see implementation comments.
     function lpTickLower() external view returns (int24);
 
+    /// @notice Returns the upper LP tick used for pool creation.
+    /// @dev Interpreted relative to token ordering against `baseToken`; see implementation comments.
     function lpTickUpper() external view returns (int24);
 
+    /// @notice Returns the configured pool tick spacing for V4 hooks/pools.
+    /// @dev Must be compatible with all generated LP path spacing and pool initialization constraints.
     function poolTickSpacing() external view returns (int24);
 
+    /// @notice Returns the protocol base token address (`baseToken`, typically RARE).
+    /// @dev This address is also used as the canonical reward/fee currency in active distributions.
     function baseToken() external view returns (address);
 
+    /// @notice Returns the protocol fee recipient used across launch and auction flows.
+    /// @dev Also injected into legacy CCA parameter wiring by factory token launches.
     function protocolFeeRecipient() external view returns (address);
 
-    /// @notice Registry used by factory for automatic token registration
+    /// @notice Registry used by factory for automatic token registration.
+    /// @dev When unset or non-contract, registration is skipped to preserve launch flexibility.
     function liquidRegistry() external view returns (address);
 
     /// @notice Pause token creation in factory
@@ -152,6 +152,21 @@ interface ILiquidFactory {
 
     /// @notice Unpause token creation in factory
     function unpause() external;
+
+    /// @notice Creates a new Liquid token with two-sided AMM liquidity
+    /// @param _creator The address of the token creator (receives fees and launch reward)
+    /// @param _tokenUri The ERC20z token URI (metadata link)
+    /// @param _name The token name
+    /// @param _symbol The token symbol
+    /// @param _initialRareLiquidity Amount of RARE to seed the pool (must be > 0)
+    /// @return token The address of the created token
+    function createLiquidTokenInstant(
+        address _creator,
+        string memory _tokenUri,
+        string memory _name,
+        string memory _symbol,
+        uint256 _initialRareLiquidity
+    ) external returns (address token);
 
     /// @notice Creates a new Liquid token with multicurve liquidity
     /// @param _creator The address of the token creator (receives fees and launch reward)
@@ -169,6 +184,30 @@ interface ILiquidFactory {
         uint256 _initialRareLiquidity,
         Curve[] calldata _curves
     ) external returns (address token);
+
+    /// @notice Creates a new token through auction migration setup.
+    /// @dev `_migrator` is intentionally retained only for API compatibility and is ignored.
+    ///      Migration is driven by auction config + strategy factory internals.
+    /// @param _creator The token creator address (launch beneficiary/authority)
+    /// @param _tokenUri Token metadata URI
+    /// @param _name Token name
+    /// @param _symbol Token symbol
+    /// @param _migrator Compatibility-only address (kept for stable API, not used)
+    /// @param _auctionSupply Amount of token to seed for auction distribution
+    /// @param _auctionConfigData ABI-encoded auction config payload
+    /// @param _salt Deterministic salt for token strategy and address prediction
+    /// @return token The address of the created graduated token
+    /// @return auction The address of the CCA auction contract
+    function createLiquidTokenWithAuction(
+        address _creator,
+        string memory _tokenUri,
+        string memory _name,
+        string memory _symbol,
+        address _migrator,
+        uint256 _auctionSupply,
+        bytes calldata _auctionConfigData,
+        bytes32 _salt
+    ) external returns (address token, address auction);
 
     /// @notice Configure the registry used for automatic token registration
     /// @param _liquidRegistry Registry address

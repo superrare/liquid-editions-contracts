@@ -9,8 +9,7 @@ This document captures operational failure modes and recovery actions for the de
 - src/LiquidAuctioneer.sol
 - src/LiquidSwapGuard.sol
 - src/FeeDistributor.sol
-- src/BeneficiaryRegistry.sol
-- src/LiquidFeeLib.sol
+- src/LiquidRegistry.sol
 - script/config/NetworkConfig.sol
 - script/DeployLiquidSystem.s.sol
 
@@ -18,8 +17,8 @@ This document captures operational failure modes and recovery actions for the de
 
 ### 1.1 Recoverable on-chain (no redeploy)
 
-- LiquidRouter: `setUniversalRouter`, `setRareBurner`, `setFeeDistributor`, `setBeneficiaryRegistry`, `pause`, `unpause`, `setTrustedFactory`, `updateBeneficiary`, `removeToken`, `setAllowlistEnabled`
-- LiquidAuctioneer: `setUniversalRouter`, `setRareBurner`, `setFeeDistributor`, `setBeneficiaryRegistry`, `pause`, `unpause`, `setBeneficiary`
+- LiquidRouter: `setUniversalRouter`, `setRareBurner`, `setFeeDistributor`, `pause`, `unpause`, `setTrustedFactory`, `updateBeneficiary`, `removeToken`, `setAllowlistEnabled`
+- LiquidAuctioneer: `setUniversalRouter`, `setRareBurner`, `setFeeDistributor`, `pause`, `unpause`, `setBeneficiary`
 - LiquidSwapGuard: `setFactory`, `addRouter`, `addCaller`, `removeRouter`, `removeCaller`, `allowlist`
 - LiquidFactory: `pause`, `unpause`, `setLiquidRouter`, `setPoolHooks`, `setProtocolFeeRecipient`, `setCcaFactory`, `setLbpStrategyFactory`, `setPositionManager`, fee/market constants
 - Rescue: `rescueTokens`, `rescueETH` on router/auctioneer when safe and justified
@@ -29,7 +28,7 @@ This document captures operational failure modes and recovery actions for the de
 - Hard migration is limited to:
   - Recovery key loss/compromise of owner/governance control on `LiquidRouter`, `LiquidAuctioneer`, `LiquidSwapGuard`, or `FeeDistributor`.
   - Critical module corruption with no safe setter-based recovery path, for example:
-    - FeeDistributor logic that permanently reverts in `distributeFees` and cannot be rotated because dependency ownership/control is unavailable.
+    - FeeDistributor logic that cannot be rotated because dependency ownership/control is unavailable and no compatible replacement exists.
     - A pointer swap would land on an incompatible/incorrect module interface and lock all critical flows.
     - Severe on-chain data/state corruption in a module that makes operational validation or emergency rollback impossible.
 
@@ -41,22 +40,23 @@ Note: this path is intentional and the protocol is designed around module replac
 `FeeDistributor` itself is immutable, but router/auctioneer pointers are replaceable (`setFeeDistributor` in both contracts).
 
 Impact:
-1. Router/Auctioneer: fee distribution is delegated to `FeeDistributor.distributeFees`, which reverts trades if protocol recipient transfer fails (`EthTransferFailed`).
+1. Router: fee routing is delegated to `LiquidGuard` callbacks + `FeeDistributor.notifyFee()`.
+   In active V4 path, conversion issues fall back to direct RARE forwarding and should not revert swaps.
 2. Protocol recipient is immutable in the active `FeeDistributor` constructor and cannot be changed in-place.
 
 Immediate response (2-minute decision tree):
 1. Check if only recipient destination is bad (wrong key, compromised key, temporary ETH-receive issue):
    - Yes: pause (if needed), deploy replacement `FeeDistributor` with corrected recipient, then rotate via `setFeeDistributor(newFeeDistributor)` on router and/or auctioneer, run smoke test, then unpause.
-2. If recipient contract or distribution logic is bad (`distributeFees` failure not resolved by recipient replacement):
+2. If recipient contract or distribution logic is bad (`FeeDistributor` conversion/distribution behavior remains unexpectedly wrong):
    - Deploy a replacement `FeeDistributor` and call `setFeeDistributor(newFeeDistributor)` on router and/or auctioneer.
 3. If new module unavailable or suspect module corruption:
    - escalate to dependency migration/deployment recovery and stop broad trading until redeploy plan is approved.
 
 Router recovery:
 1. Pause the router if incident scope is large.
-2. Confirm replacement `FeeDistributor` has correct `protocolFeeRecipient`, `totalFeeBPS`, and expected tier splits.
+2. Confirm replacement `FeeDistributor` has correct `protocolFeeRecipient`, `beneficiaryShareBPS`, and event/convert fallback expectations.
 3. Call `setFeeDistributor(newFeeDistributor)` on router.
-4. Smoke test `buy`/`sell` and confirm `EthTransferFailed` stops and protocol fee event accounting is correct.
+4. Smoke test `buy`/`sell` and confirm fee conversion/fallback events align with expected policy.
 5. Unpause only after healthy validation.
 
 Auctioneer recovery:
@@ -72,12 +72,12 @@ Shared cleanup:
 
 ### B) Fee policy or distribution module issues
 
-1. Compare `TOTAL_FEE_BPS()`, `protocolFeeBPS()`, `rareBurnFeeBPS()`, and `referrerFeeBPS()` on router and auctioneer.
-2. Confirm `feeDistributor()` and `beneficiaryRegistry()` point to expected modules and owners are controlled.
+1. Compare V4 conversion/fallback behavior via `FeeDistributor` events and `maxPriceAgeSeconds` on router and auctioneer path.
+2. Confirm `feeDistributor()` on router/auctioneer points to expected modules and owners are controlled, then validate those distributors `beneficiaryRegistry()` pointers.
 3. If fees are mis-priced, a new leg is required, or distribution starts failing, this is intentionally handled by module migration: deploy a replacement `FeeDistributor` and call `setFeeDistributor(newFeeDistributor)` on `LiquidRouter` and `LiquidAuctioneer`.
 4. Verify calls on replacement by running a small `buy`/`sell` smoke flow.
-5. If only beneficiary attribution is wrong, validate `beneficiaryRegistry()` and the per-token entries.
-6. If registry writes are blocked or data is corrupted, rotate with `setBeneficiaryRegistry(newRegistry)`.
+5. If only beneficiary attribution is wrong, validate the distributor `beneficiaryRegistry()` and the per-token entries.
+6. If registry writes are blocked or data is corrupted, rotate via `FeeDistributor.setBeneficiaryRegistry(newRegistry)` (on the relevant distributor module(s) used by router/auctioneer).
 
 ### C) Swaps break after chain integration changes
 
@@ -99,9 +99,9 @@ Shared cleanup:
 
 ### F) Beneficiary attribution issues
 
-1. Check whether `beneficiaryRegistry()` is expected on router and auctioneer.
+1. Check whether `feeDistributor()` points to the expected module, then validate `beneficiaryRegistry()` on each active distributor.
 2. Fix individual token mapping using `updateBeneficiary` (router) / `setBeneficiary` (auctioneer) when possible.
-3. If module-level mapping is broken, rotate `setBeneficiaryRegistry(newRegistry)`.
+3. If module-level mapping is broken, rotate `setBeneficiaryRegistry(newRegistry)` on each impacted `FeeDistributor`.
 4. Confirm call path with registration and one trade/auction smoke test.
 
 ### G) Control-plane coupling drift between factory / router / swap guard
@@ -135,16 +135,16 @@ Shared cleanup:
 1. Confirm `lbpStrategyFactory`, `positionManager`, `protocolFeeRecipient`, and `ccaFactory` are configured.
 2. Verify factory protocol recipient and beneficiary config.
 
-### K) Beneficiary writer is compromised or disabled in BeneficiaryRegistry
+### K) Beneficiary writer is compromised or disabled in LiquidRegistry
 
 1. Impact:
-   - `BeneficiaryRegistry.setWriter` is owner-controlled; bad writer keys can redirect or block future beneficiary writes.
+   - `LiquidRegistry.setWriter` is owner-controlled; bad writer keys can redirect or block future beneficiary writes.
 2. Recovery:
    - Pause router/auctioneer if ongoing beneficiary-sensitive flows are live.
    - For known bad tokens, patch per-token mappings (`updateBeneficiary` on router, `setBeneficiary` on auctioneer).
-   - If registry trust is broken, deploy a replacement registry and rotate:
-     - `LiquidRouter.setBeneficiaryRegistry(newRegistry)`
-     - `LiquidAuctioneer.setBeneficiaryRegistry(newRegistry)`
+   - If registry trust is broken, deploy a replacement registry and rotate via distributor pointers:
+     - `IFeeDistributor.setBeneficiaryRegistry(newRegistry)` on router-facing distributor
+     - `IFeeDistributor.setBeneficiaryRegistry(newRegistry)` on auctioneer-facing distributor (if separate)
    - Replay known beneficiary mappings and validate `buy`/`bid` accounting with a smoke flow.
 
 ### L) Auctioneer token->RARE route misconfiguration
@@ -205,9 +205,9 @@ Shared cleanup:
 
 - Before changing protocol recipient (by replacing `FeeDistributor`): verify the new recipient is non-zero, under owner control, and can receive ETH; decide on pause strategy; broadcast/change plan with event IDs.
 - Before changing universal router (`setUniversalRouter` on router or auctioneer): validate command compatibility and run a smoke test.
-- Before changing fee module (`setFeeDistributor`): verify distributor interface compatibility, ownership state, that this module replacement is the intended fee policy shape (including any new/removed legs), and smoke fee breakpoints (`totalFeeBPS`, `setTier3FeeBPS` assumptions).
+- Before changing fee module (`setFeeDistributor`): verify distributor interface compatibility, ownership state, that this module replacement is the intended fee policy shape (including any new/removed legs), and smoke fee breakpoints (RARE→ETH conversion freshness, beneficiary split assumptions, and fallback behavior).
 - Before changing protocol recipient, confirm the active `feeDistributor()` on the target contract is the expected one and owned by trusted governance.
-- Before changing beneficiary module (`setBeneficiaryRegistry`): verify new module can read/write expected token beneficiaries and writer policy is aligned.
+- Before changing beneficiary module (`setBeneficiaryRegistry` on the active distributor): verify new module can read/write expected token beneficiaries and writer policy is aligned.
 - Before changing burn target (`setRareBurner`): verify `depositForBurn()` behavior and confirm protocol recipient can absorb redirected burn value if deposits fail.
 - Before guard/factory rotation: confirm expected `swapGuard`/`factory` binding and validate `setPoolHooks` with a test launch path after rotation.
 - Before changing factory live-state: define whether stop is for launches only (pause) vs trading controls too, and predefine unpause success criteria.

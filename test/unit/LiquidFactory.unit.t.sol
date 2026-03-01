@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 /**
  * @title LiquidFactory Unit Tests
  * @notice No fork; admin, setImplementation, setBaseToken, revert cases
- * @dev Uses MockV4PoolManager, MockV4Quoter for unit testing without fork
+ * @dev Uses MockV4PoolManager for unit testing without fork
  */
 
 import "forge-std/Test.sol";
@@ -13,7 +13,6 @@ import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {ILiquidFactory} from "liquid-editions/interfaces/ILiquidFactory.sol";
 import {ILiquidSwapGuard} from "liquid-editions/interfaces/ILiquidSwapGuard.sol";
 import {MockV4PoolManager} from "liquid-editions-test/helpers/MockV4PoolManager.sol";
-import {MockV4Quoter} from "liquid-editions-test/helpers/MockV4Quoter.sol";
 import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
@@ -23,34 +22,39 @@ import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 import {BeforeSwapDelta} from "v4-core/types/BeforeSwapDelta.sol";
 import {LiquidSwapGuard} from "liquid-editions/LiquidSwapGuard.sol";
 import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {Curve} from "doppler/libraries/Multicurve.sol";
 
 contract LiquidFactoryUnitTest is Test {
     address public admin = makeAddr("admin");
     address public user1 = makeAddr("user1");
 
     MockV4PoolManager public poolManager;
-    MockV4Quoter public quoter;
-    MockERC20 public weth;
     MockERC20 public baseToken;
 
     LiquidFactory public factory;
     LiquidMultiCurve public liquidImplementation;
 
+    function _defaultSingleCurve() internal view returns (Curve[] memory) {
+        Curve[] memory curves = new Curve[](1);
+        curves[0] = Curve({
+            tickLower: factory.lpTickLower(),
+            tickUpper: factory.lpTickUpper(),
+            numPositions: 1,
+            shares: 1e18
+        });
+        return curves;
+    }
+
     function setUp() public {
         poolManager = new MockV4PoolManager();
-        quoter = new MockV4Quoter();
-        weth = new MockERC20();
         baseToken = new MockERC20();
         factory = new LiquidFactory(
             admin,
-            address(weth),
             address(poolManager),
             -180,
             120000,
-            address(quoter),
             address(0),
             60,
-            300,
             1e15
         );
 
@@ -75,12 +79,6 @@ contract LiquidFactoryUnitTest is Test {
         factory.setLiquidMultiCurveImplementation(address(newImpl));
     }
 
-    function test_RevertWhen_NonAdmin_SetWeth() public {
-        vm.prank(user1);
-        vm.expectRevert();
-        factory.setWeth(address(0x123));
-    }
-
     function test_RevertWhen_NonAdmin_SetBaseToken() public {
         vm.prank(user1);
         vm.expectRevert();
@@ -91,12 +89,6 @@ contract LiquidFactoryUnitTest is Test {
         vm.prank(admin);
         vm.expectRevert(ILiquidFactory.AddressZero.selector);
         factory.setLiquidMultiCurveImplementation(address(0));
-    }
-
-    function test_RevertWhen_SetWethZero() public {
-        vm.prank(admin);
-        vm.expectRevert(ILiquidFactory.AddressZero.selector);
-        factory.setWeth(address(0));
     }
 
     function test_RevertWhen_SetBaseTokenZero() public {
@@ -133,14 +125,11 @@ contract LiquidFactoryUnitTest is Test {
         vm.expectRevert(ILiquidFactory.InvalidTickSpacing.selector);
         new LiquidFactory(
             admin,
-            address(weth),
             address(poolManager),
             -200,
             120000,
-            address(quoter),
             address(0),
             60,
-            300,
             1e15
         );
     }
@@ -151,24 +140,6 @@ contract LiquidFactoryUnitTest is Test {
         factory.setPoolManager(address(0));
     }
 
-    function test_SetV4Quoter_RevertsWhen_AddressZero() public {
-        vm.prank(admin);
-        vm.expectRevert(ILiquidFactory.AddressZero.selector);
-        factory.setV4Quoter(address(0));
-    }
-
-    function test_SetInternalMaxSlippageBps_RevertsWhen_TooHigh() public {
-        vm.prank(admin);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ILiquidFactory.SlippageTooHigh.selector,
-                10001,
-                5000
-            )
-        );
-        factory.setInternalMaxSlippageBps(10001);
-    }
-
     function testUpdateImplementation() public {
         LiquidMultiCurve newImpl = new LiquidMultiCurve();
         vm.prank(admin);
@@ -177,10 +148,19 @@ contract LiquidFactoryUnitTest is Test {
     }
 
     function testUpdateConfig() public {
-        address newWeth = makeAddr("newWeth");
+        address newBaseToken = makeAddr("newBaseToken");
+        vm.expectEmit(true, false, false, false);
+        emit ILiquidFactory.BaseTokenUpdated(newBaseToken);
         vm.prank(admin);
-        factory.setWeth(newWeth);
-        assertEq(factory.weth(), newWeth);
+        factory.setBaseToken(newBaseToken);
+        assertEq(factory.baseToken(), newBaseToken);
+
+        address newPoolManager = makeAddr("newPoolManager");
+        vm.expectEmit(true, false, false, false);
+        emit ILiquidFactory.PoolManagerUpdated(newPoolManager);
+        vm.prank(admin);
+        factory.setPoolManager(newPoolManager);
+        assertEq(factory.poolManager(), newPoolManager);
     }
 
     function test_SetPoolHooks_WithGuardBoundToDifferentFactory_Reverts() public {
@@ -229,7 +209,7 @@ contract LiquidFactoryUnitTest is Test {
         vm.prank(admin);
         vm.expectRevert(
             abi.encodeWithSelector(
-                ILiquidFactory.InvalidMultiCurvePoolHook.selector,
+                ILiquidFactory.InvalidPoolHook.selector,
                 notAContract
             )
         );
@@ -249,12 +229,14 @@ contract LiquidFactoryUnitTest is Test {
         uint160 requiredFlags = Hooks.BEFORE_INITIALIZE_FLAG;
         uint160 actualFlags = uint160(address(mockGuard)) & Hooks.ALL_HOOK_MASK;
 
+        Curve[] memory curves = _defaultSingleCurve();
+
         vm.prank(user1);
         baseToken.approve(address(factory), 1e15);
         vm.prank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                ILiquidFactory.MultiCurvePoolHookMissingFlags.selector,
+                ILiquidFactory.PoolHookMissingFlags.selector,
                 address(mockGuard),
                 actualFlags,
                 requiredFlags
@@ -265,7 +247,8 @@ contract LiquidFactoryUnitTest is Test {
             "uri",
             "Token",
             "TKN",
-            1e15
+            1e15,
+            curves
         );
     }
 
@@ -275,12 +258,14 @@ contract LiquidFactoryUnitTest is Test {
         vm.prank(admin);
         factory.setPoolHooks(address(mockHook));
 
+        Curve[] memory curves = _defaultSingleCurve();
+
         vm.prank(user1);
         baseToken.approve(address(factory), 1e15);
         vm.prank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                ILiquidFactory.MultiCurvePoolHookNotGuard.selector,
+                ILiquidFactory.PoolHookNotGuard.selector,
                 address(mockHook)
             )
         );
@@ -289,7 +274,8 @@ contract LiquidFactoryUnitTest is Test {
             "uri",
             "Token",
             "TKN",
-            1e15
+            1e15,
+            curves
         );
     }
 
@@ -305,6 +291,8 @@ contract LiquidFactoryUnitTest is Test {
 
         vm.prank(admin);
         validHook.setFactory(badFactory);
+
+        Curve[] memory curves = _defaultSingleCurve();
 
         vm.prank(user1);
         baseToken.approve(address(factory), 1e15);
@@ -322,12 +310,15 @@ contract LiquidFactoryUnitTest is Test {
             "uri",
             "Token",
             "TKN",
-            1e15
+            1e15,
+            curves
         );
     }
 
     function test_CreateLiquidTokenMultiCurve_WithNoHooks_RevertsPoolHooksNotSet() public {
         assertEq(factory.poolHooks(), address(0));
+
+        Curve[] memory curves = _defaultSingleCurve();
 
         vm.prank(user1);
         baseToken.approve(address(factory), 1e15);
@@ -338,7 +329,8 @@ contract LiquidFactoryUnitTest is Test {
             "uri",
             "Token",
             "TKN",
-            1e15
+            1e15,
+            curves
         );
     }
 
@@ -351,15 +343,19 @@ contract LiquidFactoryUnitTest is Test {
         vm.prank(admin);
         factory.setPoolHooks(address(initGuard));
 
+        Curve[] memory curves = _defaultSingleCurve();
+
         vm.prank(user1);
         baseToken.approve(address(factory), 1e15);
+
         vm.prank(user1);
         address token = factory.createLiquidTokenMultiCurve(
             user1,
             "uri",
             "Token",
             "TKN",
-            1e15
+            1e15,
+            curves
         );
 
         assertTrue(token != address(0));
@@ -375,6 +371,8 @@ contract LiquidFactoryUnitTest is Test {
         vm.prank(admin);
         factory.setPoolHooks(address(validHook));
 
+        Curve[] memory curves = _defaultSingleCurve();
+
         vm.prank(user1);
         baseToken.approve(address(factory), 1e15);
         vm.prank(user1);
@@ -383,7 +381,8 @@ contract LiquidFactoryUnitTest is Test {
             "uri",
             "Token",
             "TKN",
-            1e15
+            1e15,
+            curves
         );
 
         assertTrue(token != address(0));
@@ -415,6 +414,8 @@ contract LiquidFactoryUnitTest is Test {
         vm.prank(admin);
         factory.pause();
 
+        Curve[] memory curves = _defaultSingleCurve();
+
         vm.prank(user1);
         baseToken.approve(address(factory), 1e15);
 
@@ -425,7 +426,8 @@ contract LiquidFactoryUnitTest is Test {
             "uri",
             "Token",
             "TKN",
-            1e15
+            1e15,
+            curves
         );
     }
 
@@ -439,8 +441,10 @@ contract LiquidFactoryUnitTest is Test {
         vm.prank(admin);
         factory.pause();
 
+        Curve[] memory curves = _defaultSingleCurve();
+
         vm.prank(user1);
-        baseToken.approve(address(factory), 1e15);
+        baseToken.approve(address(factory), 2 * 1e15);
         vm.prank(user1);
         vm.expectRevert();
         factory.createLiquidTokenMultiCurve(
@@ -448,7 +452,8 @@ contract LiquidFactoryUnitTest is Test {
             "uri",
             "Token",
             "TKN",
-            1e15
+            1e15,
+            curves
         );
 
         vm.prank(admin);
@@ -460,7 +465,8 @@ contract LiquidFactoryUnitTest is Test {
             "uri",
             "Token",
             "TKN",
-            1e15
+            1e15,
+            curves
         );
         assertTrue(token != address(0));
     }

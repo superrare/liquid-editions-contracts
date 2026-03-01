@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
-import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
+
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {LiquidLensDemoV2} from "liquid-editions/examples/LiquidLensDemoV2.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
@@ -389,62 +389,10 @@ contract CreateTokenWithLens is Script {
 
         vm.stopBroadcast();
 
-        // ============================================
-        // OPTIONAL: REGISTER TOKEN WITH ROUTER
-        // ============================================
-        if (routerAddress != address(0)) {
-            console.log("=== OPTIONAL: REGISTERING TOKEN WITH ROUTER ===");
-            console.log("");
-            console.log(
-                "Note: Router registration requires deployer to be router owner"
-            );
-            console.log("Attempting registration...");
-            vm.startBroadcast(deployerPrivateKey);
-            try
-                ILiquidRouter(routerAddress).registerToken(
-                    newToken,
-                    actualTokenCreator
-                )
-            {
-                console.log("Token successfully registered with router!");
-                console.log(
-                    "Creator will receive beneficiary fees (25% of total fee)"
-                );
-            } catch Error(string memory reason) {
-                console.log("Failed to register token with router:");
-                console.log(reason);
-                console.log("You can register manually later using:");
-                string memory castCmd4 = string(
-                    abi.encodePacked(
-                        "  cast send ",
-                        vm.toString(routerAddress),
-                        " 'registerToken(address,address)' ",
-                        vm.toString(newToken),
-                        " ",
-                        vm.toString(actualTokenCreator)
-                    )
-                );
-                console.log(castCmd4);
-            } catch {
-                console.log(
-                    "Failed to register token with router (unknown error)"
-                );
-                console.log("You can register manually later using:");
-                string memory castCmd4 = string(
-                    abi.encodePacked(
-                        "  cast send ",
-                        vm.toString(routerAddress),
-                        " 'registerToken(address,address)' ",
-                        vm.toString(newToken),
-                        " ",
-                        vm.toString(actualTokenCreator)
-                    )
-                );
-                console.log(castCmd4);
-            }
-            vm.stopBroadcast();
-            console.log("");
-        }
+        // Token registration is handled automatically by LiquidFactory via LiquidRegistry.
+        // No separate router registration step needed.
+        console.log("Token registered via factory -> LiquidRegistry (automatic).");
+        console.log("");
 
         // ============================================
         // SUMMARY

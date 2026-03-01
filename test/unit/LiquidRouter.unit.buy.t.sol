@@ -13,9 +13,8 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
 
     function testBuyBasic() public {
         uint256 ethAmount = 1 ether;
-        uint256 expectedFee = (ethAmount * TOTAL_FEE_BPS) / 10000; // 4%
-        uint256 ethForSwap = ethAmount - expectedFee;
-        uint256 expectedTokens = (ethForSwap * router.tokenPerEth()) / 1e18;
+        // Router passes full ETH to swap — no ETH fee deducted (fees handled by LiquidGuard in RARE)
+        uint256 expectedTokens = (ethAmount * router.tokenPerEth()) / 1e18;
         (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.prank(user1);
@@ -61,26 +60,25 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
     }
 
     function testBuyDistributesFees() public {
+        // ETH fees are no longer distributed by the router — LiquidGuard collects RARE fees at the pool level.
+        // This test verifies the buy succeeds and the router does NOT retain any ETH.
         uint256 ethAmount = 1 ether;
         (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
-        uint256 protocolBalBefore = protocolFeeRecipient.balance;
-        uint256 beneficiaryBalBefore = beneficiary.balance;
+        uint256 routerBalBefore = address(liquidRouter).balance;
 
         vm.prank(user1);
         liquidRouter.buy{value: ethAmount}(
             address(token),
             user1,
-            1, // minTokensOut (must be > 0)
+            1,
             commands,
             inputs,
             block.timestamp + 1 hours
         );
 
-        // Beneficiary gets its share
-        assertTrue(beneficiary.balance > beneficiaryBalBefore);
-        // Protocol gets its share
-        assertTrue(protocolFeeRecipient.balance > protocolBalBefore);
+        // Router should not retain any ETH from the swap
+        assertEq(address(liquidRouter).balance, routerBalBefore);
     }
 
     function testBuyRevertsOnZeroToken() public {
@@ -171,14 +169,12 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         );
 
         vm.prank(admin);
-        fotLiquidRouter.registerToken(address(fot), beneficiary);
+        liquidRegistry.setBeneficiary(address(fot), beneficiary);
 
         (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
-        // Calculate expected amounts after swap
-        uint256 fee = (ethAmount * TOTAL_FEE_BPS) / 10000; // 4%
-        uint256 ethForSwap = ethAmount - fee;
-        uint256 tokensFromSwap = (ethForSwap * fotRouter.tokenPerEth()) / 1e18;
+        // Router passes full ETH to swap (no ETH fee deducted at router level)
+        uint256 tokensFromSwap = (ethAmount * fotRouter.tokenPerEth()) / 1e18;
 
         // When router transfers to user1, FOT token takes 1% fee
         uint256 expectedReceived = tokensFromSwap -
@@ -232,6 +228,27 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         );
     }
 
+    function testBuyRevertsOnCommandInputLengthMismatch() public {
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
+        
+        bytes[] memory mismatchedInputs = new bytes[](inputs.length + 1);
+        for (uint256 i = 0; i < inputs.length; i++) {
+            mismatchedInputs[i] = inputs[i];
+        }
+        mismatchedInputs[inputs.length] = "";
+
+        vm.expectRevert(ILiquidRouter.CommandInputLengthMismatch.selector);
+        vm.prank(user1);
+        liquidRouter.buy{value: 1 ether}(
+            address(token),
+            user1,
+            1,
+            commands,
+            mismatchedInputs,
+            block.timestamp + 1 hours
+        );
+    }
+
     function testBuyToDifferentRecipient() public {
         uint256 ethAmount = 1 ether;
         uint256 user2TokensBefore = token.balanceOf(user2);
@@ -266,7 +283,7 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         );
 
         vm.prank(admin);
-        refundRouterInstance.registerToken(address(token), beneficiary);
+        liquidRegistry.setBeneficiary(address(token), beneficiary);
 
         refundRouter.setShouldRefund(true);
         refundRouter.setRefundAmount(1 wei); // Refund 1 wei
@@ -298,7 +315,7 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         );
 
         vm.prank(admin);
-        refundRouterInstance.registerToken(address(token), beneficiary);
+        liquidRegistry.setBeneficiary(address(token), beneficiary);
 
         refundRouter.setShouldRefund(true);
         refundRouter.setRefundAmount(0.1 ether); // Refund 10% of 1 ether
@@ -325,9 +342,8 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         assertEq(address(liquidRouter).balance, forcedEth);
 
         uint256 ethAmount = 1 ether;
-        uint256 expectedFee = (ethAmount * TOTAL_FEE_BPS) / 10000;
-        uint256 expectedTokens = ((ethAmount - expectedFee) * router.tokenPerEth()) /
-            1e18;
+        // Full ETH goes to swap — no router-level fee deduction
+        uint256 expectedTokens = (ethAmount * router.tokenPerEth()) / 1e18;
         (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.prank(user1);
@@ -358,7 +374,7 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         );
 
         vm.prank(admin);
-        refundRouterInstance.registerToken(address(token), beneficiary);
+        liquidRegistry.setBeneficiary(address(token), beneficiary);
 
         uint256 forcedEth = 1;
         vm.deal(user2, 100 ether);

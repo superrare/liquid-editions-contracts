@@ -101,7 +101,9 @@ contract LiquidInitGuardUnitTest is Test {
 
     function test_SetFactory_RevertsForNonOwner() public {
         vm.prank(randomAddr);
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", randomAddr)
+        );
         guard.setFactory(factoryAddr);
     }
 
@@ -128,6 +130,12 @@ contract LiquidInitGuardUnitTest is Test {
         assertTrue(guard.allowedInitializers(tokenContract));
     }
 
+    function test_AddInitializer_ZeroAddress_Succeeds() public {
+        vm.prank(owner);
+        guard.addInitializer(address(0));
+        assertTrue(guard.allowedInitializers(address(0)));
+    }
+
     function test_NonOwnerNonFactory_CannotAddInitializer() public {
         vm.prank(owner);
         guard.setFactory(factoryAddr);
@@ -152,7 +160,9 @@ contract LiquidInitGuardUnitTest is Test {
         guard.addInitializer(tokenContract);
 
         vm.prank(randomAddr);
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", randomAddr)
+        );
         guard.removeInitializer(tokenContract);
     }
 

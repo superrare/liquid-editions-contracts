@@ -3,16 +3,15 @@ pragma solidity ^0.8.0;
 
 import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
 import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
-import {FeeDistributor} from "liquid-editions/FeeDistributor.sol";
-import {IFeeDistributor} from "liquid-editions/interfaces/IFeeDistributor.sol";
 import {LiquidRegistry} from "liquid-editions/LiquidRegistry.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {LiquidRouterUnitTestBase, MockUniversalRouterForRouter} from "liquid-editions-test/unit/LiquidRouter.unit.base.sol";
 import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
 
 /// @title LiquidRouter Unit Tests (Core)
-/// @notice Init, allowlist, admin, pause, rescue, remove token
-/// @dev Tests use TOTAL_FEE_BPS = 400 (4%) and BENEFICIARY_FEE_BPS = 2500 (25%)
+/// @notice Init, allowlist, admin, pause, rescue, remove token.
+///         Fees are no longer handled by the router — they are skimmed at the V4 pool
+///         level by LiquidGuard. Fee-related assertions have been removed.
 contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
 
     // ============================================
@@ -21,89 +20,33 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
 
     function testInitializeSetsParameters() public view {
         assertEq(liquidRouter.universalRouter(), address(router));
-        FeeDistributor distributor = FeeDistributor(liquidRouter.feeDistributor());
-        assertEq(distributor.protocolFeeRecipient(), protocolFeeRecipient);
+        assertNotEq(liquidRouter.liquidRegistry(), address(0));
     }
 
     function testInitializeRevertsOnZeroRouter() public {
-        FeeDistributor feeDistributor = new FeeDistributor(
-            admin,
-            uint16(TOTAL_FEE_BPS),
-            protocolFeeRecipient
-        );
         LiquidRegistry registry = new LiquidRegistry(admin);
-        bool didRevert = false;
-        try new LiquidRouter(
-            admin,
-            address(0),
-            address(feeDistributor),
-            address(registry)
-        ) {} catch {
-            didRevert = true;
-        }
-        assertTrue(didRevert);
-    }
-
-    function testInitializeRevertsOnZeroProtocolFeeRecipient() public {
-        vm.expectRevert();
-        deployLiquidRouter(
-            address(router),
-            address(0),
-            admin
-        );
-    }
-
-    function testSetFeeDistributorUpdatesAndReadsFromModule() public {
-        address previousDistributor = liquidRouter.feeDistributor();
-        FeeDistributor newFeeDistributor = new FeeDistributor(
-            admin,
-            500,
-            protocolFeeRecipient
-        );
-
-        vm.expectEmit(true, true, false, true);
-        emit ILiquidRouter.FeeDistributorUpdated(
-            previousDistributor,
-            address(newFeeDistributor)
-        );
-
-        vm.prank(admin);
-        liquidRouter.setFeeDistributor(address(newFeeDistributor));
-
-        assertEq(liquidRouter.feeDistributor(), address(newFeeDistributor));
-        FeeDistributor distributor = FeeDistributor(newFeeDistributor);
-        assertEq(distributor.totalFeeBPS(), 500);
-    }
-
-    function testOnlyOwnerCanSetFeeDistributor() public {
-        vm.expectRevert();
-        vm.prank(user1);
-        liquidRouter.setFeeDistributor(address(0));
-    }
-
-    function testSetFeeDistributorRevertsOnZeroAddress() public {
-        vm.prank(admin);
         vm.expectRevert(ILiquidRouter.AddressZero.selector);
-        liquidRouter.setFeeDistributor(address(0));
+        new LiquidRouter(admin, address(0), address(registry));
     }
 
-    function testSetFeeDistributorRevertsOnEOA() public {
-        vm.prank(admin);
+    function testInitializeRevertsOnEOA() public {
+        LiquidRegistry registry = new LiquidRegistry(admin);
         vm.expectRevert(ILiquidRouter.InvalidModule.selector);
-        liquidRouter.setFeeDistributor(makeAddr("eoaFeeDistributor"));
+        new LiquidRouter(admin, makeAddr("eoaUniversalRouter"), address(registry));
     }
 
-    function testSetFeeDistributorRevertsIfCalledWrong() public {
-        vm.prank(admin);
-        vm.expectRevert();
-        liquidRouter.setFeeDistributor(address(0));
+    function testInitializeRevertsOnZeroRegistry() public {
+        vm.expectRevert(ILiquidRouter.AddressZero.selector);
+        new LiquidRouter(admin, address(router), address(0));
     }
 
     function testOnlyOwnerCanSetLiquidRegistry() public {
         LiquidRegistry newRegistry = new LiquidRegistry(admin);
 
         vm.prank(user1);
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", user1)
+        );
         liquidRouter.setLiquidRegistry(address(newRegistry));
     }
 
@@ -125,9 +68,6 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
         address replacementBeneficiary = makeAddr("replacementBeneficiary");
         MockERC20 newToken = new MockERC20();
 
-        vm.prank(admin);
-        newRegistry.setWriter(address(liquidRouter), true);
-
         vm.expectEmit(true, true, false, true);
         emit ILiquidRouter.LiquidRegistryUpdated(
             oldLiquidRegistry,
@@ -138,13 +78,13 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
         liquidRouter.setLiquidRegistry(address(newRegistry));
 
         // Existing token registration is from the old registry and should not carry over.
-        assertEq(liquidRouter.tokenBeneficiaries(address(token)), address(0));
+        assertEq(newRegistry.beneficiaryOf(address(token)), address(0));
 
         vm.prank(admin);
-        liquidRouter.registerToken(address(newToken), replacementBeneficiary);
+        newRegistry.setBeneficiary(address(newToken), replacementBeneficiary);
 
         assertEq(
-            liquidRouter.tokenBeneficiaries(address(newToken)),
+            newRegistry.beneficiaryOf(address(newToken)),
             replacementBeneficiary
         );
     }
@@ -175,8 +115,6 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
 
     function testRegisteredTokenAllowed() public {
         uint256 recipientBalBefore = token.balanceOf(user1);
-        uint256 protocolBalBefore = protocolFeeRecipient.balance;
-        uint256 beneficiaryBalBefore = beneficiary.balance;
         (bytes memory commands, bytes[] memory inputs) = _validRoute();
 
         vm.prank(user1);
@@ -192,42 +130,58 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
         assertGt(tokensReceived, 0, "Recipient should receive tokens");
         assertEq(token.balanceOf(user1), recipientBalBefore + tokensReceived);
         assertEq(token.balanceOf(address(liquidRouter)), 0, "Router should not retain tokens");
-        assertTrue(protocolFeeRecipient.balance > protocolBalBefore, "Protocol fee recipient should receive ETH");
-        assertTrue(beneficiary.balance > beneficiaryBalBefore, "Beneficiary should receive ETH");
     }
 
     // ============================================
     // ADMIN TESTS
     // ============================================
 
-    function testOnlyOwnerCanRegisterToken() public {
-        MockERC20 newToken = new MockERC20();
+    function testOnlyOwnerCanAddCurrency() public {
+        address currency = makeAddr("currencyToken");
+        vm.etch(currency, hex"00");
 
-        vm.expectRevert();
         vm.prank(user1);
-        liquidRouter.registerToken(address(newToken), beneficiary);
+        vm.expectRevert(
+            abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", user1)
+        );
+        liquidRouter.addCurrency(currency);
 
         vm.prank(admin);
-        liquidRouter.registerToken(address(newToken), beneficiary);
-        assertEq(
-            liquidRouter.tokenBeneficiaries(address(newToken)),
-            beneficiary
-        );
+        liquidRouter.addCurrency(currency);
+        assertTrue(liquidRouter.isCurrencyWhitelisted(currency));
     }
 
-    function testOnlyOwnerCanUpdateBeneficiary() public {
-        address newBeneficiary = makeAddr("newBeneficiary");
-
-        vm.expectRevert();
-        vm.prank(user1);
-        liquidRouter.updateBeneficiary(address(token), newBeneficiary);
+    function testOnlyOwnerCanRemoveCurrency() public {
+        address currency = makeAddr("currencyToken");
+        vm.etch(currency, hex"00");
 
         vm.prank(admin);
-        liquidRouter.updateBeneficiary(address(token), newBeneficiary);
-        assertEq(
-            liquidRouter.tokenBeneficiaries(address(token)),
-            newBeneficiary
+        liquidRouter.addCurrency(currency);
+
+        vm.prank(user1);
+        vm.expectRevert(
+            abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", user1)
         );
+        liquidRouter.removeCurrency(currency);
+
+        vm.prank(admin);
+        liquidRouter.removeCurrency(currency);
+        assertFalse(liquidRouter.isCurrencyWhitelisted(currency));
+    }
+
+    function testIsCurrencyWhitelistedReflectsState() public {
+        address currency = makeAddr("currencyToken");
+        vm.etch(currency, hex"00");
+
+        assertFalse(liquidRouter.isCurrencyWhitelisted(currency));
+
+        vm.prank(admin);
+        liquidRouter.addCurrency(currency);
+        assertTrue(liquidRouter.isCurrencyWhitelisted(currency));
+
+        vm.prank(admin);
+        liquidRouter.removeCurrency(currency);
+        assertFalse(liquidRouter.isCurrencyWhitelisted(currency));
     }
 
     function testOnlyOwnerCanSetUniversalRouter() public {
@@ -235,8 +189,10 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
             address(token)
         );
 
-        vm.expectRevert();
         vm.prank(user1);
+        vm.expectRevert(
+            abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", user1)
+        );
         liquidRouter.setUniversalRouter(address(newRouter));
     }
 
@@ -260,6 +216,12 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
         vm.expectRevert(ILiquidRouter.AddressZero.selector);
         vm.prank(admin);
         liquidRouter.setUniversalRouter(address(0));
+    }
+
+    function testSetUniversalRouterRevertsOnEOA() public {
+        vm.expectRevert(ILiquidRouter.InvalidModule.selector);
+        vm.prank(admin);
+        liquidRouter.setUniversalRouter(makeAddr("eoaUniversalRouter"));
     }
 
     // ============================================
@@ -323,8 +285,10 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
     }
 
     function testOnlyOwnerCanPause() public {
-        vm.expectRevert();
         vm.prank(user1);
+        vm.expectRevert(
+            abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", user1)
+        );
         liquidRouter.pause();
     }
 
@@ -332,8 +296,10 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
         vm.prank(admin);
         liquidRouter.pause();
 
-        vm.expectRevert();
         vm.prank(user1);
+        vm.expectRevert(
+            abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", user1)
+        );
         liquidRouter.unpause();
     }
 
@@ -382,8 +348,10 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
     function testOnlyOwnerCanRescueTokens() public {
         token.mint(address(liquidRouter), 100e18);
 
-        vm.expectRevert();
         vm.prank(user1);
+        vm.expectRevert(
+            abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", user1)
+        );
         liquidRouter.rescueTokens(address(token), user1, 100e18);
     }
 
@@ -434,47 +402,30 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
     function testOnlyOwnerCanRescueETH() public {
         vm.deal(address(liquidRouter), 1 ether);
 
-        vm.expectRevert();
         vm.prank(user1);
+        vm.expectRevert(
+            abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", user1)
+        );
         liquidRouter.rescueETH(user1, 1 ether);
     }
 
     // ============================================
-    // REMOVE TOKEN TESTS
+    // REGISTRY REMOVAL BLOCKS ROUTER TESTS
     // ============================================
 
-    function testRemoveToken() public {
-        assertEq(liquidRouter.tokenBeneficiaries(address(token)), beneficiary);
+    function testRegistryRemoveBeneficiaryClearsRegistration() public {
+        assertEq(liquidRegistry.beneficiaryOf(address(token)), beneficiary);
 
         vm.prank(admin);
-        liquidRouter.removeToken(address(token));
+        liquidRegistry.removeBeneficiary(address(token));
 
-        assertEq(liquidRouter.tokenBeneficiaries(address(token)), address(0));
+        assertEq(liquidRegistry.beneficiaryOf(address(token)), address(0));
+        assertFalse(liquidRegistry.isRegistered(address(token)));
     }
 
-    function testRemoveTokenEmitsEvent() public {
-        vm.expectEmit(true, false, false, false);
-        emit ILiquidRouter.TokenRemoved(address(token));
-
+    function testTokenRemovedFromRegistryBlockedByRouter() public {
         vm.prank(admin);
-        liquidRouter.removeToken(address(token));
-    }
-
-    function testRemoveTokenRevertsOnZeroAddress() public {
-        vm.expectRevert(ILiquidRouter.AddressZero.selector);
-        vm.prank(admin);
-        liquidRouter.removeToken(address(0));
-    }
-
-    function testOnlyOwnerCanRemoveToken() public {
-        vm.expectRevert();
-        vm.prank(user1);
-        liquidRouter.removeToken(address(token));
-    }
-
-    function testRemovedTokenBlocked() public {
-        vm.prank(admin);
-        liquidRouter.removeToken(address(token));
+        liquidRegistry.removeBeneficiary(address(token));
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -492,5 +443,26 @@ contract LiquidRouterUnitTest is LiquidRouterUnitTestBase {
             inputs,
             block.timestamp + 1 hours
         );
+    }
+
+    function testTokenReregisteredAfterRemovalAllowedByRouter() public {
+        vm.prank(admin);
+        liquidRegistry.removeBeneficiary(address(token));
+
+        // Re-register
+        vm.prank(admin);
+        liquidRegistry.setBeneficiary(address(token), beneficiary);
+
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
+        vm.prank(user1);
+        uint256 tokensReceived = liquidRouter.buy{value: 1 ether}(
+            address(token),
+            user1,
+            1,
+            commands,
+            inputs,
+            block.timestamp + 1 hours
+        );
+        assertGt(tokensReceived, 0, "Buy should succeed after re-registration");
     }
 }

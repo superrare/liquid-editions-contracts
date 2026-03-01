@@ -3,12 +3,12 @@
 ## TL;DR
 
 ✅ **Your contract (`LiquidRouter.sol`) is complete and works with V3/V4 pools**  
-✅ **No contract changes needed**  
+✅ **Swap execution still uses Universal Router under the hood**  
 ⚠️ **You need to update your client SDK to use the Smart Order Router**
 
 ## What Changed
 
-The Universal Router that your contract uses **already supports V2, V3, and V4 pools**. The routing decision happens at the client level when encoding the `routeData` parameter.
+The Universal Router that your contract uses **already supports V2, V3, and V4 pools**. The routing decision happens at the client level when assembling `commands` and `inputs`.
 
 ## Architecture
 
@@ -18,16 +18,17 @@ The Universal Router that your contract uses **already supports V2, V3, and V4 p
 │                                                             │
 │  1. Call Smart Router SDK                                  │
 │  2. SDK finds best route (V2/V3/V4)                        │
-│  3. SDK returns encoded routeData                          │
+│  3. SDK returns encoded commands + inputs                  │
 └─────────────────────────────────────────────────────────────┘
                            │
-                           ▼ routeData (bytes)
+                           ▼ commands + inputs
 ┌─────────────────────────────────────────────────────────────┐
 │ LiquidRouter Contract                                       │
 │                                                             │
-│  1. Takes 3% fee                                           │
-│  2. Forwards routeData to Universal Router                 │
-│  3. Distributes proceeds                                   │
+│  1. Refreshes RARE/ETH price cache for fee conversion       │
+│  2. Assembles execute(commands, inputs, deadline)          │
+│  3. Relays V4 callbacks to LiquidGuard for fee collection    │
+│  4. Surfaces proceeds via emitted events                   │
 └─────────────────────────────────────────────────────────────┘
                            │
                            ▼ execute(commands, inputs)
@@ -41,6 +42,12 @@ The Universal Router that your contract uses **already supports V2, V3, and V4 p
 │  - V2_SWAP (for V2 pools)                                  │
 └─────────────────────────────────────────────────────────────┘
 ```
+## Fee model for router users
+
+- Router event fee fields are zero in this architecture (`ethFee`, `protocolFee`, `beneficiaryFee` in router events).
+- LiquidGuard collects fees in Uniswap V4 swap callbacks (`beforeSwap`/`afterSwap`) and calls `FeeDistributor.notifyFee`.
+- `FeeDistributor.notifyFee` attempts inline RARE→ETH conversion using the client-provided price from `setLastRareEthPrice`; on stale/failed conversion it falls back to direct RARE forwarding.
+- `LiquidAuctioneer` keeps legacy compatibility selectors (`totalFeeBPS`, `distributeFees`) for non-V4 compatibility behavior and they are no-ops in the current distributor.
 
 ## Implementation Options
 
@@ -71,8 +78,10 @@ const route = await router.route(
   }
 );
 
-// Use the encoded calldata
-const routeData = route.methodParameters.calldata;
+// Use helpers that return commands + inputs for the router
+const quote = await getManualBuyQuote(...);
+const commands = quote.commands;
+const inputs = quote.inputs;
 ```
 
 **Advantages**:
@@ -128,16 +137,16 @@ console.log(`Best route: ${quote.route}`);
 // Example output: "V4(WETH → TOKEN)" or "V3(WETH → USDC, 0.05%) + V3(USDC → TOKEN, 0.3%)"
 ```
 
-### 3. Contract Interaction (No Change)
+### 3. Contract Interaction (Updated Arguments)
 
 ```typescript
-// This part stays exactly the same
 await liquidRouter.buy(
   token,
   recipient,
   orderReferrer,
   quote.minAmountOut,
-  quote.routeData,  // Now includes V4 routes automatically
+  quote.commands,
+  quote.inputs,
   quote.deadline,
   { value: ethAmount }
 );
@@ -330,4 +339,3 @@ A: No! You can deploy this now. It will work with V3 pools today and automatical
 - Review `scripts/uniswap-smart-router.ts` for full implementation
 - Check `scripts/README.md` for usage examples
 - See [Uniswap Docs](https://docs.uniswap.org/contracts/universal-router/overview) for Universal Router details
-

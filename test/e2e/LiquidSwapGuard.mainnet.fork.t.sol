@@ -57,7 +57,6 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
     function _configureFactory() internal override {
         factory.setCcaFactory(config.ccaFactory);
         factory.setLbpStrategyFactory(config.lbpStrategyFactory);
-        factory.setPositionManager(config.uniswapV4PositionManager);
         factory.setProtocolFeeRecipient(protocolFeeRecipient);
 
         address guardAddr = DeployLiquidSwapGuard.deployForTest(
@@ -98,9 +97,6 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         );
         liquidToken = LiquidMultiCurve(payable(tokenAddr));
         vm.stopPrank();
-
-        vm.prank(admin);
-        router.registerToken(tokenAddr, tokenCreator);
 
         vm.deal(buyer, 10 ether);
     }
@@ -210,12 +206,10 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
         inputs[0] = v4SwapInput;
     }
 
-    function _ethForSwap(uint256 ethAmount) internal view returns (uint256) {
-        return
-            (ethAmount *
-                (10000 -
-                    IFeeDistributor(router.feeDistributor()).totalFeeBPS())) /
-            10000;
+    /// @notice Fees are now skimmed at the V4 pool level by LiquidGuard (in RARE).
+    ///         The router no longer deducts ETH fees, so full ETH routes to the swap.
+    function _ethForSwap(uint256 ethAmount) internal pure returns (uint256) {
+        return ethAmount;
     }
 
     function _appendWrapEth(

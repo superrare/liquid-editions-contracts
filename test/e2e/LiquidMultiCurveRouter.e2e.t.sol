@@ -209,9 +209,6 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
 
         liquidMultiCurveToken = LiquidMultiCurve(payable(multiAddr));
 
-        vm.prank(admin);
-        router.registerToken(multiAddr, tokenCreator);
-
         // Enough for 10x 1 ETH buys + sells + gas buffer
         vm.deal(buyer, 15 ether);
     }
@@ -461,8 +458,10 @@ contract LiquidMultiCurveRouterE2ETest is AnvilForkTestBase {
             );
     }
 
-    function _totalFeeBpsForRouter() internal view returns (uint256) {
-        return IFeeDistributor(router.feeDistributor()).totalFeeBPS();
+    /// @notice Fees are now skimmed at the V4 pool level by LiquidGuard (in RARE).
+    ///         The router no longer deducts ETH fees, so the full ETH amount goes to the swap.
+    function _totalFeeBpsForRouter() internal pure returns (uint256) {
+        return 0;
     }
 
     function _doSellWithHooks(

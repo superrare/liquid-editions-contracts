@@ -113,14 +113,11 @@ abstract contract LiquidBondingForkBase is Test, InitGuardTestHelper {
 
         LiquidFactory tempFactory = new LiquidFactory(
             admin,
-            config.weth,
             config.uniswapV4PoolManager,
             tickLower,
             tickUpper,
-            config.uniswapV4Quoter,
             initGuardAddr,
             60,
-            300,
             1e15
         );
         LiquidInitGuard(initGuardAddr).setFactory(address(tempFactory));

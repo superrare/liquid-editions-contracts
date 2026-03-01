@@ -69,9 +69,8 @@ const WETH_ADDRESSES: Record<number, string> = {
 
 // ABIs
 const LIQUID_ROUTER_ABI = [
-  'function sell(address token, uint256 tokenAmount, address recipient, address orderReferrer, uint256 minEthOut, bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external returns (uint256 ethReceived)',
-  'function TOTAL_FEE_BPS() external view returns (uint256)',
-  'event RouterSell(address indexed token, address indexed seller, address indexed recipient, address orderReferrer, uint256 tokensIn, uint256 ethReceived, uint256 ethFee, uint256 ethToSeller, uint256 protocolFee, uint256 referrerFee, uint256 beneficiaryFee, uint256 burnFee)',
+  'function sell(address token, uint256 tokenAmount, address recipient, uint256 minEthOut, bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external returns (uint256 ethReceived)',
+  'event RouterSell(address indexed token, address indexed seller, address indexed recipient, uint256 tokensSold, uint256 grossEthReceived, uint256 ethFee, uint256 netEthReceived, uint256 protocolFee, uint256 beneficiaryFee)',
 ];
 
 const ERC20_ABI = [
@@ -152,12 +151,8 @@ async function main() {
   
   console.log('\n💸 Selling:', ethers.utils.formatEther(tokenAmount), tokenSymbol);
   
-  // Get router fee configuration
   const router = new ethers.Contract(CONFIG.liquidRouter, LIQUID_ROUTER_ABI, provider);
-  const totalFeeBps = await router.TOTAL_FEE_BPS();
-  console.log('\n⚙️  Router Configuration:');
-  console.log('  Total Fee:', totalFeeBps.toNumber() / 100, '%');
-  
+
   // Check and set approval if needed
   console.log('\n🔐 Checking token approval...');
   const currentAllowance = await liquidToken.allowance(wallet.address, CONFIG.liquidRouter);
@@ -219,7 +214,6 @@ async function main() {
       CONFIG.liquidToken,
       tokenAmount,
       wallet.address,
-      ethers.constants.AddressZero,
       quote.minAmountOut,
       quote.commands,
       quote.inputs,
@@ -249,15 +243,9 @@ async function main() {
     
     if (sellEvent) {
       console.log('\n📊 Trade Details:');
-      console.log('  Tokens sold:', ethers.utils.formatEther(sellEvent.args.tokensIn), tokenSymbol);
-      console.log('  ETH received (gross):', ethers.utils.formatEther(sellEvent.args.ethReceived), 'ETH');
-      console.log('  ETH fee:', ethers.utils.formatEther(sellEvent.args.ethFee), 'ETH');
-      console.log('  ETH to seller (net):', ethers.utils.formatEther(sellEvent.args.ethToSeller), 'ETH');
-      console.log('\n  Fee Distribution:');
-      console.log('    Protocol:', ethers.utils.formatEther(sellEvent.args.protocolFee), 'ETH');
-      console.log('    Referrer:', ethers.utils.formatEther(sellEvent.args.referrerFee), 'ETH');
-      console.log('    Beneficiary:', ethers.utils.formatEther(sellEvent.args.beneficiaryFee), 'ETH');
-      console.log('    RARE Burn:', ethers.utils.formatEther(sellEvent.args.burnFee), 'ETH');
+      console.log('  Tokens sold:', ethers.utils.formatEther(sellEvent.args.tokensSold), tokenSymbol);
+      console.log('  ETH received:', ethers.utils.formatEther(sellEvent.args.grossEthReceived), 'ETH');
+      console.log('  Note: RARE fees skimmed at pool level by LiquidGuard hook');
     }
     
   } catch (error: any) {

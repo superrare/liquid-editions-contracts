@@ -32,8 +32,7 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             PoolId.unwrap(liquidToken.poolId()) != bytes32(0),
             "Pool created"
         );
-        IPoolManager pm = IPoolManager(liquidToken.poolManager());
-        assertTrue(pm.getLiquidity(liquidToken.poolId()) > 0, "Pool has liquidity");
+        assertTrue(liquidToken.storedPositionsLength() > 0, "Pool has liquidity positions");
         assertEq(factory.baseToken(), config.rareToken, "Base token set");
     }
 
@@ -42,7 +41,7 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
     ///      Requires a V3 WETH/RARE pool at 0.3% fee tier on Ethereum mainnet.
     function test_Buy_RARE_ViaRouter_V3Routing() public {
         vm.prank(admin);
-        router.registerToken(config.rareToken, tokenCreator);
+        router.addCurrency(config.rareToken);
 
         uint256 ethAmount = 0.01 ether;
         uint256 ethForSwap = _ethForSwap(ethAmount);
@@ -277,9 +276,6 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         );
         liquidToken2 = LiquidMultiCurve(payable(token2Addr));
         vm.stopPrank();
-
-        vm.prank(admin);
-        router.registerToken(token2Addr, tokenCreator);
 
         // Buy liquidToken with ETH
         _doBuy(buyer, address(liquidToken), buyer, 0.01 ether);

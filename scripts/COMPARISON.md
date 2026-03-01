@@ -2,6 +2,11 @@
 
 Quick reference for choosing between different routing approaches for LiquidRouter integration.
 
+## Fee model note
+- Both approaches (Smart Router vs Manual Quoter) are about route selection only.
+- In this protocol version, router event-level fees are zeroed; V4 fee collection happens in `LiquidGuard` callbacks and is accounted for in `FeeDistributor.notifyFee`.
+- Legacy auction-era selectors (`totalFeeBPS`, `distributeFees`) remain compatibility no-ops.
+
 ## Side-by-Side Comparison
 
 | Feature | Smart Order Router<br>`uniswap-smart-router.ts` | Manual V3 Quoter<br>`uniswap-quote.ts` | Uniswap API |
@@ -100,7 +105,7 @@ const response = await fetch('https://api.uniswap.org/v2/quote', {
 });
 
 const { methodParameters } = await response.json();
-const routeData = methodParameters.calldata;
+const universalRouterCalldata = methodParameters.calldata;
 ```
 
 **When to use**:
@@ -268,4 +273,3 @@ import { getSmartBuyQuote, getSmartSellQuote } from './uniswap-smart-router';
 ---
 
 Still have questions? See `INTEGRATION_GUIDE.md` for full migration instructions.
-
