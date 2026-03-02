@@ -114,15 +114,15 @@ contract FeeDistributor is IFeeDistributor, Ownable {
         uint16 _beneficiaryShareBPS,
         uint16 _totalFeeBPS
     ) Ownable(_owner) {
-        if (_protocolFeeRecipient == address(0)) revert InvalidAddress();
+        if (_protocolFeeRecipient == address(0)) revert AddressZero();
         if (_beneficiaryShareBPS > 10_000) revert InvalidBeneficiaryShare();
         if (_totalFeeBPS > 10_000) revert InvalidTotalFee();
 
         // V4 addresses must either both be zero (legacy mode) or both be non-zero (full mode)
         bool anyV4Set = _poolManager != address(0) || _rareToken != address(0);
         if (anyV4Set) {
-            if (_poolManager == address(0)) revert InvalidAddress();
-            if (_rareToken == address(0)) revert InvalidAddress();
+            if (_poolManager == address(0)) revert AddressZero();
+            if (_rareToken == address(0)) revert AddressZero();
         }
 
         POOL_MANAGER = _poolManager;
@@ -171,14 +171,19 @@ contract FeeDistributor is IFeeDistributor, Ownable {
     /// @dev MUST NOT REVERT (except on unauthorized caller).
     ///      Called within a V4 unlock context from an approved hook callback.
     ///      The hook has already taken `rareAmount` RARE from the PoolManager to this address.
-    function notifyFee(address liquidToken, uint256 rareAmount) external override onlyHook {
+    function notifyFee(
+        address liquidToken,
+        uint256 rareAmount
+    ) external override onlyHook {
         if (rareAmount == 0) return;
 
         // Resolve beneficiary
         address beneficiary;
         address reg = beneficiaryRegistry;
         if (reg != address(0)) {
-            try ILiquidRegistry(reg).beneficiaryOf(liquidToken) returns (address registryBeneficiary) {
+            try ILiquidRegistry(reg).beneficiaryOf(liquidToken) returns (
+                address registryBeneficiary
+            ) {
                 beneficiary = registryBeneficiary;
             } catch {
                 // Registry lookup can fail for legacy/edge cases; continue with no beneficiary.
@@ -189,26 +194,51 @@ contract FeeDistributor is IFeeDistributor, Ownable {
         (uint256 rareBen, uint256 rareProt) = _split(rareAmount, beneficiary);
 
         // Gate: only attempt conversion when V4 is configured and conversion is enabled
-        bool canConvert = POOL_MANAGER != address(0)
-            && RARE_TOKEN != address(0)
-            && conversionEnabled;
+        bool canConvert = POOL_MANAGER != address(0) &&
+            RARE_TOKEN != address(0) &&
+            conversionEnabled;
 
         if (!canConvert) {
-            _distributeRare(liquidToken, beneficiary, rareBen, rareProt, "CONVERSION_OFF");
+            _distributeRare(
+                liquidToken,
+                beneficiary,
+                rareBen,
+                rareProt,
+                "CONVERSION_OFF"
+            );
             return;
         }
 
         // Verify pool key currencies are valid before attempting conversion
         if (!_validPoolKeyCurrencies()) {
-            _distributeRare(liquidToken, beneficiary, rareBen, rareProt, "NO_KEY");
+            _distributeRare(
+                liquidToken,
+                beneficiary,
+                rareBen,
+                rareProt,
+                "NO_KEY"
+            );
             return;
         }
 
         // Attempt conversion; fall back to RARE on any failure
-        try this._convertAndDistributeEth(liquidToken, beneficiary, rareBen, rareProt) {
+        try
+            this._convertAndDistributeEth(
+                liquidToken,
+                beneficiary,
+                rareBen,
+                rareProt
+            )
+        {
             // success emitted inside _convertAndDistributeEth
         } catch {
-            _distributeRare(liquidToken, beneficiary, rareBen, rareProt, "CONVERT_FAIL");
+            _distributeRare(
+                liquidToken,
+                beneficiary,
+                rareBen,
+                rareProt,
+                "CONVERT_FAIL"
+            );
         }
     }
 
@@ -229,17 +259,21 @@ contract FeeDistributor is IFeeDistributor, Ownable {
         bool rareIsToken0 = Currency.unwrap(key.currency0) == RARE_TOKEN;
 
         // Read current spot price from the pool's slot0
-        (uint160 spotSqrtPriceX96,,,) = pm.getSlot0(key.toId());
+        (uint160 spotSqrtPriceX96, , , ) = pm.getSlot0(key.toId());
 
-        uint256 minEthOut = _computeMinOut(rareTotal, rareIsToken0, spotSqrtPriceX96);
+        uint256 minEthOut = _computeMinOut(
+            rareTotal,
+            rareIsToken0,
+            spotSqrtPriceX96
+        );
 
         IPoolManager.SwapParams memory swapParams = IPoolManager.SwapParams({
             zeroForOne: rareIsToken0,
             amountSpecified: -int256(rareTotal), // exact input
             // Conservative price limit — we enforce minOut explicitly after the swap
             sqrtPriceLimitX96: rareIsToken0
-                ? 4295128739 + 1                                                    // MIN_SQRT_PRICE + 1
-                : 1461446703485210103287273052203988822378723970342 - 1             // MAX_SQRT_PRICE - 1
+                ? 4295128739 + 1 // MIN_SQRT_PRICE + 1
+                : 1461446703485210103287273052203988822378723970342 - 1 // MAX_SQRT_PRICE - 1
         });
 
         BalanceDelta delta = pm.swap(key, swapParams, "");
@@ -255,7 +289,7 @@ contract FeeDistributor is IFeeDistributor, Ownable {
         // Settle RARE input to PoolManager
         Currency rareCurrency = Currency.wrap(RARE_TOKEN);
         pm.sync(rareCurrency);
-        IERC20(RARE_TOKEN).transfer(POOL_MANAGER, rareTotal);
+        IERC20(RARE_TOKEN).safeTransfer(POOL_MANAGER, rareTotal);
         pm.settle();
 
         // Take ETH output from PoolManager to this contract
@@ -287,7 +321,14 @@ contract FeeDistributor is IFeeDistributor, Ownable {
             pm.take(ethCurrency, PROTOCOL_FEE_RECIPIENT, ethProt);
         }
 
-        emit FeeConvertedAndDistributed(liquidToken, beneficiary, rareTotal, ethTotal, ethBen, ethProt);
+        emit FeeConvertedAndDistributed(
+            liquidToken,
+            beneficiary,
+            rareTotal,
+            ethTotal,
+            ethBen,
+            ethProt
+        );
     }
 
     /// @notice Distributes RARE directly to beneficiary and protocol (no conversion).
@@ -305,7 +346,11 @@ contract FeeDistributor is IFeeDistributor, Ownable {
             try this._transferRare(beneficiary, rareBen) {
                 // success
             } catch {
-                emit FeeTransferFailed(beneficiary, rareBen, "RARE_SEND_FAILED");
+                emit FeeTransferFailed(
+                    beneficiary,
+                    rareBen,
+                    "RARE_SEND_FAILED"
+                );
                 rareProt += rareBen;
                 rareBen = 0;
             }
@@ -318,7 +363,14 @@ contract FeeDistributor is IFeeDistributor, Ownable {
             IERC20(RARE_TOKEN).safeTransfer(PROTOCOL_FEE_RECIPIENT, rareProt);
         }
 
-        emit FeeDistributedInRare(liquidToken, beneficiary, rareBen + rareProt, rareBen, rareProt, reason);
+        emit FeeDistributedInRare(
+            liquidToken,
+            beneficiary,
+            rareBen + rareProt,
+            rareBen,
+            rareProt,
+            reason
+        );
     }
 
     // ============================================
@@ -326,7 +378,10 @@ contract FeeDistributor is IFeeDistributor, Ownable {
     // ============================================
 
     /// @notice Splits rareAmount into beneficiary and protocol shares.
-    function _split(uint256 rareAmount, address beneficiary) internal view returns (uint256 rareBen, uint256 rareProt) {
+    function _split(
+        uint256 rareAmount,
+        address beneficiary
+    ) internal view returns (uint256 rareBen, uint256 rareProt) {
         uint16 benBps = beneficiaryShareBPS;
         if (beneficiary != address(0) && benBps > 0) {
             rareBen = (rareAmount * benBps) / 10_000;
@@ -340,8 +395,9 @@ contract FeeDistributor is IFeeDistributor, Ownable {
     function _validPoolKeyCurrencies() internal view returns (bool) {
         address c0 = Currency.unwrap(rareEthPoolKey.currency0);
         address c1 = Currency.unwrap(rareEthPoolKey.currency1);
-        return (c0 == address(0) && c1 == RARE_TOKEN)
-            || (c0 == RARE_TOKEN && c1 == address(0));
+        return
+            (c0 == address(0) && c1 == RARE_TOKEN) ||
+            (c0 == RARE_TOKEN && c1 == address(0));
     }
 
     /// @notice Computes the minimum acceptable ETH output for `rareIn` using the given spot price.
@@ -351,7 +407,11 @@ contract FeeDistributor is IFeeDistributor, Ownable {
     ///        expectedEth = rareIn / price         (if RARE is token1, price = RARE per ETH)
     ///      where price = sqrtP² / 2^192, implemented as priceQ128 = sqrtP² / 2^64 then /2^128.
     ///      We then apply (1 - maxSlippageBps/10000) to get minOut.
-    function _computeMinOut(uint256 rareIn, bool rareIsToken0, uint160 sqrtPriceX96) internal view returns (uint256 minOut) {
+    function _computeMinOut(
+        uint256 rareIn,
+        bool rareIsToken0,
+        uint160 sqrtPriceX96
+    ) internal view returns (uint256 minOut) {
         uint256 sqrtP = uint256(sqrtPriceX96);
         if (sqrtP == 0) return 0;
 
@@ -383,9 +443,13 @@ contract FeeDistributor is IFeeDistributor, Ownable {
     /// @dev    Callers should use BENEFICIARY_ETH_GAS_LIMIT for untrusted recipients to prevent
     ///         beneficiary fallback from performing meaningful reentrant work against PoolManager
     ///         during v4 unlock (see MEDIUM-01 audit finding).
-    function _sendEth(address to, uint256 amount, uint256 gasLimit) internal returns (bool) {
+    function _sendEth(
+        address to,
+        uint256 amount,
+        uint256 gasLimit
+    ) internal returns (bool) {
         if (amount == 0) return true;
-        (bool ok,) = to.call{value: amount, gas: gasLimit}("");
+        (bool ok, ) = to.call{value: amount, gas: gasLimit}("");
         if (!ok) {
             emit FeeTransferFailed(to, amount, "ETH_SEND_FAILED");
         }
@@ -402,7 +466,9 @@ contract FeeDistributor is IFeeDistributor, Ownable {
     }
 
     /// @notice Legacy: returns 0/0 (no-op)
-    function quoteFeeBreakdown(uint256) external pure override returns (uint256, uint256) {
+    function quoteFeeBreakdown(
+        uint256
+    ) external pure override returns (uint256, uint256) {
         return (0, 0);
     }
 
@@ -420,12 +486,14 @@ contract FeeDistributor is IFeeDistributor, Ownable {
     // ============================================
 
     /// @inheritdoc IFeeDistributor
-    function setRareEthPoolKey(PoolKey calldata _rareEthPoolKey) external override onlyOwner {
+    function setRareEthPoolKey(
+        PoolKey calldata _rareEthPoolKey
+    ) external override onlyOwner {
         if (RARE_TOKEN != address(0)) {
             address c0 = Currency.unwrap(_rareEthPoolKey.currency0);
             address c1 = Currency.unwrap(_rareEthPoolKey.currency1);
-            bool valid = (c0 == address(0) && c1 == RARE_TOKEN)
-                || (c0 == RARE_TOKEN && c1 == address(0));
+            bool valid = (c0 == address(0) && c1 == RARE_TOKEN) ||
+                (c0 == RARE_TOKEN && c1 == address(0));
             if (!valid) revert InvalidPoolKeyCurrencies();
         }
         PoolKey memory old = rareEthPoolKey;
@@ -434,7 +502,9 @@ contract FeeDistributor is IFeeDistributor, Ownable {
     }
 
     /// @inheritdoc IFeeDistributor
-    function setMaxSlippageBps(uint16 _maxSlippageBps) external override onlyOwner {
+    function setMaxSlippageBps(
+        uint16 _maxSlippageBps
+    ) external override onlyOwner {
         if (_maxSlippageBps > 10_000) revert InvalidSlippageBps();
         uint16 old = maxSlippageBps;
         maxSlippageBps = _maxSlippageBps;
@@ -448,7 +518,9 @@ contract FeeDistributor is IFeeDistributor, Ownable {
     }
 
     /// @inheritdoc IFeeDistributor
-    function setBeneficiaryShareBPS(uint16 _beneficiaryShareBPS) external override onlyOwner {
+    function setBeneficiaryShareBPS(
+        uint16 _beneficiaryShareBPS
+    ) external override onlyOwner {
         if (_beneficiaryShareBPS > 10_000) revert InvalidBeneficiaryShare();
         uint16 old = beneficiaryShareBPS;
         beneficiaryShareBPS = _beneficiaryShareBPS;
@@ -456,28 +528,39 @@ contract FeeDistributor is IFeeDistributor, Ownable {
     }
 
     /// @inheritdoc IFeeDistributor
-    function setBeneficiaryRegistry(address _beneficiaryRegistry) external override onlyOwner {
+    function setBeneficiaryRegistry(
+        address _beneficiaryRegistry
+    ) external override onlyOwner {
+        if (_beneficiaryRegistry == address(0)) revert AddressZero();
+        if (_beneficiaryRegistry.code.length == 0) revert NotContract();
         address old = beneficiaryRegistry;
         beneficiaryRegistry = _beneficiaryRegistry;
         emit BeneficiaryRegistryUpdated(old, _beneficiaryRegistry);
     }
 
     /// @inheritdoc IFeeDistributor
-    function setHookApproval(address hook, bool approved) external override onlyOwner {
+    function setHookApproval(
+        address hook,
+        bool approved
+    ) external override onlyOwner {
         approvedHooks[hook] = approved;
         emit HookApprovalUpdated(hook, approved);
     }
 
     /// @notice Rescue stuck ERC20 tokens
-    function rescueTokens(address token, address to, uint256 amount) external onlyOwner {
-        if (to == address(0)) revert InvalidAddress();
+    function rescueTokens(
+        address token,
+        address to,
+        uint256 amount
+    ) external onlyOwner {
+        if (to == address(0)) revert AddressZero();
         IERC20(token).safeTransfer(to, amount);
     }
 
     /// @notice Rescue stuck ETH (from failed ETH sends in _sendEth)
     function rescueETH(address to, uint256 amount) external onlyOwner {
-        if (to == address(0)) revert InvalidAddress();
-        (bool ok,) = to.call{value: amount}("");
+        if (to == address(0)) revert AddressZero();
+        (bool ok, ) = to.call{value: amount}("");
         require(ok, "ETH rescue failed");
     }
 

@@ -34,7 +34,11 @@ contract LiquidGuard is IHooks, Ownable, ILiquidGuard {
     using Hooks for IHooks;
 
     /// @notice Emitted when fee distribution notification fails and the hook continues with swap accounting.
-    event FeeNotifyFailed(address indexed distributor, address indexed liquidToken, uint256 rareAmount);
+    event FeeNotifyFailed(
+        address indexed distributor,
+        address indexed liquidToken,
+        uint256 rareAmount
+    );
 
     // ============================================
     // IMMUTABLES
@@ -96,45 +100,48 @@ contract LiquidGuard is IHooks, Ownable, ILiquidGuard {
     /// @param _poolManager The Uniswap V4 PoolManager
     /// @param _owner The owner (for admin functions)
     /// @param _rareToken The RARE token address (fee currency)
-    /// @param _skipValidation If true, skip hook address validation (for testing only)
     constructor(
         IPoolManager _poolManager,
         address _owner,
-        address _rareToken,
-        bool _skipValidation
+        address _rareToken
     ) Ownable(_owner) {
-        require(address(_poolManager) != address(0), "LiquidGuard: zero pool manager");
+        require(
+            address(_poolManager) != address(0),
+            "LiquidGuard: zero pool manager"
+        );
         require(_rareToken != address(0), "LiquidGuard: zero RARE token");
         POOL_MANAGER = _poolManager;
         RARE_TOKEN = _rareToken;
 
-        if (!_skipValidation) {
-            IHooks(this).validateHookPermissions(
-                Hooks.Permissions({
-                    beforeInitialize: true,      // bit 13: restrict pool init to whitelisted callers
-                    afterInitialize: false,
-                    beforeAddLiquidity: false,
-                    afterAddLiquidity: false,
-                    beforeRemoveLiquidity: false,
-                    afterRemoveLiquidity: false,
-                    beforeSwap: true,            // bit 7: handle fee when RARE is specified
-                    afterSwap: true,             // bit 6: handle fee when RARE is unspecified
-                    beforeDonate: false,
-                    afterDonate: false,
-                    beforeSwapReturnDelta: true,  // bit 3: return delta from beforeSwap
-                    afterSwapReturnDelta: true,   // bit 2: return delta from afterSwap
-                    afterAddLiquidityReturnDelta: false,
-                    afterRemoveLiquidityReturnDelta: false
-                })
-            );
-        }
+        IHooks(this).validateHookPermissions(
+            Hooks.Permissions({
+                beforeInitialize: true, // bit 13: restrict pool init to whitelisted callers
+                afterInitialize: false,
+                beforeAddLiquidity: false,
+                afterAddLiquidity: false,
+                beforeRemoveLiquidity: false,
+                afterRemoveLiquidity: false,
+                beforeSwap: true, // bit 7: handle fee when RARE is specified
+                afterSwap: true, // bit 6: handle fee when RARE is unspecified
+                beforeDonate: false,
+                afterDonate: false,
+                beforeSwapReturnDelta: true, // bit 3: return delta from beforeSwap
+                afterSwapReturnDelta: true, // bit 2: return delta from afterSwap
+                afterAddLiquidityReturnDelta: false,
+                afterRemoveLiquidityReturnDelta: false
+            })
+        );
     }
 
     // ============================================
     // HOOK CALLBACKS
     // ============================================
 
-    function _notifyFee(address distributor, address liquidToken, uint256 rareAmount) internal {
+    function _notifyFee(
+        address distributor,
+        address liquidToken,
+        uint256 rareAmount
+    ) internal {
         try IFeeDistributor(distributor).notifyFee(liquidToken, rareAmount) {
             // Intentionally ignored — failures are handled below so swaps remain available.
         } catch {
@@ -148,12 +155,18 @@ contract LiquidGuard is IHooks, Ownable, ILiquidGuard {
         PoolKey calldata,
         uint160
     ) external view override onlyPoolManager returns (bytes4) {
-        if (!allowedInitializers[sender]) revert UnauthorizedInitializer(sender);
+        if (!allowedInitializers[sender])
+            revert UnauthorizedInitializer(sender);
         return IHooks.beforeInitialize.selector;
     }
 
     /// @notice V4 hook: afterInitialize (no-op)
-    function afterInitialize(address, PoolKey calldata, uint160, int24) external pure override returns (bytes4) {
+    function afterInitialize(
+        address,
+        PoolKey calldata,
+        uint160,
+        int24
+    ) external pure override returns (bytes4) {
         return IHooks.afterInitialize.selector;
     }
 
@@ -171,9 +184,18 @@ contract LiquidGuard is IHooks, Ownable, ILiquidGuard {
         PoolKey calldata key,
         IPoolManager.SwapParams calldata params,
         bytes calldata
-    ) external override onlyPoolManager returns (bytes4, BeforeSwapDelta, uint24) {
+    )
+        external
+        override
+        onlyPoolManager
+        returns (bytes4, BeforeSwapDelta, uint24)
+    {
         if (params.amountSpecified == 0) {
-            return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+            return (
+                IHooks.beforeSwap.selector,
+                BeforeSwapDeltaLibrary.ZERO_DELTA,
+                0
+            );
         }
 
         bool rareIsToken0 = Currency.unwrap(key.currency0) == RARE_TOKEN;
@@ -181,23 +203,36 @@ contract LiquidGuard is IHooks, Ownable, ILiquidGuard {
 
         // Skip non-RARE pools entirely
         if (!rareIsToken0 && !rareIsToken1) {
-            return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+            return (
+                IHooks.beforeSwap.selector,
+                BeforeSwapDeltaLibrary.ZERO_DELTA,
+                0
+            );
         }
 
         bool exactInput = params.amountSpecified < 0;
         // rareIsSpecified = (rareIsToken0 == (zeroForOne == exactInput))
-        bool rareIsSpecified = rareIsToken0 == (params.zeroForOne == exactInput);
+        bool rareIsSpecified = rareIsToken0 ==
+            (params.zeroForOne == exactInput);
 
         if (!rareIsSpecified) {
             // RARE is unspecified — afterSwap will handle the fee
-            return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+            return (
+                IHooks.beforeSwap.selector,
+                BeforeSwapDeltaLibrary.ZERO_DELTA,
+                0
+            );
         }
 
         // RARE is specified: compute fee on abs(amountSpecified).
         // Guard against type(int256).min: negating it overflows in signed arithmetic (Solidity 0.8
         // would panic-revert). It is a nonsensical swap amount so treat it as a no-op.
         if (params.amountSpecified == type(int256).min) {
-            return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+            return (
+                IHooks.beforeSwap.selector,
+                BeforeSwapDeltaLibrary.ZERO_DELTA,
+                0
+            );
         }
         uint256 absAmount = params.amountSpecified < 0
             ? uint256(-params.amountSpecified)
@@ -207,15 +242,27 @@ contract LiquidGuard is IHooks, Ownable, ILiquidGuard {
         // If absAmount is large enough that absAmount * totalFeeBPS would overflow uint256,
         // or produce a fee exceeding int128 (required by toBeforeSwapDelta), skip fee collection.
         uint16 _totalFeeBPS = totalFeeBPS;
-        if (_totalFeeBPS == 0 || absAmount > uint256(uint128(type(int128).max)) * 10_000 / _totalFeeBPS) {
-            return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        if (
+            _totalFeeBPS == 0 ||
+            absAmount >
+            (uint256(uint128(type(int128).max)) * 10_000) / _totalFeeBPS
+        ) {
+            return (
+                IHooks.beforeSwap.selector,
+                BeforeSwapDeltaLibrary.ZERO_DELTA,
+                0
+            );
         }
 
         uint256 fee = (absAmount * _totalFeeBPS) / 10_000;
         // Clamp fee to prevent HookDeltaExceedsSwapAmount (fee must be < absAmount)
         if (fee >= absAmount) fee = absAmount - 1;
         if (fee == 0) {
-            return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+            return (
+                IHooks.beforeSwap.selector,
+                BeforeSwapDeltaLibrary.ZERO_DELTA,
+                0
+            );
         }
 
         // Determine which currency is liquid (the non-RARE one in the pair)
@@ -228,7 +275,11 @@ contract LiquidGuard is IHooks, Ownable, ILiquidGuard {
         // without a corresponding take() would break PoolManager accounting.
         address dist = feeDistributor;
         if (dist == address(0)) {
-            return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+            return (
+                IHooks.beforeSwap.selector,
+                BeforeSwapDeltaLibrary.ZERO_DELTA,
+                0
+            );
         }
 
         Currency rareCurrency = Currency.wrap(RARE_TOKEN);
@@ -267,7 +318,8 @@ contract LiquidGuard is IHooks, Ownable, ILiquidGuard {
 
         bool exactInput = params.amountSpecified < 0;
         // rareIsSpecified = (rareIsToken0 == (zeroForOne == exactInput))
-        bool rareIsSpecified = rareIsToken0 == (params.zeroForOne == exactInput);
+        bool rareIsSpecified = rareIsToken0 ==
+            (params.zeroForOne == exactInput);
 
         if (rareIsSpecified) {
             // RARE is specified — beforeSwap already handled the fee
@@ -339,7 +391,10 @@ contract LiquidGuard is IHooks, Ownable, ILiquidGuard {
         BalanceDelta,
         bytes calldata
     ) external pure override returns (bytes4, BalanceDelta) {
-        return (IHooks.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+        return (
+            IHooks.afterAddLiquidity.selector,
+            BalanceDeltaLibrary.ZERO_DELTA
+        );
     }
 
     /// @notice V4 hook: beforeRemoveLiquidity (no-op)
@@ -361,26 +416,31 @@ contract LiquidGuard is IHooks, Ownable, ILiquidGuard {
         BalanceDelta,
         bytes calldata
     ) external pure override returns (bytes4, BalanceDelta) {
-        return (IHooks.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+        return (
+            IHooks.afterRemoveLiquidity.selector,
+            BalanceDeltaLibrary.ZERO_DELTA
+        );
     }
 
     /// @notice V4 hook: beforeDonate (no-op)
-    function beforeDonate(address, PoolKey calldata, uint256, uint256, bytes calldata)
-        external
-        pure
-        override
-        returns (bytes4)
-    {
+    function beforeDonate(
+        address,
+        PoolKey calldata,
+        uint256,
+        uint256,
+        bytes calldata
+    ) external pure override returns (bytes4) {
         return IHooks.beforeDonate.selector;
     }
 
     /// @notice V4 hook: afterDonate (no-op)
-    function afterDonate(address, PoolKey calldata, uint256, uint256, bytes calldata)
-        external
-        pure
-        override
-        returns (bytes4)
-    {
+    function afterDonate(
+        address,
+        PoolKey calldata,
+        uint256,
+        uint256,
+        bytes calldata
+    ) external pure override returns (bytes4) {
         return IHooks.afterDonate.selector;
     }
 

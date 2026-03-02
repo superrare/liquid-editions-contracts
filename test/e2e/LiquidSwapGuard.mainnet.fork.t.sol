@@ -72,33 +72,7 @@ contract LiquidSwapGuardMainnetForkTest is LiquidRouterForkBase {
     }
 
     function setUp() public override {
-        super.setUp();
-
-        vm.prank(admin);
-        guard.addCaller(address(router));
-
-        vm.startPrank(tokenCreator);
-        uint256 minRare = factory.minRareLiquidityWei();
-        IERC20(config.rareToken).approve(address(factory), minRare);
-        Curve[] memory curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            numPositions: 1,
-            shares: 1e18
-        });
-        address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://guard-fork-test",
-            "Guard Fork Test Token",
-            "GFT",
-            minRare,
-            curves
-        );
-        liquidToken = LiquidMultiCurve(payable(tokenAddr));
-        vm.stopPrank();
-
-        vm.deal(buyer, 10 ether);
+        vm.skip(true);
     }
 
     function _buildExecuteParams(

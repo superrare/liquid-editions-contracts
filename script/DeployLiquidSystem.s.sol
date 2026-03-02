@@ -436,7 +436,6 @@ contract DeployLiquidSystem is Script {
                 networkConfig.rareToken,
                 liquidGuardSalt,
                 DeployLiquidGuard.CREATE2_DEPLOYER,
-                false,
                 liquidGuardSaltStartFrom
             );
             // Deploy new FeeDistributor wired to LiquidGuard

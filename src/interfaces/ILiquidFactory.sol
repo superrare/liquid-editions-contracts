@@ -10,8 +10,20 @@ interface ILiquidFactory {
     // ERRORS
     // ============================================
 
+    /// @notice Thrown when a caller is not authorized to perform the action
+    error Unauthorized();
+
     /// @notice Thrown when an operation is attempted with a zero address
     error AddressZero();
+
+    /// @notice Thrown when an empty token URI is provided
+    error InvalidTokenURI();
+
+    /// @notice Thrown when an empty token name is provided
+    error InvalidName();
+
+    /// @notice Thrown when an empty token symbol is provided
+    error InvalidSymbol();
 
     /// @notice Thrown when the implementation address is not set
     error ImplementationNotSet();

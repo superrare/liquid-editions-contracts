@@ -66,11 +66,11 @@ library DeployLiquidGuard {
                 rareToken,
                 salt,
                 CREATE2_DEPLOYER,
-                false
+                0
             );
     }
 
-    /// @notice Deploy for tests (mines valid address, skips constructor validation)
+    /// @notice Deploy for tests (mines valid address with constructor hook validation)
     function deployForTest(
         IPoolManager poolManager,
         address owner,
@@ -95,76 +95,11 @@ library DeployLiquidGuard {
                 rareToken,
                 salt,
                 CREATE2_DEPLOYER,
-                true,
                 saltStartFrom
             );
     }
 
-    /// @notice Deploy with explicit CREATE2 factory address and skipValidation option.
-    function deploy(
-        IPoolManager poolManager,
-        address owner,
-        address rareToken,
-        bytes32 salt,
-        address create2Factory,
-        bool skipValidation
-    ) internal returns (address guard) {
-        return
-            deploy(
-                poolManager,
-                owner,
-                rareToken,
-                salt,
-                create2Factory,
-                skipValidation,
-                0
-            );
-    }
-
-    function deploy(
-        IPoolManager poolManager,
-        address owner,
-        address rareToken,
-        bytes32 salt,
-        address create2Factory,
-        bool skipValidation,
-        uint256 saltStartFrom
-    ) internal returns (address guard) {
-        bytes memory creationCode = abi.encodePacked(
-            type(LiquidGuard).creationCode,
-            abi.encode(poolManager, owner, rareToken, skipValidation)
-        );
-        bytes32 codeHash = keccak256(creationCode);
-
-        if (salt == bytes32(0)) {
-            salt = _mineSalt(codeHash, create2Factory, saltStartFrom);
-            if (!skipValidation) {
-                console.log("  Mined salt:");
-                console.logBytes32(salt);
-            }
-        }
-
-        address computed = _computeCreate2(salt, codeHash, create2Factory);
-        uint160 lowBits = uint160(computed) & ALL_HOOK_MASK;
-        require(
-            lowBits == REQUIRED_FLAGS,
-            "DeployLiquidGuard: address low 14 bits must be exactly 0x20CC"
-        );
-
-        LiquidGuard guardContract = new LiquidGuard{salt: salt}(
-            poolManager,
-            owner,
-            rareToken,
-            skipValidation
-        );
-        guard = address(guardContract);
-
-        console.log("LiquidGuard deployed at:");
-        console.logAddress(guard);
-        return guard;
-    }
-
-    /// @notice Deploy with explicit CREATE2 factory address (production, no skipValidation).
+    /// @notice Deploy with explicit CREATE2 factory address.
     function deploy(
         IPoolManager poolManager,
         address owner,
@@ -181,7 +116,51 @@ library DeployLiquidGuard {
         console.logAddress(rareToken);
 
         return
-            deploy(poolManager, owner, rareToken, salt, create2Factory, false);
+            deploy(poolManager, owner, rareToken, salt, create2Factory, 0);
+    }
+
+    function deploy(
+        IPoolManager poolManager,
+        address owner,
+        address rareToken,
+        bytes32 salt,
+        address create2Factory,
+        uint256 saltStartFrom
+    ) internal returns (address guard) {
+        bytes memory creationCode = abi.encodePacked(
+            type(LiquidGuard).creationCode,
+            abi.encode(poolManager, owner, rareToken)
+        );
+        bytes32 codeHash = keccak256(creationCode);
+
+        if (salt == bytes32(0)) {
+            salt = _mineSalt(codeHash, create2Factory, saltStartFrom);
+            console.log("  Mined salt:");
+            console.logBytes32(salt);
+        }
+
+        address computed = _computeCreate2(salt, codeHash, create2Factory);
+        uint160 lowBits = uint160(computed) & ALL_HOOK_MASK;
+        require(
+            lowBits == REQUIRED_FLAGS,
+            "DeployLiquidGuard: address low 14 bits must be exactly 0x20CC"
+        );
+
+        LiquidGuard guardContract = new LiquidGuard{salt: salt}(
+            poolManager,
+            owner,
+            rareToken
+        );
+        guard = address(guardContract);
+
+        require(
+            guard == computed,
+            "DeployLiquidGuard: deployed address does not match computed CREATE2 address"
+        );
+
+        console.log("LiquidGuard deployed at:");
+        console.logAddress(guard);
+        return guard;
     }
 
     function _computeCreate2(

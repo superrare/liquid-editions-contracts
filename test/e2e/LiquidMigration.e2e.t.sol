@@ -21,7 +21,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
-import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 import {LiquidPoolSwapHelper} from "liquid-editions-test/helpers/LiquidPoolSwapHelper.sol";
 
@@ -86,8 +86,8 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
             60, // poolTickSpacing
             1e15 // minRareLiquidityWei
         );
-        LiquidInitGuard(initGuard1).setFactory(address(factory));
-        LiquidInitGuard(initGuard2).setFactory(address(factory));
+        LiquidGuard(initGuard1).setFactory(address(factory));
+        LiquidGuard(initGuard2).setFactory(address(factory));
 
         factory.setLiquidRegistry(address(1));
         factory.setLiquidMultiCurveImplementation(address(multiCurveImpl));
@@ -216,7 +216,7 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
 
         // Whitelist the token on initGuard2 so it can initialize a new pool
         vm.prank(admin);
-        LiquidInitGuard(initGuard2).addInitializer(address(token));
+        LiquidGuard(initGuard2).addInitializer(address(token));
 
         // Build migration plan: same currencies, same fee/tickSpacing, different hook, same price
         Position[] memory newPositions = new Position[](1);

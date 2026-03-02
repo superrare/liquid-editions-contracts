@@ -12,6 +12,8 @@ import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
 import {ILiquidFactory} from "liquid-editions/interfaces/ILiquidFactory.sol";
 import {ILiquidSwapGuard} from "liquid-editions/interfaces/ILiquidSwapGuard.sol";
+import {ILiquidGuard} from "liquid-editions/interfaces/ILiquidGuard.sol";
+import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {MockV4PoolManager} from "liquid-editions-test/helpers/MockV4PoolManager.sol";
 import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
@@ -20,8 +22,6 @@ import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 import {BeforeSwapDelta} from "v4-core/types/BeforeSwapDelta.sol";
-import {LiquidSwapGuard} from "liquid-editions/LiquidSwapGuard.sol";
-import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 
 contract LiquidFactoryUnitTest is Test {
@@ -226,7 +226,7 @@ contract LiquidFactoryUnitTest is Test {
         vm.prank(admin);
         factory.setPoolHooks(address(mockGuard));
 
-        uint160 requiredFlags = Hooks.BEFORE_INITIALIZE_FLAG;
+        uint160 requiredFlags = _fullRequiredFlags();
         uint160 actualFlags = uint160(address(mockGuard)) & Hooks.ALL_HOOK_MASK;
 
         Curve[] memory curves = _defaultSingleCurve();
@@ -280,7 +280,7 @@ contract LiquidFactoryUnitTest is Test {
     }
 
     function test_CreateLiquidTokenMultiCurve_WithHookFactoryMismatchAtCreate_Reverts() public {
-        LiquidSwapGuard validHook = _deployLiquidSwapGuardWithRequiredFlags();
+        LiquidGuard validHook = _deployLiquidGuardWithRequiredFlags();
         address badFactory = makeAddr("badFactory");
 
         vm.prank(admin);
@@ -334,36 +334,14 @@ contract LiquidFactoryUnitTest is Test {
         );
     }
 
+    /// @dev Skipped: LiquidInitGuard is legacy and no longer satisfies the full 0x20CC flag
+    ///      requirement. LiquidGuard is now the canonical hook for all factory launches.
     function test_CreateLiquidTokenMultiCurve_WithInitGuardOnly_Succeeds() public {
-        LiquidInitGuard initGuard = _deployLiquidInitGuardWithRequiredFlags();
-
-        vm.prank(admin);
-        initGuard.setFactory(address(factory));
-
-        vm.prank(admin);
-        factory.setPoolHooks(address(initGuard));
-
-        Curve[] memory curves = _defaultSingleCurve();
-
-        vm.prank(user1);
-        baseToken.approve(address(factory), 1e15);
-
-        vm.prank(user1);
-        address token = factory.createLiquidTokenMultiCurve(
-            user1,
-            "uri",
-            "Token",
-            "TKN",
-            1e15,
-            curves
-        );
-
-        assertTrue(token != address(0));
-        assertTrue(ILiquidSwapGuard(address(initGuard)).allowedInitializers(token));
+        vm.skip(true);
     }
 
     function test_CreateLiquidTokenMultiCurve_WithValidMultiCurveHook_Succeeds() public {
-        LiquidSwapGuard validHook = _deployLiquidSwapGuardWithRequiredFlags();
+        LiquidGuard validHook = _deployLiquidGuardWithRequiredFlags();
 
         vm.prank(admin);
         validHook.setFactory(address(factory));
@@ -386,7 +364,7 @@ contract LiquidFactoryUnitTest is Test {
         );
 
         assertTrue(token != address(0));
-        assertTrue(ILiquidSwapGuard(address(validHook)).allowedInitializers(token));
+        assertTrue(ILiquidGuard(address(validHook)).allowedInitializers(token));
     }
 
     function test_RevertWhen_NonAdmin_Pause() public {
@@ -405,11 +383,11 @@ contract LiquidFactoryUnitTest is Test {
     }
 
     function test_FactoryPause_StopsTokenCreation() public {
-        LiquidInitGuard initGuard = _deployLiquidInitGuardWithRequiredFlags();
+        LiquidGuard guard = _deployLiquidGuardWithRequiredFlags();
         vm.prank(admin);
-        initGuard.setFactory(address(factory));
+        guard.setFactory(address(factory));
         vm.prank(admin);
-        factory.setPoolHooks(address(initGuard));
+        factory.setPoolHooks(address(guard));
 
         vm.prank(admin);
         factory.pause();
@@ -432,11 +410,11 @@ contract LiquidFactoryUnitTest is Test {
     }
 
     function test_FactoryPauseAndUnpause_ResumesTokenCreation() public {
-        LiquidInitGuard initGuard = _deployLiquidInitGuardWithRequiredFlags();
+        LiquidGuard guard = _deployLiquidGuardWithRequiredFlags();
         vm.prank(admin);
-        initGuard.setFactory(address(factory));
+        guard.setFactory(address(factory));
         vm.prank(admin);
-        factory.setPoolHooks(address(initGuard));
+        factory.setPoolHooks(address(guard));
 
         vm.prank(admin);
         factory.pause();
@@ -471,11 +449,19 @@ contract LiquidFactoryUnitTest is Test {
         assertTrue(token != address(0));
     }
 
+    function _fullRequiredFlags() internal pure returns (uint160) {
+        return Hooks.BEFORE_INITIALIZE_FLAG
+            | Hooks.BEFORE_SWAP_FLAG
+            | Hooks.AFTER_SWAP_FLAG
+            | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG
+            | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG; // 0x20CC
+    }
+
     function _deployMockSwapGuardForFactoryWithoutRequiredFlags()
         internal
         returns (MockSwapGuardForFactory memoryGuard)
     {
-        uint160 requiredFlags = Hooks.BEFORE_INITIALIZE_FLAG;
+        uint160 requiredFlags = _fullRequiredFlags();
 
         for (uint256 i = 0; i < 512; i++) {
             MockSwapGuardForFactory candidate = new MockSwapGuardForFactory{
@@ -493,75 +479,32 @@ contract LiquidFactoryUnitTest is Test {
         revert("Could not find mock guard without required multicurve flags");
     }
 
-    function _deployLiquidSwapGuardWithRequiredFlags()
+    function _deployLiquidGuardWithRequiredFlags()
         internal
-        returns (LiquidSwapGuard validHook)
+        returns (LiquidGuard guard)
     {
-        uint160 requiredFlags = Hooks.BEFORE_INITIALIZE_FLAG |
-            Hooks.BEFORE_SWAP_FLAG;
-
-        for (uint256 i = 0; i < 512; i++) {
-            LiquidSwapGuard candidate = new LiquidSwapGuard{salt: bytes32(i)}(
-                IPoolManager(address(poolManager)),
-                admin,
-                true
-            );
-            uint160 actualFlags = uint160(address(candidate)) & Hooks.ALL_HOOK_MASK;
-            if (
-                (actualFlags & requiredFlags) == requiredFlags &&
-                Hooks.isValidHookAddress(IHooks(address(candidate)), 0)
-            ) {
-                return candidate;
-            }
-        }
-
-        revert("Could not find guarded hook with required multicurve flags");
+        address hookAddr = address(_fullRequiredFlags());
+        address rareToken = makeAddr("rareToken");
+        vm.prank(admin);
+        deployCodeTo(
+            "LiquidGuard.sol:LiquidGuard",
+            abi.encode(IPoolManager(address(poolManager)), admin, rareToken),
+            hookAddr
+        );
+        return LiquidGuard(hookAddr);
     }
 
     function _deployMockHookWithoutGuardWithRequiredFlags()
         internal
         returns (MockHookWithoutGuard mockHook)
     {
-        uint160 requiredFlags = Hooks.BEFORE_INITIALIZE_FLAG;
-
-        for (uint256 i = 0; i < 512; i++) {
-            MockHookWithoutGuard candidate = new MockHookWithoutGuard{
-                salt: bytes32(i)
-            }();
-            uint160 actualFlags = uint160(address(candidate)) & Hooks.ALL_HOOK_MASK;
-            if (
-                (actualFlags & requiredFlags) == requiredFlags &&
-                Hooks.isValidHookAddress(IHooks(address(candidate)), 0)
-            ) {
-                return candidate;
-            }
-        }
-
-        revert("Could not find non-guard hook with required multicurve flags");
-    }
-
-    function _deployLiquidInitGuardWithRequiredFlags()
-        internal
-        returns (LiquidInitGuard initGuard)
-    {
-        uint160 requiredFlags = Hooks.BEFORE_INITIALIZE_FLAG;
-
-        for (uint256 i = 0; i < 512; i++) {
-            LiquidInitGuard candidate = new LiquidInitGuard{salt: bytes32(i)}(
-                IPoolManager(address(poolManager)),
-                admin,
-                true
-            );
-            uint160 actualFlags = uint160(address(candidate)) & Hooks.ALL_HOOK_MASK;
-            if (
-                (actualFlags & requiredFlags) == requiredFlags &&
-                Hooks.isValidHookAddress(IHooks(address(candidate)), 0)
-            ) {
-                return candidate;
-            }
-        }
-
-        revert("Could not find init guard with required flags");
+        address hookAddr = address(_fullRequiredFlags());
+        deployCodeTo(
+            "LiquidFactory.unit.t.sol:MockHookWithoutGuard",
+            "",
+            hookAddr
+        );
+        return MockHookWithoutGuard(hookAddr);
     }
 }
 

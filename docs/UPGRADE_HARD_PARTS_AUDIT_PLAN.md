@@ -25,7 +25,7 @@ Focus on the parts of the protocol that are difficult to upgrade safely and veri
 
 ## Key hard-upgrade boundaries
 1. `LiquidRegistry` is stateful and holds beneficiary mapping for many tokens.
-2. `LiquidGuard` is a hook contract that is immutable in pool keys, so changing it requires migration flow.
+2. `LiquidGuard` is a hook contract that is immutable in pool keys, so changing it requires liquidity pool migration flow.
 3. `LiquidMultiCurve` and `LiquidInstant` are deployed per market and are not beacon-upgradable.
 4. Any fix in these paths must preserve backward accounting continuity and avoid stranded liquidity/value.
 

@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
-import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {ILiquidRegistry} from "liquid-editions/interfaces/ILiquidRegistry.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {DeployConfig} from "script/config/DeployConfig.sol";
@@ -106,9 +106,9 @@ abstract contract LiquidRouterForkBase is Test, InitGuardTestHelper {
 
         // Wire init guard to factory
         if (deployConfig.factory.poolHooks != address(0)) {
-            try LiquidInitGuard(deployConfig.factory.poolHooks).factory() returns (address f) {
+            try LiquidGuard(deployConfig.factory.poolHooks).factory() returns (address f) {
                 if (f == address(0)) {
-                    LiquidInitGuard(deployConfig.factory.poolHooks).setFactory(address(factory));
+                    LiquidGuard(deployConfig.factory.poolHooks).setFactory(address(factory));
                 }
             } catch {}
         }

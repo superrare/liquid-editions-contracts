@@ -13,7 +13,7 @@ import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
-import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 /// @notice Shared base for Liquid bonding and rarBurn fork tests
@@ -120,7 +120,7 @@ abstract contract LiquidBondingForkBase is Test, InitGuardTestHelper {
             60,
             1e15
         );
-        LiquidInitGuard(initGuardAddr).setFactory(address(tempFactory));
+        LiquidGuard(initGuardAddr).setFactory(address(tempFactory));
         tempFactory.setLiquidRegistry(address(1));
 
         LiquidMultiCurve multiCurveImpl = new LiquidMultiCurve();

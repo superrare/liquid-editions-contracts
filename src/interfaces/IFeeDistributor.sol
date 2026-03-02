@@ -11,9 +11,6 @@ interface IFeeDistributor {
     /// @notice Thrown when total fee exceeds allowed bounds (legacy, kept for backward compat)
     error InvalidTotalFee();
 
-    /// @notice Thrown when an address argument is zero when a non-zero address is required
-    error InvalidAddress();
-
     /// @notice Thrown when beneficiaryShareBPS is out of range
     error InvalidBeneficiaryShare();
 
@@ -28,6 +25,12 @@ interface IFeeDistributor {
 
     /// @notice Thrown when the distributed value is invalid (legacy)
     error InvalidValue();
+
+    /// @notice Thrown when the beneficiary registry address is zero
+    error AddressZero();
+
+    /// @notice Thrown when the beneficiary registry address is not a contract
+    error NotContract();
 
     // ============================================
     // EVENTS
@@ -78,7 +81,10 @@ interface IFeeDistributor {
     event BeneficiaryShareBpsUpdated(uint16 oldBps, uint16 newBps);
 
     /// @notice Emitted when the beneficiary registry is updated
-    event BeneficiaryRegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
+    event BeneficiaryRegistryUpdated(
+        address indexed oldRegistry,
+        address indexed newRegistry
+    );
 
     /// @notice Emitted when an approved hook is added or removed
     event HookApprovalUpdated(address indexed hook, bool approved);
@@ -105,10 +111,9 @@ interface IFeeDistributor {
 
     /// @notice Legacy quote helper preserved for compatibility only.
     /// @dev Returns zero values; split behavior is resolved by `notifyFee`.
-    function quoteFeeBreakdown(uint256 grossFee)
-        external
-        view
-        returns (uint256 beneficiaryFee, uint256 protocolFee);
+    function quoteFeeBreakdown(
+        uint256 grossFee
+    ) external view returns (uint256 beneficiaryFee, uint256 protocolFee);
 
     /// @notice Legacy distribution entrypoint preserved for compatibility.
     /// @dev No-op on this V4-native distributor; fee distribution for routed trades happens via

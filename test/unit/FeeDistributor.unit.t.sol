@@ -229,17 +229,17 @@ contract FeeDistributorUnitTest is Test {
     // ============================================
 
     function test_constructor_RevertsOnZeroPoolManager() public {
-        vm.expectRevert(IFeeDistributor.InvalidAddress.selector);
+        vm.expectRevert(IFeeDistributor.AddressZero.selector);
         new FeeDistributor(owner, address(0), address(rareToken), protocolRecipient, 5000, 400);
     }
 
     function test_constructor_RevertsOnZeroRareToken() public {
-        vm.expectRevert(IFeeDistributor.InvalidAddress.selector);
+        vm.expectRevert(IFeeDistributor.AddressZero.selector);
         new FeeDistributor(owner, address(poolManager), address(0), protocolRecipient, 5000, 400);
     }
 
     function test_constructor_RevertsOnZeroProtocolRecipient() public {
-        vm.expectRevert(IFeeDistributor.InvalidAddress.selector);
+        vm.expectRevert(IFeeDistributor.AddressZero.selector);
         new FeeDistributor(owner, address(poolManager), address(rareToken), address(0), 5000, 400);
     }
 
@@ -579,7 +579,7 @@ contract FeeDistributorUnitTest is Test {
     }
 
     function test_setBeneficiaryRegistry_OnlyOwner() public {
-        address newReg = makeAddr("newReg");
+        address newReg = address(new MockBeneficiaryRegistry());
         vm.prank(owner);
         distributor.setBeneficiaryRegistry(newReg);
         assertEq(distributor.beneficiaryRegistry(), newReg);
@@ -665,7 +665,7 @@ contract FeeDistributorUnitTest is Test {
 
     function test_setBeneficiaryRegistry_EmitsBeneficiaryRegistryUpdated() public {
         address oldReg = distributor.beneficiaryRegistry();
-        address newReg = makeAddr("newReg");
+        address newReg = address(new MockBeneficiaryRegistry());
 
         vm.expectEmit(true, true, false, false);
         emit IFeeDistributor.BeneficiaryRegistryUpdated(oldReg, newReg);
@@ -853,13 +853,13 @@ contract FeeDistributorUnitTest is Test {
     }
 
     // ============================================
-    // setBeneficiaryRegistry — address(0) is allowed
+    // setBeneficiaryRegistry — address(0) is rejected
     // ============================================
 
-    function test_setBeneficiaryRegistry_AllowsZeroAddress() public {
+    function test_setBeneficiaryRegistry_RevertsForZeroAddress() public {
         vm.prank(owner);
+        vm.expectRevert(IFeeDistributor.AddressZero.selector);
         distributor.setBeneficiaryRegistry(address(0));
-        assertEq(distributor.beneficiaryRegistry(), address(0));
     }
 
     // ============================================
@@ -1090,5 +1090,11 @@ contract MockERC20WithBlocklist {
         balanceOf[from] -= amount;
         balanceOf[to] += amount;
         return true;
+    }
+}
+
+contract MockBeneficiaryRegistry {
+    function beneficiaryOf(address) external pure returns (address) {
+        return address(0);
     }
 }

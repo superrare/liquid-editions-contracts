@@ -7,7 +7,7 @@ import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 import {RAREBurner} from "liquid-editions/RAREBurner.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
-import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
 
@@ -46,7 +46,7 @@ abstract contract LiquidFactoryForkBase is ForkTestBase, InitGuardTestHelper {
             60, // poolTickSpacing
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-        LiquidInitGuard(initGuardAddr).setFactory(address(f));
+        LiquidGuard(initGuardAddr).setFactory(address(f));
         f.setLiquidRegistry(address(1));
         f.setLiquidMultiCurveImplementation(address(multiCurveImpl));
         f.setBaseToken(address(mockRARE));

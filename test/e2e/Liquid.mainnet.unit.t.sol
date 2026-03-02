@@ -33,7 +33,7 @@ import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
-import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 // Mock ERC721 for testing onERC721Received
@@ -345,7 +345,7 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             60, // poolTickSpacing
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+        LiquidGuard(initGuardAddr).setFactory(address(factory));
                 factory.setLiquidRegistry(address(1));
 
         factory.setLiquidMultiCurveImplementation(address(liquidImplementation));
@@ -426,7 +426,7 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
         Curve[] memory curves = _defaultSingleCurve();
 
-        vm.expectRevert(ILiquidFactory.AddressZero.selector);
+        vm.expectRevert(ILiquidFactory.Unauthorized.selector);
         factory.createLiquidTokenMultiCurve(
             address(0),
             "ipfs://test",
@@ -471,7 +471,7 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             60,
             1e15
         );
-        LiquidInitGuard(badInitGuardAddr).setFactory(address(badFactory));
+        LiquidGuard(badInitGuardAddr).setFactory(address(badFactory));
                 badFactory.setLiquidRegistry(address(1));
         badFactory.setLiquidMultiCurveImplementation(address(liquidImplementation));
         // Don't set baseToken - leave it as address(0)

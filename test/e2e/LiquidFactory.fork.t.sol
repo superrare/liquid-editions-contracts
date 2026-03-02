@@ -21,7 +21,7 @@ import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
-import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 contract LiquidFactoryTest is Test, InitGuardTestHelper {
@@ -99,7 +99,7 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             60, // poolTickSpacing (standard for 0.3% fee tier)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+        LiquidGuard(initGuardAddr).setFactory(address(factory));
 
         
         factory.setLiquidRegistry(address(1));
@@ -329,7 +329,7 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
 
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        vm.expectRevert(ILiquidFactory.AddressZero.selector);
+        vm.expectRevert(ILiquidFactory.Unauthorized.selector);
         factory.createLiquidTokenMultiCurve(
             address(0), // Zero creator
             "ipfs://test",
@@ -643,31 +643,9 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
         assertTrue(newToken != address(0));
     }
 
-    /// @notice Test that a concierge service can create tokens on behalf of users
+    /// @notice Concierge service functionality has been removed; token creation must be by creator
     function test_ConciergeServiceCreateTokenOnBehalf() public {
-        address conciergeService = makeAddr("conciergeService");
-        address actualCreator = makeAddr("actualCreator");
-        mockRARE.mint(conciergeService, 1000 ether);
-
-        // Concierge service creates token on behalf of actualCreator
-        vm.startPrank(conciergeService);
-        IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        address newToken = factory.createLiquidTokenMultiCurve(
-            actualCreator, // The actual creator who will receive fees/rewards
-            "ipfs://test",
-            "Test",
-            "TEST",
-            0.1 ether,
-            _defaultSingleCurve(factory)
-        );
-        vm.stopPrank();
-
-        assertTrue(newToken != address(0));
-        // Verify the creator is set to actualCreator, not conciergeService
-        assertEq(
-            LiquidMultiCurve(payable(newToken)).tokenCreator(),
-            actualCreator
-        );
+        vm.skip(true);
     }
 
     // ============================================

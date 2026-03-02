@@ -27,7 +27,7 @@ import {DeployRAREBurner} from "script/deployers/DeployRAREBurner.s.sol";
 import {DeployLiquidFactory} from "script/deployers/DeployLiquidFactory.s.sol";
 import {DeployLiquidRouter} from "script/deployers/DeployLiquidRouter.s.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
-import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {LiquidRegistry} from "liquid-editions/LiquidRegistry.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
@@ -111,7 +111,7 @@ contract LiquidMultiCurveIntegrationTest is Test, InitGuardTestHelper {
         );
         factory = LiquidFactory(factoryResult.factory);
 
-        LiquidInitGuard(deployConfig.factory.poolHooks).setFactory(address(factory));
+        LiquidGuard(deployConfig.factory.poolHooks).setFactory(address(factory));
 
         multiCurveImpl = new LiquidMultiCurve();
         factory.setLiquidMultiCurveImplementation(address(multiCurveImpl));

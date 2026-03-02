@@ -22,7 +22,7 @@ import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {Position} from "doppler/types/Position.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
-import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 
 contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
     address public admin = makeAddr("admin");
@@ -50,7 +50,7 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
             MIN_RARE
         );
         vm.prank(admin);
-        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+        LiquidGuard(initGuardAddr).setFactory(address(factory));
 
         vm.startPrank(admin);
         factory.setLiquidRegistry(address(1));
@@ -161,7 +161,7 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
             MIN_RARE
         );
         vm.prank(admin);
-        LiquidInitGuard(newInitGuardAddr).setFactory(address(newFactory));
+        LiquidGuard(newInitGuardAddr).setFactory(address(newFactory));
         vm.startPrank(admin);
         newFactory.setLiquidRegistry(address(1));
         newFactory.setBaseToken(address(baseToken));

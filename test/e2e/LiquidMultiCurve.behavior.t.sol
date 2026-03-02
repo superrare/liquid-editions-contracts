@@ -17,7 +17,7 @@ import {DeployConfig} from "script/config/DeployConfig.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
-import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 contract LiquidMultiCurveBehaviorTest is LiquidTokenBehaviorBase, InitGuardTestHelper {
@@ -77,7 +77,7 @@ contract LiquidMultiCurveBehaviorTest is LiquidTokenBehaviorBase, InitGuardTestH
             60,
             LIQUIDITY
         );
-        LiquidInitGuard(initGuardAddr).setFactory(address(f));
+        LiquidGuard(initGuardAddr).setFactory(address(f));
         f.setLiquidRegistry(address(1));
         LiquidMultiCurve impl = new LiquidMultiCurve();
         f.setLiquidMultiCurveImplementation(address(impl));

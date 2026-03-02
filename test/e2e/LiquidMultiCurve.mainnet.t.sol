@@ -16,7 +16,7 @@ import {ForkTestBase} from "liquid-editions-test/helpers/bases/ForkTestBase.sol"
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 import {LiquidPoolSwapHelper} from "liquid-editions-test/helpers/LiquidPoolSwapHelper.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
-import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -86,7 +86,7 @@ contract LiquidMultiCurveMainnetTest is ForkTestBase, InitGuardTestHelper {
             60,
             MIN_RARE
         );
-        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+        LiquidGuard(initGuardAddr).setFactory(address(factory));
                 factory.setLiquidRegistry(address(1));
         instantImpl = new LiquidMultiCurve();
         multiCurveImpl = new LiquidMultiCurve();

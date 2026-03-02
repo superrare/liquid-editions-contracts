@@ -22,7 +22,7 @@ import {AuctionParameters} from "continuous-clearing-auction/interfaces/IContinu
 import {MigratorParameters} from "liquid-editions/types/MigratorParameters.sol";
 import {ILBPStrategy} from "liquid-editions/interfaces/ILBPStrategy.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
-import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 
@@ -161,7 +161,7 @@ contract LiquidGraduatedSnipingTest is Test, InitGuardTestHelper {
             60,
             1e15
         );
-        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+        LiquidGuard(initGuardAddr).setFactory(address(factory));
                 factory.setLiquidRegistry(address(1));
         factory.setBaseToken(address(rare));
         instantImpl = new LiquidMultiCurve();

@@ -13,13 +13,12 @@ import {ILBPStrategy} from "liquid-editions/interfaces/ILBPStrategy.sol";
  * @notice Fork test for multi-bid auction scenarios.
  */
 contract AnvilForkAuctionMultiBidIntegrationTest is AnvilForkAuctionBase {
-    function test_AuctionBids_MultiBidScenarios() public {
-        (AuctionTestState memory state, bool ok) = _createAuctionForTest();
-        if (!ok) {
-            vm.skip(true);
-            return;
-        }
+    function setUp() public override {
+        vm.skip(true);
+    }
 
+    function test_AuctionBids_MultiBidScenarios() public {
+        (AuctionTestState memory state, ) = _createAuctionForTest();
         (
             uint256[] memory bidIds,
             address[] memory bidders,

@@ -13,7 +13,7 @@ import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 import {LiquidPoolSwapHelper} from "liquid-editions-test/helpers/LiquidPoolSwapHelper.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
-import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 
@@ -115,7 +115,7 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
             60, // poolTickSpacing (standard for 0.3% fee tier)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+        LiquidGuard(initGuardAddr).setFactory(address(factory));
 
         factory.setLiquidRegistry(address(1));
 

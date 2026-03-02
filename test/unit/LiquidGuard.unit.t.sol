@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 import "forge-std/Test.sol";
 import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {ILiquidGuard} from "liquid-editions/interfaces/ILiquidGuard.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
@@ -74,6 +75,12 @@ contract MockPoolManager {
 contract LiquidGuardUnitTest is Test {
     using CurrencyLibrary for Currency;
 
+    uint160 constant REQUIRED_HOOK_FLAGS = Hooks.BEFORE_INITIALIZE_FLAG
+        | Hooks.BEFORE_SWAP_FLAG
+        | Hooks.AFTER_SWAP_FLAG
+        | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG
+        | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG; // 0x20CC
+
     LiquidGuard public guard;
     MockPoolManager public poolManager;
     MockFeeDistributor public feeDistributor;
@@ -97,13 +104,14 @@ contract LiquidGuardUnitTest is Test {
         poolManager = new MockPoolManager();
         feeDistributor = new MockFeeDistributor(FEE_BPS);
 
+        address hookAddr = address(REQUIRED_HOOK_FLAGS);
         vm.prank(owner);
-        guard = new LiquidGuard(
-            IPoolManager(address(poolManager)),
-            owner,
-            rareToken,
-            true // skip validation (address won't have 0x20CC pattern in tests)
+        deployCodeTo(
+            "LiquidGuard.sol:LiquidGuard",
+            abi.encode(IPoolManager(address(poolManager)), owner, rareToken),
+            hookAddr
         );
+        guard = LiquidGuard(hookAddr);
 
         vm.prank(owner);
         guard.setFeeDistributor(address(feeDistributor));
@@ -932,21 +940,21 @@ contract LiquidGuardUnitTest is Test {
 
     function test_constructor_RevertsForZeroPoolManager() public {
         vm.expectRevert("LiquidGuard: zero pool manager");
-        new LiquidGuard(
-            IPoolManager(address(0)),
-            owner,
-            rareToken,
-            true
+        address hookAddr = address(REQUIRED_HOOK_FLAGS + 0x10000);
+        deployCodeTo(
+            "LiquidGuard.sol:LiquidGuard",
+            abi.encode(IPoolManager(address(0)), owner, rareToken),
+            hookAddr
         );
     }
 
     function test_constructor_RevertsForZeroRareToken() public {
         vm.expectRevert("LiquidGuard: zero RARE token");
-        new LiquidGuard(
-            IPoolManager(address(poolManager)),
-            owner,
-            address(0),
-            true
+        address hookAddr = address(REQUIRED_HOOK_FLAGS + 0x20000);
+        deployCodeTo(
+            "LiquidGuard.sol:LiquidGuard",
+            abi.encode(IPoolManager(address(poolManager)), owner, address(0)),
+            hookAddr
         );
     }
 

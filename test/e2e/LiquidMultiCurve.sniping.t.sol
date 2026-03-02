@@ -18,7 +18,7 @@ import {LiquidPoolSwapHelper} from "liquid-editions-test/helpers/LiquidPoolSwapH
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
-import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 contract LiquidMultiCurveSnipingTest is Test, InitGuardTestHelper {
@@ -89,7 +89,7 @@ contract LiquidMultiCurveSnipingTest is Test, InitGuardTestHelper {
             60,
             LIQUIDITY
         );
-        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+        LiquidGuard(initGuardAddr).setFactory(address(factory));
                 factory.setLiquidRegistry(address(1));
         instantImpl = new LiquidMultiCurve();
         multiCurveImpl = new LiquidMultiCurve();

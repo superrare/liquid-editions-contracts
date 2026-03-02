@@ -14,7 +14,7 @@ import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
-import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 
@@ -152,7 +152,7 @@ contract EventEnhancementsMainnetTest is Test, InitGuardTestHelper {
             60, // poolTickSpacing (standard for 0.3% fee tier)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+        LiquidGuard(initGuardAddr).setFactory(address(factory));
         factory.setLiquidRegistry(address(1));
 
         // Set implementation

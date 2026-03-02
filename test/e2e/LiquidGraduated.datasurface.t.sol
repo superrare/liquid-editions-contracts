@@ -23,7 +23,7 @@ import {ILBPStrategy} from "liquid-editions/interfaces/ILBPStrategy.sol";
 import {MigratorParameters} from "liquid-editions/types/MigratorParameters.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
-import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
@@ -127,7 +127,7 @@ contract LiquidGraduatedDatasurfaceTest is Test, InitGuardTestHelper {
             60,
             1e15
         );
-        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+        LiquidGuard(initGuardAddr).setFactory(address(factory));
                 factory.setLiquidRegistry(address(1));
         factory.setBaseToken(address(rare));
         instantImpl = new LiquidMultiCurve();

@@ -175,6 +175,10 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         uint256 _initialRareLiquidity,
         Curve[] calldata _curves
     ) external whenNotPaused returns (address token) {
+        // Simple protection against malicious creation of tokens on behalf of others.
+        // Keeping _creator in function params so we can enable concierge service later without changing interface.
+        if (_creator != msg.sender) revert Unauthorized();
+
         return
             _createLiquidTokenMultiCurve(
                 _creator,
@@ -191,7 +195,7 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
     ///      1. Validates all inputs (implementation, baseToken, creator, curves)
     ///      2. Creates EIP-1167 minimal proxy clone of liquidMultiCurveImplementation
     ///      3. Optionally transfers RARE tokens from caller to clone (for head position beyond curve range)
-    ///      4. Validates pool hooks configuration (must have BEFORE_INITIALIZE_FLAG)
+    ///      4. Validates pool hooks configuration (must have all LiquidGuard flags: 0x20CC)
     ///      5. Whitelists clone as allowed pool initializer in hooks contract (CRITICAL: must happen before initialize())
     ///      6. Calls clone.initialize() which creates the Uniswap V4 pool
     ///      7. Registers token in LiquidRegistry with creator as beneficiary
@@ -220,6 +224,11 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         if (liquidMultiCurveImplementation == address(0)) {
             revert ImplementationNotSet();
         }
+        // Validate good metadata
+        if (bytes(_tokenUri).length == 0) revert InvalidTokenURI();
+        if (bytes(_name).length == 0) revert InvalidName();
+        if (bytes(_symbol).length == 0) revert InvalidSymbol();
+
         // Validate base token is configured
         if (baseToken == address(0)) revert AddressZero();
         // Validate creator address
@@ -245,7 +254,7 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         // This prevents pool pre-initialization DoS attacks where attackers front-run token deployment
         // by initializing the pool first with a hostile price. Only whitelisted addresses can initialize.
         if (poolHooks == address(0)) revert PoolHooksNotSet();
-        // Validate hook has correct permissions (BEFORE_INITIALIZE_FLAG required)
+        // Validate hook has correct permissions (all LiquidGuard flags: 0x20CC)
         _validatePoolHook();
         // Whitelist clone as allowed initializer (must happen before clone.initialize() calls pm.initialize())
         // Use ILiquidGuard (LiquidGuard) interface for allowlisting
@@ -301,7 +310,7 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
     ///      1. Validates all inputs (implementation, baseToken, creator, RARE > 0)
     ///      2. Creates EIP-1167 minimal proxy clone of liquidInstantImplementation
     ///      3. Transfers RARE tokens from caller to clone (required for two-sided pool seeding)
-    ///      4. Validates pool hooks configuration (must have BEFORE_INITIALIZE_FLAG)
+    ///      4. Validates pool hooks configuration (must have all LiquidGuard flags: 0x20CC)
     ///      5. Whitelists clone as allowed pool initializer in hooks contract (CRITICAL: must happen before initialize())
     ///      6. Calls clone.initialize() which creates the Uniswap V4 pool at the optimal starting price
     ///      7. Registers token in LiquidRegistry with creator as beneficiary
@@ -346,7 +355,7 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         // This prevents pool pre-initialization DoS attacks where attackers front-run token deployment
         // by initializing the pool first with a hostile price. Only whitelisted addresses can initialize.
         if (poolHooks == address(0)) revert PoolHooksNotSet();
-        // Validate hook has correct permissions (BEFORE_INITIALIZE_FLAG required)
+        // Validate hook has correct permissions (all LiquidGuard flags: 0x20CC)
         _validatePoolHook();
         // Whitelist clone as allowed initializer (must happen before clone.initialize() calls pm.initialize())
         ILiquidGuard(poolHooks).addInitializer(clone);
@@ -493,10 +502,7 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
     ///      Silently skips registration if registry is not set or has no code (allows factory to work without registry).
     /// @param token The token address to register
     /// @param beneficiary The beneficiary address (receives creator fees)
-    function _registerToken(
-        address token,
-        address beneficiary
-    ) internal {
+    function _registerToken(address token, address beneficiary) internal {
         if (liquidRegistry == address(0)) return;
         if (liquidRegistry.code.length == 0) return;
         ILiquidRegistry(liquidRegistry).setBeneficiary(token, beneficiary);
@@ -549,9 +555,7 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
 
     /// @notice Sets the CCA (Continuous Clearing Auction) factory address
     /// @param _ccaFactory The CCA factory address
-    function setCcaFactory(
-        address _ccaFactory
-    ) external onlyOwner {
+    function setCcaFactory(address _ccaFactory) external onlyOwner {
         if (_ccaFactory == address(0)) revert AddressZero();
         ccaFactory = _ccaFactory;
     }
@@ -585,15 +589,14 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
     function setMigrationExecutor(
         address _migrationExecutor
     ) external onlyOwner {
+        if (_migrationExecutor == address(0)) revert AddressZero();
         migrationExecutor = _migrationExecutor;
         emit MigrationExecutorUpdated(_migrationExecutor);
     }
 
     /// @notice Sets the registry used for automatic token registration
     /// @dev Factory must be a writer on the registry to register tokens.
-    function setLiquidRegistry(
-        address _liquidRegistry
-    ) external onlyOwner {
+    function setLiquidRegistry(address _liquidRegistry) external onlyOwner {
         if (_liquidRegistry == address(0)) revert AddressZero();
         address oldLiquidRegistry = liquidRegistry;
         liquidRegistry = _liquidRegistry;
@@ -601,9 +604,7 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
     }
 
     /// @notice Sets the Uniswap V4 PoolManager address
-    function setPoolManager(
-        address _poolManager
-    ) external onlyOwner {
+    function setPoolManager(address _poolManager) external onlyOwner {
         if (_poolManager == address(0)) revert AddressZero();
         poolManager = _poolManager;
         emit PoolManagerUpdated(_poolManager);
@@ -611,9 +612,7 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
 
     /// @notice Sets the Uniswap V4 hooks address (optional)
     /// @dev If the hooks contract is LiquidGuard, also requires it to be authorized to add initializers
-    function setPoolHooks(
-        address _poolHooks
-    ) external onlyOwner {
+    function setPoolHooks(address _poolHooks) external onlyOwner {
         if (_poolHooks != address(0) && _poolHooks.code.length == 0) {
             revert InvalidPoolHook(_poolHooks);
         }
@@ -637,29 +636,29 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         }
 
         poolHooks = _poolHooks;
-        
+
         emit PoolHooksUpdated(_poolHooks);
     }
 
     /// @notice Validates configured hook for Instant and MultiCurve launches
     /// @dev Performs comprehensive validation of the pool hooks contract:
     ///      1. Verifies hook has code (is a contract)
-    ///      2. Checks hook address has BEFORE_INITIALIZE_FLAG set (required to prevent pool pre-initialization DoS)
+    ///      2. Checks hook address has all required LiquidGuard flags (0x20CC):
+    ///         BEFORE_INITIALIZE | BEFORE_SWAP | AFTER_SWAP | BEFORE_SWAP_RETURNS_DELTA | AFTER_SWAP_RETURNS_DELTA
     ///      3. Validates hook address format via isValidHookAddress()
     ///      4. If hook implements ILiquidGuard, verifies factory configuration matches.
-    ///      Primarily supports LiquidGuard (init+swap+fees, 0x20CC).
     ///      Reverts with specific error codes if validation fails.
     function _validatePoolHook() internal view {
         if (poolHooks.code.length == 0) revert InvalidPoolHook(poolHooks);
 
         uint160 actualFlags = uint160(poolHooks) & Hooks.ALL_HOOK_MASK;
-        uint160 requiredFlags = Hooks.BEFORE_INITIALIZE_FLAG;
+        uint160 requiredFlags = Hooks.BEFORE_INITIALIZE_FLAG
+            | Hooks.BEFORE_SWAP_FLAG
+            | Hooks.AFTER_SWAP_FLAG
+            | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG
+            | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG;
         if ((actualFlags & requiredFlags) != requiredFlags) {
-            revert PoolHookMissingFlags(
-                poolHooks,
-                actualFlags,
-                requiredFlags
-            );
+            revert PoolHookMissingFlags(poolHooks, actualFlags, requiredFlags);
         }
 
         if (!IHooks(poolHooks).isValidHookAddress(0)) {
@@ -667,7 +666,9 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         }
 
         // Require ILiquidGuard (LiquidGuard-compatible) for initializer allowlisting
-        try ILiquidGuard(poolHooks).factory() returns (address configuredFactory) {
+        try ILiquidGuard(poolHooks).factory() returns (
+            address configuredFactory
+        ) {
             if (
                 configuredFactory != address(0) &&
                 configuredFactory != address(this)
@@ -685,9 +686,7 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
 
     /// @notice Sets the Uniswap V4 tick spacing
     /// @dev Validates that current lpTickLower and lpTickUpper are multiples of the new spacing
-    function setPoolTickSpacing(
-        int24 _poolTickSpacing
-    ) external onlyOwner {
+    function setPoolTickSpacing(int24 _poolTickSpacing) external onlyOwner {
         if (_poolTickSpacing <= 0) revert InvalidTickSpacing();
         // Ensure existing tick bounds are compatible with new spacing
         if (
@@ -715,9 +714,7 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
     ///      See lpTickLower documentation for details on how Liquid.sol interprets these values
     ///      based on whether baseToken or liquidToken is currency0.
     /// @param _lower Lower tick for LP positions
-    function setLpTickLower(
-        int24 _lower
-    ) external onlyOwner {
+    function setLpTickLower(int24 _lower) external onlyOwner {
         if (_lower >= lpTickUpper) revert InvalidTickRange();
         if (_lower % poolTickSpacing != 0) revert InvalidTickSpacing();
         lpTickLower = _lower;
@@ -730,9 +727,7 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
     ///      See lpTickLower documentation for details on how Liquid.sol interprets these values
     ///      based on whether baseToken or liquidToken is currency0.
     /// @param _upper Upper tick for LP positions
-    function setLpTickUpper(
-        int24 _upper
-    ) external onlyOwner {
+    function setLpTickUpper(int24 _upper) external onlyOwner {
         if (lpTickLower >= _upper) revert InvalidTickRange();
         if (_upper % poolTickSpacing != 0) revert InvalidTickSpacing();
         lpTickUpper = _upper;
@@ -753,9 +748,7 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
     /// @notice Sets the base token address (RARE)
     /// @dev Must be set before creating Liquid tokens. Used for pool creation.
     /// @param _baseToken The base token address (RARE)
-    function setBaseToken(
-        address _baseToken
-    ) external onlyOwner {
+    function setBaseToken(address _baseToken) external onlyOwner {
         if (_baseToken == address(0)) revert AddressZero();
         baseToken = _baseToken;
         emit BaseTokenUpdated(_baseToken);

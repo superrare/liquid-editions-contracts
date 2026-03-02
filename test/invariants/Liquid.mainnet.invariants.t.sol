@@ -17,7 +17,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {MockRARE} from "liquid-editions-test/helpers/MockRARE.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
-import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
+import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
 
 /// @title LiquidMultiCurve Mainnet Invariant Tests
@@ -151,7 +151,7 @@ contract LiquidInstantMainnetInvariantTest is Test, InitGuardTestHelper {
             60, // poolTickSpacing (standard for 0.3% fee tier)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-        LiquidInitGuard(initGuardAddr).setFactory(address(factory));
+        LiquidGuard(initGuardAddr).setFactory(address(factory));
                 factory.setLiquidRegistry(address(1));
 
         factory.setLiquidMultiCurveImplementation(address(liquidImpl));
@@ -179,7 +179,7 @@ contract LiquidInstantMainnetInvariantTest is Test, InitGuardTestHelper {
             60, // poolTickSpacing (standard for 0.3% fee tier)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-        LiquidInitGuard(burnInitGuardAddr).setFactory(address(factoryWithBurn));
+        LiquidGuard(burnInitGuardAddr).setFactory(address(factoryWithBurn));
                 factoryWithBurn.setLiquidRegistry(address(1));
         factoryWithBurn.setLiquidMultiCurveImplementation(address(liquidImpl));
 
@@ -297,7 +297,7 @@ contract LiquidInstantMainnetInvariantTest is Test, InitGuardTestHelper {
             60, // poolTickSpacing (standard for 0.3% fee tier)
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
-        LiquidInitGuard(reentryInitGuardAddr).setFactory(address(factoryWithBurn));
+        LiquidGuard(reentryInitGuardAddr).setFactory(address(factoryWithBurn));
                 factoryWithBurn.setLiquidRegistry(address(1));
         factoryWithBurn.setLiquidMultiCurveImplementation(address(liquidImpl));
         factoryWithBurn.setBaseToken(address(mockRARE)); // Set base token to match burner
