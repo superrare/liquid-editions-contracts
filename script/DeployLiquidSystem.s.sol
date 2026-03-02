@@ -851,6 +851,16 @@ contract DeployLiquidSystem is Script {
                 LiquidRouter(payable(result.router)),
                 sharedLiquidRegistry
             );
+            DeployLiquidSystemReconcile.reconcileFactoryMigrationExecutor(
+                deployer,
+                LiquidFactory(result.factory),
+                result.migrationExecutor
+            );
+            DeployLiquidSystemReconcile.reconcileMigrationExecutorRegistry(
+                deployer,
+                LiquidMigrationExecutor(result.migrationExecutor),
+                sharedLiquidRegistry
+            );
 
             if (deployConfig.factory.useLiquidGuard || deployLiquidGuard) {
                 DeployLiquidSystemReconcile.reconcileLiquidGuardFeeDistributor(

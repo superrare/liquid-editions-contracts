@@ -10,6 +10,8 @@ import {LiquidSwapGuard} from "liquid-editions/LiquidSwapGuard.sol";
 import {LiquidInitGuard} from "liquid-editions/LiquidInitGuard.sol";
 import {LiquidAuctioneer} from "liquid-editions/LiquidAuctioneer.sol";
 import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
+import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
+import {LiquidMigrationExecutor} from "liquid-editions/LiquidMigrationExecutor.sol";
 
 /**
  * @title DeployLiquidSystemReconcile
@@ -240,6 +242,69 @@ library DeployLiquidSystemReconcile {
         } catch {
             console.log(
                 "  Warning: Could not read or set Router.liquidRegistry()."
+            );
+        }
+    }
+
+    function reconcileFactoryMigrationExecutor(
+        address owner,
+        LiquidFactory factory,
+        address expectedMigrationExecutor
+    ) internal {
+        if (address(factory) == address(0) || expectedMigrationExecutor == address(0)) {
+            return;
+        }
+
+        if (factory.owner() != owner) {
+            console.log(
+                "  Warning: Factory owner is different; skip migrationExecutor wiring."
+            );
+            return;
+        }
+
+        try factory.migrationExecutor() returns (address currentMigrationExecutor) {
+            if (currentMigrationExecutor != expectedMigrationExecutor) {
+                factory.setMigrationExecutor(expectedMigrationExecutor);
+                console.log("  Factory.migrationExecutor updated.");
+            } else {
+                console.log("  Factory.migrationExecutor already up to date.");
+            }
+        } catch {
+            console.log(
+                "  Warning: Could not read or set Factory.migrationExecutor()."
+            );
+        }
+    }
+
+    function reconcileMigrationExecutorRegistry(
+        address owner,
+        LiquidMigrationExecutor migrationExecutor,
+        LiquidRegistry liquidRegistry
+    ) internal {
+        if (
+            address(migrationExecutor) == address(0) ||
+            address(liquidRegistry) == address(0)
+        ) {
+            return;
+        }
+
+        if (migrationExecutor.owner() != owner) {
+            console.log(
+                "  Warning: MigrationExecutor owner is different; skip liquidRegistry rewiring."
+            );
+            return;
+        }
+
+        try migrationExecutor.liquidRegistry() returns (address currentRegistry) {
+            if (currentRegistry != address(liquidRegistry)) {
+                migrationExecutor.setLiquidRegistry(address(liquidRegistry));
+                console.log("  MigrationExecutor.liquidRegistry updated.");
+            } else {
+                console.log("  MigrationExecutor.liquidRegistry already up to date.");
+            }
+        } catch {
+            console.log(
+                "  Warning: Could not read or set MigrationExecutor.liquidRegistry()."
             );
         }
     }
