@@ -60,6 +60,15 @@ contract FeeDistributor is IFeeDistributor, Ownable {
     uint16 public immutable override totalFeeBPS;
 
     // ============================================
+    // CONSTANTS
+    // ============================================
+
+    /// @dev Gas stipend for untrusted beneficiary ETH sends — prevents meaningful reentrant
+    ///      execution during v4 unlock while allowing basic receive()/fallback() logging.
+    ///      See MEDIUM-01 audit finding.
+    uint256 internal constant BENEFICIARY_ETH_GAS_LIMIT = 2300;
+
+    // ============================================
     // CONVERSION STATE
     // ============================================
 
@@ -260,14 +269,19 @@ contract FeeDistributor is IFeeDistributor, Ownable {
             ethBen = (ethTotal * benShareBps) / 10_000;
             ethProt = ethTotal - ethBen;
 
-            pm.take(ethCurrency, address(this), ethTotal);
+            // Send protocol share directly from PoolManager to trusted recipient
+            pm.take(ethCurrency, PROTOCOL_FEE_RECIPIENT, ethProt);
+            // Take only beneficiary share to this contract for stipend-limited push
+            pm.take(ethCurrency, address(this), ethBen);
 
-            // If beneficiary rejects ETH, redirect their share to protocol
-            if (!_sendEth(beneficiary, ethBen)) {
+            // Intentionally stipend-limited to prevent beneficiary fallback from performing
+            // meaningful reentrant work against PoolManager during v4 unlock (MEDIUM-01).
+            if (!_sendEth(beneficiary, ethBen, BENEFICIARY_ETH_GAS_LIMIT)) {
+                // Redirect failed beneficiary share to trusted protocol recipient
+                _sendEth(PROTOCOL_FEE_RECIPIENT, ethBen, gasleft());
                 ethProt += ethBen;
                 ethBen = 0;
             }
-            _sendEth(PROTOCOL_FEE_RECIPIENT, ethProt);
         } else {
             ethProt = ethTotal;
             pm.take(ethCurrency, PROTOCOL_FEE_RECIPIENT, ethProt);
@@ -364,10 +378,14 @@ contract FeeDistributor is IFeeDistributor, Ownable {
         IERC20(RARE_TOKEN).safeTransfer(to, amount);
     }
 
-    /// @notice Sends ETH to a recipient; returns false on failure so caller can redirect funds.
-    function _sendEth(address to, uint256 amount) internal returns (bool) {
+    /// @notice Sends ETH to a recipient with a caller-specified gas budget; returns false on
+    ///         failure so caller can redirect funds.
+    /// @dev    Callers should use BENEFICIARY_ETH_GAS_LIMIT for untrusted recipients to prevent
+    ///         beneficiary fallback from performing meaningful reentrant work against PoolManager
+    ///         during v4 unlock (see MEDIUM-01 audit finding).
+    function _sendEth(address to, uint256 amount, uint256 gasLimit) internal returns (bool) {
         if (amount == 0) return true;
-        (bool ok,) = to.call{value: amount}("");
+        (bool ok,) = to.call{value: amount, gas: gasLimit}("");
         if (!ok) {
             emit FeeTransferFailed(to, amount, "ETH_SEND_FAILED");
         }

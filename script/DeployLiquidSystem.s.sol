@@ -565,8 +565,8 @@ contract DeployLiquidSystem is Script {
         if (deployAuctioneer) {
             console.log("=== Step 5: Deploying LiquidAuctioneer ===");
             require(
-                address(sharedFeeDistributor) != address(0),
-                "DEPLOY_AUCTIONEER requires a FeeDistributor module. Set DEPLOY_FEE_DISTRIBUTOR=true or provide FEE_DISTRIBUTOR in env / NetworkConfig."
+                protocolFeeRecipient != address(0),
+                "DEPLOY_AUCTIONEER requires protocolFeeRecipient in NetworkConfig"
             );
             require(
                 address(sharedLiquidRegistry) != address(0),
@@ -574,11 +574,12 @@ contract DeployLiquidSystem is Script {
             );
             result.auctioneer = DeployLiquidAuctioneer.deployWithModules(
                 deployer,
-                sharedFeeDistributor,
+                protocolFeeRecipient,
                 sharedLiquidRegistry,
                 networkConfig.uniswapUniversalRouter,
                 networkConfig.rareToken,
                 networkConfig.weth,
+                400, // 4% ETH fee for native ETH bids
                 false
             );
             LiquidAuctioneer auctioneerContract = LiquidAuctioneer(
@@ -839,14 +840,11 @@ contract DeployLiquidSystem is Script {
             result.router != address(0)
         ) {
             console.log("=== Step 6i: Rewiring shared modules ===");
-            IFeeDistributor sharedFeeDistributorModule = IFeeDistributor(
-                address(sharedFeeDistributor)
-            );
 
             DeployLiquidSystemReconcile.reconcileAuctioneerModules(
                 deployer,
                 LiquidAuctioneer(payable(result.auctioneer)),
-                sharedFeeDistributorModule,
+                protocolFeeRecipient,
                 sharedLiquidRegistry
             );
             DeployLiquidSystemReconcile.reconcileRouterRegistry(

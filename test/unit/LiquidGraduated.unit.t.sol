@@ -28,7 +28,6 @@ import {IHooks} from "v4-core/interfaces/IHooks.sol";
 contract LiquidGraduatedUnitTest is Test {
     address admin = makeAddr("admin");
     address creator = makeAddr("creator");
-    address migrator = makeAddr("migrator");
 
     LiquidFactory public factory;
     LiquidGraduated public implementation;
@@ -42,7 +41,6 @@ contract LiquidGraduatedUnitTest is Test {
     function setUp() public {
         rare = new MockRARE();
         rare.mint(creator, 1000 ether);
-        rare.mint(migrator, 1000 ether);
 
         mockPoolManager = new MockV4PoolManager();
         mockCcaFactory = new MockCCAFactory(address(rare));
@@ -77,7 +75,6 @@ contract LiquidGraduatedUnitTest is Test {
             "https://example.com/1",
             "Graduated Token",
             "GRAD",
-            migrator,
             AUCTION_SUPPLY,
             abi.encode(params),
             bytes32(0)
@@ -332,7 +329,6 @@ contract LiquidGraduatedUnitTest is Test {
             "https://example.com/1",
             "G",
             "G",
-            migrator,
             AUCTION_SUPPLY,
             abi.encode(_defaultAuctionParams()),
             bytes32(0)

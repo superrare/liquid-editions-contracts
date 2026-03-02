@@ -69,6 +69,22 @@ interface ILiquid is IERC20Metadata {
     /// @notice Thrown when caller is not the migration executor
     error OnlyMigrationExecutor();
 
+    /// @notice Thrown when migration is called with no new positions
+    error NoPositions();
+
+    /// @notice Thrown when migration new pool key currencies don't match the existing pool
+    error CurrencyMismatch();
+
+    /// @notice Thrown when positions array exceeds the maximum allowed length
+    error TooManyPositions();
+
+    /// @notice Thrown when positions array length doesn't match the expected count
+    error InvalidPositionCount();
+
+    /// @notice Thrown when a migration position uses a non-zero salt
+    /// @dev Salt must always be bytes32(0) to ensure future migrations can locate the position
+    error NonZeroSalt();
+
     /// @notice Thrown when migration dust exceeds the specified maximum
     /// @param currency The currency address with excess dust
     /// @param actual The actual dust amount

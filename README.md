@@ -19,9 +19,6 @@ The main factory contract for deploying new Liquid token instances. Manages prot
 - Integration with RAREBurner
 - Token deployment and tracking
 - V4 hooks, pool bootstrap parameters, and registry wiring
-- `createLiquidTokenWithAuction` keeps the legacy `_migrator` parameter in its signature for compatibility,
-  but the argument is intentionally ignored in the active architecture.
-
 ### `LiquidInstant.sol`
 The instant-launch ERC-20 token implementation featuring:
 - Uniswap V4 PoolManager integration via unlock callbacks
@@ -115,7 +112,6 @@ This doc also contains the required `Feature -> File -> Functions -> Events` map
 
 - `IFeeDistributor.totalFeeBPS`, `quoteFeeBreakdown`, `distributeFees`, and `setTotalFeeBPS` are compatibility entrypoints for historical interfaces and no-ops in the active V4 path.
 - `LiquidAuctioneer` native-ETH bid fee collection uses the legacy compatibility path via those selectors.
-- `createLiquidTokenWithAuction` keeps `_migrator` as a compatibility-only argument that is intentionally unused.
 - Router event fields `ethFee`, `protocolFee`, and `beneficiaryFee` are intentionally zero in this architecture.
 
 ## Prerequisites

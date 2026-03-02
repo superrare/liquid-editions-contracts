@@ -22,7 +22,6 @@ Any contract behavior should be interpreted against these paths.
   2. For multicurve, it deploys a clone, initializes pool, and registers token/beneficiary.
   3. For auction flow, it creates a `LiquidGraduated` clone, initializes strategy, and starts auction setup.
   4. Registry registration is updated via `_registerToken`.
-- **Compatibility note:** `_migrator` in `createLiquidTokenWithAuction` is intentionally ignored (API stable only).
 - **Core events:** `LiquidTokenCreated`, `LiquidGraduated`/implementation init events, registry events.
 
 ### 2) Buy (ETH -> token)

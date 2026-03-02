@@ -81,6 +81,7 @@ contract LiquidInstant is
     /// @notice Uniswap V4 pool fee tier (0% = 0)
     /// @dev Set to 0% to eliminate secondary rewards complexity
     uint24 internal constant LP_FEE = 0;
+    uint256 internal constant MAX_POSITIONS = 25;
 
     // ============================================
     // STATE VARIABLES
@@ -329,7 +330,15 @@ contract LiquidInstant is
         address me = ILiquidFactory(factory).migrationExecutor();
         if (msg.sender != me) revert OnlyMigrationExecutor();
         if (lpLiquidity == 0) revert ZeroLiquidity();
+        if (newPositions.length != 1) revert InvalidPositionCount();
         if (dustRecipient == address(0)) revert AddressZero();
+        if (newPositions[0].salt != bytes32(0)) revert NonZeroSalt();
+
+        // Defense-in-depth: verify currencies match even though executor validates this
+        if (
+            Currency.unwrap(newPoolKey.currency0) != Currency.unwrap(poolKey.currency0) ||
+            Currency.unwrap(newPoolKey.currency1) != Currency.unwrap(poolKey.currency1)
+        ) revert CurrencyMismatch();
 
         _unlockExpected = true;
         IPoolManager(poolManager).unlock(

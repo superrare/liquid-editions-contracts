@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 interface ILiquidRegistry {
     error ZeroAddress();
     error UnauthorizedWriter();
+    error NotContract();
 
     /// @notice Emitted when a beneficiary is set for a token
     event BeneficiarySet(

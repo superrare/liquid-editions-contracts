@@ -65,6 +65,7 @@ contract LiquidMultiCurve is
     uint256 internal constant POOL_LAUNCH_SUPPLY = 900_000e18;
     uint256 internal constant CREATOR_LAUNCH_REWARD = 100_000e18;
     uint24 internal constant LP_FEE = 0;
+    uint256 internal constant MAX_POSITIONS = 25;
 
     address public factory;
     address public baseToken;
@@ -241,7 +242,15 @@ contract LiquidMultiCurve is
         address me = ILiquidFactory(factory).migrationExecutor();
         if (msg.sender != me) revert OnlyMigrationExecutor();
         if (_storedPositions.length == 0) revert ZeroLiquidity();
+        if (newPositions.length == 0) revert NoPositions();
+        if (newPositions.length > MAX_POSITIONS) revert TooManyPositions();
         if (dustRecipient == address(0)) revert AddressZero();
+
+        // Defense-in-depth: verify currencies match even though executor validates this
+        if (
+            Currency.unwrap(newPoolKey.currency0) != Currency.unwrap(poolKey.currency0) ||
+            Currency.unwrap(newPoolKey.currency1) != Currency.unwrap(poolKey.currency1)
+        ) revert CurrencyMismatch();
 
         _unlockExpected = true;
         IPoolManager(poolManager).unlock(
@@ -454,6 +463,7 @@ contract LiquidMultiCurve is
             rareBalance,
             isToken0
         );
+        if (positions.length > MAX_POSITIONS) revert TooManyPositions();
 
         // Store tick bounds for reference (used by getMarketState() and other view functions)
         lpTickLower = lowerTickBoundary;
@@ -799,6 +809,18 @@ contract LiquidMultiCurve is
         address oldHooks = address(poolKey.hooks);
         poolKey = newKey;
         poolId = newKey.toId();
+
+        // Recompute tick bounds from the new positions that were just stored
+        if (_storedPositions.length > 0) {
+            int24 newTickLower = _storedPositions[0].tickLower;
+            int24 newTickUpper = _storedPositions[0].tickUpper;
+            for (uint256 i = 1; i < _storedPositions.length; i++) {
+                if (_storedPositions[i].tickLower < newTickLower) newTickLower = _storedPositions[i].tickLower;
+                if (_storedPositions[i].tickUpper > newTickUpper) newTickUpper = _storedPositions[i].tickUpper;
+            }
+            lpTickLower = newTickLower;
+            lpTickUpper = newTickUpper;
+        }
 
         emit LiquidityMigrated(oldHooks, address(newKey.hooks));
 

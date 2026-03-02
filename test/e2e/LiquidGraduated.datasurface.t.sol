@@ -84,7 +84,6 @@ contract LiquidGraduatedDatasurfaceTest is Test, InitGuardTestHelper {
     NetworkConfig.Config internal config;
     address admin = makeAddr("admin");
     address creator = makeAddr("creator");
-    address migrator = makeAddr("migrator");
 
     LiquidFactory public factory;
     LiquidMultiCurve public instantImpl;
@@ -115,7 +114,6 @@ contract LiquidGraduatedDatasurfaceTest is Test, InitGuardTestHelper {
 
         rare = new MockRARE();
         rare.mint(creator, 1000 ether);
-        rare.mint(migrator, 1000 ether);
         mockCcaFactory = new MockCCAFactoryDS(address(rare));
 
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
@@ -178,7 +176,6 @@ contract LiquidGraduatedDatasurfaceTest is Test, InitGuardTestHelper {
             "https://example.com/g",
             "Grad",
             "GRAD",
-            migrator,
             900_000e18,
             abi.encode(params),
             bytes32(0)

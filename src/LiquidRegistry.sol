@@ -86,6 +86,9 @@ contract LiquidRegistry is ILiquidRegistry, Ownable {
         if (token == address(0) || beneficiary == address(0)) {
             revert ZeroAddress();
         }
+        if (token.code.length == 0) {
+            revert NotContract();
+        }
         beneficiaries[token] = beneficiary;
         emit BeneficiarySet(token, beneficiary, msg.sender);
     }

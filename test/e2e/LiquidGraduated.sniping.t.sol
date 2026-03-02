@@ -119,7 +119,6 @@ contract LiquidGraduatedSnipingTest is Test, InitGuardTestHelper {
     NetworkConfig.Config internal config;
     address admin = makeAddr("admin");
     address creator = makeAddr("creator");
-    address migrator = makeAddr("migrator");
     address sniper = makeAddr("sniper");
 
     LiquidFactory public factory;
@@ -148,7 +147,6 @@ contract LiquidGraduatedSnipingTest is Test, InitGuardTestHelper {
 
         rare = new MockRARE();
         rare.mint(creator, 1000 ether);
-        rare.mint(migrator, 1000 ether);
         rare.mint(sniper, 1000 ether);
         mockCcaFactory = new MockCCAFactorySniping();
 
@@ -219,7 +217,6 @@ contract LiquidGraduatedSnipingTest is Test, InitGuardTestHelper {
             "https://example.com/g",
             "Grad",
             "GRAD",
-            migrator,
             900_000e18,
             abi.encode(params),
             bytes32(0)

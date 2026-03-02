@@ -217,8 +217,6 @@ contract LiquidGraduatedBehaviorTest is LiquidTokenBehaviorBase {
     }
 
     function _deployToken() internal override returns (ILiquid) {
-        address migrator = makeAddr("migrator");
-
         vm.startPrank(tokenCreator);
         mockRARE.approve(address(factory), 20e18);
 
@@ -241,7 +239,6 @@ contract LiquidGraduatedBehaviorTest is LiquidTokenBehaviorBase {
             TOKEN_URI,
             TOKEN_NAME,
             TOKEN_SYMBOL,
-            migrator,
             900_000e18,
             abi.encode(params),
             bytes32(0)
@@ -349,8 +346,6 @@ contract LiquidGraduatedPreGradBehaviorTest is LiquidTokenBehaviorBase {
     }
 
     function _deployToken() internal override returns (ILiquid) {
-        address migrator = makeAddr("migrator");
-
         vm.startPrank(tokenCreator);
         mockRARE.approve(address(factory), 20e18);
 
@@ -373,7 +368,6 @@ contract LiquidGraduatedPreGradBehaviorTest is LiquidTokenBehaviorBase {
             TOKEN_URI,
             TOKEN_NAME,
             TOKEN_SYMBOL,
-            migrator,
             900_000e18,
             abi.encode(params),
             bytes32(0)

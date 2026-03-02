@@ -13,6 +13,9 @@ const path = require('path');
  *
  * Output files:
  *   - compiled-contracts.txt         Main Liquid Edition contracts (src/)
+ *   - compiled-contracts.txt         Includes core script configs:
+ *                                      - script/config/NetworkConfig.sol
+ *                                      - script/DeployLiquidSystem.s.sol
  *   - compiled-tests.txt             Test files (test/)
  *   - compiled-deps-uniswap-v4-core.txt     Key Uniswap V4 core contracts
  *   - compiled-deps-uniswap-v4-periphery.txt Key Uniswap V4 periphery contracts
@@ -23,12 +26,13 @@ const path = require('path');
 const ROOT = __dirname;
 const SRC_DIR = path.join(ROOT, 'src');
 const TEST_DIR = path.join(ROOT, 'test');
+const NETWORK_CONFIG_PATH = path.join(ROOT, 'script', 'config', 'NetworkConfig.sol');
+const DEPLOY_CONFIG_PATH = path.join(ROOT, 'script', 'DeployLiquidSystem.s.sol');
 const LIB_DIR = path.join(ROOT, 'lib');
 
 // Files and directories to exclude from src/ compilation
 const SRC_EXCLUDES = [
     path.join(SRC_DIR, 'examples'),        // Exclude examples directory
-    path.join(SRC_DIR, 'LiquidInstant.sol'), // Exclude LiquidInstant (deprecated)
 ];
 
 // Output prefix from CLI (e.g. "compiled" or "my-prefix")
@@ -129,8 +133,10 @@ function formatFileContent(filePath, content) {
 /**
  * Compile a list of files to an output file
  */
-function compileFileList(files, outputFile, title) {
+function compileFileList(files, outputFile, title, options = {}) {
+    const shouldAppend = options.append ?? false;
     let compiledContent = '';
+    const leading = shouldAppend && fs.existsSync(outputFile) ? '\n' : '';
     compiledContent += `${title.toUpperCase()}\n`;
     compiledContent += `Generated on: ${new Date().toISOString()}\n`;
     compiledContent += `Total files: ${files.length}\n`;
@@ -147,7 +153,10 @@ function compileFileList(files, outputFile, title) {
         }
     }
 
-    fs.writeFileSync(outputFile, compiledContent, 'utf8');
+    fs.writeFileSync(outputFile, leading + compiledContent, {
+        flag: shouldAppend ? 'a' : 'w',
+        encoding: 'utf8',
+    });
     return files.length;
 }
 
@@ -221,6 +230,12 @@ function compileContracts() {
         const contractsFile = path.join(ROOT, `${outputPrefix}-contracts.txt`);
         if (compileDirectory(SRC_DIR, contractsFile, 'Liquid Edition Contracts', SRC_EXCLUDES)) {
             outputs.push(contractsFile);
+        }
+
+        const scriptConfigFiles = [NETWORK_CONFIG_PATH, DEPLOY_CONFIG_PATH].filter((f) => fs.existsSync(f));
+        if (scriptConfigFiles.length > 0) {
+            console.log(`\n🔍 Liquid Edition Script Configurations (${scriptConfigFiles.length} files)`);
+            compileFileList(scriptConfigFiles, contractsFile, 'Liquid Edition Script Configurations', { append: true });
         }
 
         // 2. Tests (test/)

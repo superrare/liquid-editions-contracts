@@ -397,7 +397,6 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
     /// @param _tokenUri The ERC20 token URI (metadata link)
     /// @param _name The token name
     /// @param _symbol The token symbol
-    /// @param _migrator Unused (kept for API compatibility; migration via strategy.migrate())
     /// @param _auctionSupply Token amount sent to strategy (900_000e18, split between auction and reserve)
     /// @param _auctionConfigData Encoded CCA AuctionParameters (fundsRecipient/tokensRecipient overwritten)
     /// @param _salt Salt for deterministic token clone and strategy/auction address
@@ -408,7 +407,6 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         string memory _tokenUri,
         string memory _name,
         string memory _symbol,
-        address _migrator,
         uint256 _auctionSupply,
         bytes calldata _auctionConfigData,
         bytes32 _salt
@@ -421,7 +419,6 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         if (baseToken == address(0)) revert AddressZero();
         if (_creator == address(0)) revert AddressZero();
         if (_auctionSupply > 900_000e18) revert InvalidAmount();
-        _migrator; // silence unused (kept for API compatibility)
 
         // Bind salt to msg.sender to prevent front-running / salt squatting.
         // An attacker who copies the salt from the mempool cannot claim the same

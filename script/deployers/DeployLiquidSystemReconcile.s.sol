@@ -175,7 +175,7 @@ library DeployLiquidSystemReconcile {
     function reconcileAuctioneerModules(
         address owner,
         LiquidAuctioneer auctioneer,
-        IFeeDistributor feeDistributor,
+        address protocolFeeRecipient,
         LiquidRegistry liquidRegistry
     ) internal {
         if (address(auctioneer) == address(0)) {
@@ -189,15 +189,15 @@ library DeployLiquidSystemReconcile {
             return;
         }
 
-        if (address(feeDistributor) != address(0)) {
-            try auctioneer.feeDistributor() returns (address currentFeeDistributor) {
-                if (address(currentFeeDistributor) != address(feeDistributor)) {
-                    auctioneer.setFeeDistributor(address(feeDistributor));
-                    console.log("  Auctioneer.feeDistributor updated.");
+        if (protocolFeeRecipient != address(0)) {
+            try auctioneer.protocolFeeRecipient() returns (address current) {
+                if (current != protocolFeeRecipient) {
+                    auctioneer.setProtocolFeeRecipient(protocolFeeRecipient);
+                    console.log("  Auctioneer.protocolFeeRecipient updated.");
                 }
             } catch {
                 console.log(
-                    "  Warning: Could not read or set Auctioneer.feeDistributor()."
+                    "  Warning: Could not read or set Auctioneer.protocolFeeRecipient()."
                 );
             }
         }

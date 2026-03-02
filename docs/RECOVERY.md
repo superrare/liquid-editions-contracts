@@ -10,6 +10,8 @@ This document captures operational failure modes and recovery actions for the de
 - src/LiquidMigrationExecutor.sol
 - src/LiquidRegistry.sol
 - src/FeeDistributor.sol
+- src/LiquidMultiCurve.sol
+- src/LiquidInstant.sol
 - script/config/NetworkConfig.sol
 - script/DeployLiquidSystem.s.sol
 

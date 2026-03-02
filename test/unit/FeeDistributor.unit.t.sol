@@ -68,7 +68,14 @@ contract MockPoolManagerForFD {
 
     function take(Currency currency, address to, uint256 amount) external {
         takeCalls.push(TakeCall({currency: currency, to: to, amount: amount}));
+        // For native ETH takes, actually transfer ETH so balance assertions work
+        if (Currency.unwrap(currency) == address(0) && amount > 0) {
+            (bool ok,) = to.call{value: amount}("");
+            require(ok, "MockPM: ETH transfer failed");
+        }
     }
+
+    receive() external payable {}
 
     function sync(Currency) external {
         syncCount++;
@@ -284,7 +291,7 @@ contract FeeDistributorUnitTest is Test {
         poolManager.setSwapResult(toBalanceDelta(int128(uint128(ethOut)), -int128(uint128(rareAmount))));
 
         // The pool manager's take() just records calls — fund it with ETH so _sendEth works
-        vm.deal(address(distributor), ethOut);
+        vm.deal(address(poolManager), ethOut);
 
         vm.prank(approvedHook);
         vm.expectEmit(true, true, false, false);
@@ -354,7 +361,7 @@ contract FeeDistributorUnitTest is Test {
         uint256 rareAmountA = 1e18;
         uint256 ethOutA = 0.0001e18;
         poolManager.setSwapResult(toBalanceDelta(int128(uint128(ethOutA)), -int128(uint128(rareAmountA))));
-        vm.deal(address(distributor), ethOutA);
+        vm.deal(address(poolManager), ethOutA);
 
         vm.prank(approvedHook);
         distributor.notifyFee(liquidToken, rareAmountA);
@@ -372,7 +379,7 @@ contract FeeDistributorUnitTest is Test {
         uint256 rareAmountB = 2e18;
         uint256 ethOutB = 0.0002e18;
         poolManager.setSwapResult(toBalanceDelta(int128(uint128(ethOutB)), -int128(uint128(rareAmountB))));
-        vm.deal(address(distributor), ethOutB);
+        vm.deal(address(poolManager), ethOutB);
 
         vm.prank(approvedHook);
         distributor.notifyFee(liquidToken, rareAmountB);
@@ -391,7 +398,7 @@ contract FeeDistributorUnitTest is Test {
         uint256 rareAmountC = 3e18;
         uint256 ethOutC = 0.0003e18;
         poolManager.setSwapResult(toBalanceDelta(int128(uint128(ethOutC)), -int128(uint128(rareAmountC))));
-        vm.deal(address(distributor), ethOutC);
+        vm.deal(address(poolManager), ethOutC);
 
         vm.prank(approvedHook);
         distributor.notifyFee(liquidToken, rareAmountC);
@@ -401,9 +408,11 @@ contract FeeDistributorUnitTest is Test {
         assertEq(beneficiaryTwo.balance, beneficiaryTwoStart + expectedBenB);
         assertEq(
             protocolRecipient.balance,
-            protocolStart + expectedProtA + expectedProtB
+            protocolStart + expectedProtA + expectedProtB + ethOutC
         );
-        (Currency ethCurrency, address ethTo, uint256 ethAmount) = poolManager.takeCalls(2);
+        // Each call with a beneficiary produces 2 take calls (protocol + beneficiary),
+        // so the 3rd call's take (no beneficiary, single take) is at index 4.
+        (Currency ethCurrency, address ethTo, uint256 ethAmount) = poolManager.takeCalls(4);
         assertEq(Currency.unwrap(ethCurrency), address(0));
         assertEq(ethTo, protocolRecipient);
         assertEq(ethAmount, ethOutC);
@@ -704,7 +713,7 @@ contract FeeDistributorUnitTest is Test {
         uint256 rareAmount = 1e18;
         uint256 ethOut = 0.0001e18;
         poolManager.setSwapResult(toBalanceDelta(int128(uint128(ethOut)), -int128(uint128(rareAmount))));
-        vm.deal(address(distributor), ethOut);
+        vm.deal(address(poolManager), ethOut);
 
         vm.prank(approvedHook);
         distributor.notifyFee(liquidToken, rareAmount);
@@ -729,7 +738,7 @@ contract FeeDistributorUnitTest is Test {
         uint256 rareAmount = 1e18;
         uint256 ethOut = 0.0001e18;
         poolManager.setSwapResult(toBalanceDelta(int128(uint128(ethOut)), -int128(uint128(rareAmount))));
-        vm.deal(address(distributor), ethOut);
+        vm.deal(address(poolManager), ethOut);
 
         uint256 beneficiaryBefore = beneficiary.balance;
 
@@ -752,7 +761,7 @@ contract FeeDistributorUnitTest is Test {
         uint256 rareAmount = 1e18;
         uint256 ethOut = 1e15; // 0.001 ETH — use a value divisible cleanly
         poolManager.setSwapResult(toBalanceDelta(int128(uint128(ethOut)), -int128(uint128(rareAmount))));
-        vm.deal(address(distributor), ethOut);
+        vm.deal(address(poolManager), ethOut);
 
         uint256 beneficiaryBefore = beneficiary.balance;
         uint256 protocolBefore = protocolRecipient.balance;
@@ -800,7 +809,7 @@ contract FeeDistributorUnitTest is Test {
         // Give a deliberately wrong ETH output (slippage exceeded)
         uint256 ethOut = 1; // essentially zero vs expected
         poolManager.setSwapResult(toBalanceDelta(int128(uint128(ethOut)), -int128(uint128(rareAmount))));
-        vm.deal(address(distributor), ethOut);
+        vm.deal(address(poolManager), ethOut);
 
         // Should fall back to RARE distribution (SLIPPAGE_EXCEEDED)
         vm.prank(approvedHook);
@@ -871,7 +880,7 @@ contract FeeDistributorUnitTest is Test {
         uint256 rareAmount = 1e18;
         uint256 ethOut = 0.001e18;
         poolManager.setSwapResult(toBalanceDelta(int128(uint128(ethOut)), -int128(uint128(rareAmount))));
-        vm.deal(address(distributor), ethOut);
+        vm.deal(address(poolManager), ethOut);
 
         uint256 protocolBefore = protocolRecipient.balance;
         uint256 beneficiaryBefore = beneficiary.balance;
@@ -948,7 +957,7 @@ contract FeeDistributorUnitTest is Test {
         uint256 ethOut     = 0.0001e18;
 
         poolManager.setSwapResult(toBalanceDelta(int128(uint128(ethOut)), -int128(uint128(rareAmount))));
-        vm.deal(address(distributor), ethOut);
+        vm.deal(address(poolManager), ethOut);
 
         uint256 protocolBefore = protocolRecipient.balance;
 
@@ -957,6 +966,35 @@ contract FeeDistributorUnitTest is Test {
 
         // Beneficiary got nothing (rejected ETH)
         assertEq(address(rejecter).balance, 0, "rejecter should have 0 ETH");
+        // Protocol got ALL the ETH (both shares)
+        assertEq(protocolRecipient.balance - protocolBefore, ethOut, "protocol should get all ETH");
+        // No ETH stranded in distributor
+        assertEq(address(distributor).balance, 0, "no ETH should be stranded in distributor");
+    }
+
+    // ============================================
+    // MEDIUM-01: gas-hungry beneficiary exceeds stipend → redirects to protocol
+    // ============================================
+
+    function test_notifyFee_GasHungryBeneficiary_RedirectsToProtocol() public {
+        GasHungryBeneficiary hungry = new GasHungryBeneficiary();
+        registry.setBeneficiary(liquidToken, address(hungry));
+
+        poolManager.setMockSqrtPrice(MOCK_SQRT_PRICE);
+
+        uint256 rareAmount = 1e18;
+        uint256 ethOut     = 0.0001e18;
+
+        poolManager.setSwapResult(toBalanceDelta(int128(uint128(ethOut)), -int128(uint128(rareAmount))));
+        vm.deal(address(poolManager), ethOut);
+
+        uint256 protocolBefore = protocolRecipient.balance;
+
+        vm.prank(approvedHook);
+        distributor.notifyFee(liquidToken, rareAmount);
+
+        // Gas-hungry beneficiary failed to receive under 2300 stipend
+        assertEq(address(hungry).balance, 0, "gas-hungry beneficiary should have 0 ETH");
         // Protocol got ALL the ETH (both shares)
         assertEq(protocolRecipient.balance - protocolBefore, ethOut, "protocol should get all ETH");
         // No ETH stranded in distributor
@@ -1015,6 +1053,15 @@ contract FeeDistributorUnitTest is Test {
 contract EthRejecter {
     receive() external payable {
         revert("NO_ETH");
+    }
+}
+
+/// @notice Contract whose receive() attempts a storage write — exceeds 2300 gas stipend
+///         and fails under BENEFICIARY_ETH_GAS_LIMIT, validating the MEDIUM-01 gas cap fix.
+contract GasHungryBeneficiary {
+    uint256 public dummy;
+    receive() external payable {
+        dummy = 1; // SSTORE costs 20000+ gas, will fail under 2300 stipend
     }
 }
 

@@ -16,7 +16,6 @@ interface IFactoryWithAuction {
         string memory _tokenUri,
         string memory _name,
         string memory _symbol,
-        address _migrator,
         uint256 _auctionSupply,
         bytes calldata _auctionConfigData,
         bytes32 _salt
@@ -82,7 +81,6 @@ struct AuctionParameters {
  * (raised currency stays in the auction for bidder refunds); bidders can exit to get their currency back.
  *
  * Environment Variables Optional:
- * - MIGRATOR_ADDRESS: Unused (kept for API compatibility). Migration via strategy.migrate().
  * - FACTORY_ADDRESS: Override factory (default: NetworkConfig.liquidFactory)
  * - CHAIN_ID: Chain ID (default: block.chainid)
  * - AUCTION_START_BLOCK: CCA start block (default: current block)
@@ -119,16 +117,6 @@ contract CreateTokenWithAuction is Script {
         }
         NetworkConfig.Config memory config = NetworkConfig.getConfig(chainId);
 
-        address migrator;
-        try vm.envAddress("MIGRATOR_ADDRESS") returns (address _m) {
-            migrator = _m;
-        } catch {
-            migrator = config.liquid.auctioneer;
-        }
-        require(
-            migrator != address(0),
-            "MIGRATOR_ADDRESS or NetworkConfig.liquidAuctioneer required"
-        );
         address factoryAddress;
         try vm.envAddress("FACTORY_ADDRESS") returns (address _f) {
             factoryAddress = _f;
@@ -189,7 +177,7 @@ contract CreateTokenWithAuction is Script {
         AuctionParameters memory params = AuctionParameters({
             currency: config.rareToken,
             tokensRecipient: tokenCreator,
-            fundsRecipient: migrator,
+            fundsRecipient: address(0),
             startBlock: startBlock,
             endBlock: endBlock,
             claimBlock: claimBlock,
@@ -218,7 +206,6 @@ contract CreateTokenWithAuction is Script {
         console.log("Creating LiquidGraduated (CCA) token...");
         console.log("Factory:", factoryAddress);
         console.log("Creator:", tokenCreator);
-        console.log("Migrator:", migrator);
         console.log("Auction supply:", auctionSupply);
         console.log("Start block:", startBlock);
         console.log("End block:", endBlock);
@@ -230,7 +217,6 @@ contract CreateTokenWithAuction is Script {
                 tokenURI,
                 tokenName,
                 tokenSymbol,
-                migrator,
                 auctionSupply,
                 auctionConfigData,
                 salt

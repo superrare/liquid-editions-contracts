@@ -299,7 +299,6 @@ abstract contract AnvilForkAuctionBase is AnvilForkTestBase {
             "ipfs://test-graduated",
             "Test Graduated Token",
             "TGT",
-            address(auctioneer),
             params.auctionSupply,
             abi.encode(params.auctionParams),
             validSalt

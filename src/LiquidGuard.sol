@@ -203,7 +203,15 @@ contract LiquidGuard is IHooks, Ownable, ILiquidGuard {
             ? uint256(-params.amountSpecified)
             : uint256(params.amountSpecified);
 
-        uint256 fee = (absAmount * totalFeeBPS) / 10_000;
+        // Guard against multiplication overflow and downstream int128 truncation.
+        // If absAmount is large enough that absAmount * totalFeeBPS would overflow uint256,
+        // or produce a fee exceeding int128 (required by toBeforeSwapDelta), skip fee collection.
+        uint16 _totalFeeBPS = totalFeeBPS;
+        if (_totalFeeBPS == 0 || absAmount > uint256(uint128(type(int128).max)) * 10_000 / _totalFeeBPS) {
+            return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        }
+
+        uint256 fee = (absAmount * _totalFeeBPS) / 10_000;
         // Clamp fee to prevent HookDeltaExceedsSwapAmount (fee must be < absAmount)
         if (fee >= absAmount) fee = absAmount - 1;
         if (fee == 0) {

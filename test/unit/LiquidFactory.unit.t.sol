@@ -690,4 +690,28 @@ contract MockSwapGuardForFactory is ILiquidSwapGuard {
     ) external pure override returns (bool) {
         return false;
     }
+
+    function verifiedRouters(address) external pure override returns (bool) {
+        return false;
+    }
+
+    function allowedCallers(address) external pure override returns (bool) {
+        return false;
+    }
+
+    function addRouter(address) external pure override {
+        revert("UNUSED");
+    }
+
+    function removeRouter(address) external pure override {
+        revert("UNUSED");
+    }
+
+    function addCaller(address) external pure override {
+        revert("UNUSED");
+    }
+
+    function removeCaller(address) external pure override {
+        revert("UNUSED");
+    }
 }

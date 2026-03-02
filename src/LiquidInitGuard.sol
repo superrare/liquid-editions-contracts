@@ -196,6 +196,31 @@ contract LiquidInitGuard is IHooks, Ownable, ILiquidSwapGuard {
 
     // ============ Admin ============
 
+    /// @notice Init-only guard: swap router/caller management not supported (returns false / reverts)
+    function verifiedRouters(address) external pure returns (bool) {
+        return false;
+    }
+
+    function allowedCallers(address) external pure returns (bool) {
+        return false;
+    }
+
+    function addRouter(address) external pure {
+        revert("Init-only guard: swap management not supported");
+    }
+
+    function removeRouter(address) external pure {
+        revert("Init-only guard: swap management not supported");
+    }
+
+    function addCaller(address) external pure {
+        revert("Init-only guard: swap management not supported");
+    }
+
+    function removeCaller(address) external pure {
+        revert("Init-only guard: swap management not supported");
+    }
+
     /// @notice Sets the factory address that can add initializers
     function setFactory(address _factory) external onlyOwner {
         if (_factory == address(0)) revert InvalidFactoryAddress();

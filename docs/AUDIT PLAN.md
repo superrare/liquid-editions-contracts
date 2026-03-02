@@ -1,7 +1,7 @@
 # Liquid Editions Security Audit Plan (Non-Mutating)
 
 ## 1) Title
-Comprehensive exploit-focused audit of `LiquidFactory`, `LiquidGuard`, `LiquidGraduated`, `LiquidMultiCurve`, `LiquidRouter`, `FeeDistributor`, and `LiquidRegistry` with minimal, testable remediations.
+Comprehensive exploit-focused audit of `LiquidFactory`, `LiquidGuard`, `LiquidInstant`, `LiquidMultiCurve`, `LiquidRouter`, `FeeDistributor`, `LiquidMigrationExecutor`, and `LiquidRegistry` with minimal, testable remediations.
 
 ## 2) Current System Architecture Notes
 - `FeeDistributor` (`src/FeeDistributor.sol`) owns active fee policy execution and split behavior; `LiquidRouter` consumes it.
@@ -27,14 +27,15 @@ Comprehensive exploit-focused audit of `LiquidFactory`, `LiquidGuard`, `LiquidGr
 1. In-scope contracts:
    - `src/LiquidFactory.sol`
    - `src/LiquidGuard.sol`
-   - `src/LiquidGraduated.sol`
+   - `src/LiquidInstant.sol`
    - `src/LiquidMultiCurve.sol`
    - `src/LiquidRouter.sol`
+   - `src/LiquidMigrationExecutor.sol`
    - `src/FeeDistributor.sol`
    - `src/LiquidRegistry.sol`
    - `src/interfaces/IFeeDistributor.sol`
 2. Out-of-scope for this pass:
-   - `RAREBurner`, `LiquidAuctioneer`, and any unlisted helper/infra contracts.
+   - `RAREBurner`, `LiquidAuctioneer`, `LiquidGraduated`, and any unlisted helper/infra contracts.
    - currently unused hooks like `LiquidInitGuard` and `LiquidSwapGuard`.
 3. Trust assumptions:
    - External Uniswap dependencies are trusted and bug-free for this audit.
@@ -63,7 +64,8 @@ Comprehensive exploit-focused audit of `LiquidFactory`, `LiquidGuard`, `LiquidGr
      - `LiquidRouter.sol`
      - `LiquidGuard.sol`
      - `LiquidMultiCurve.sol`
-     - `LiquidGraduated.sol`
+     - `LiquidInstant.sol`
+     - `LiquidMigrationExecutor.sol`
      - `FeeDistributor.sol`
      - `LiquidRegistry.sol`
 2. Control-flow and trust boundary review
@@ -108,30 +110,31 @@ Comprehensive exploit-focused audit of `LiquidFactory`, `LiquidGuard`, `LiquidGr
    - afterSwap hook verification assumptions for non-initialized pools
    - beforeSwapReturnDelta hook verification assumptions for non-initialized pools
    - afterSwapReturnDelta hook verification assumptions for non-initialized pools
-3. `src/LiquidGraduated.sol`
-   - init flow (`poolId` and hook registration expectations)
-   - token minting distribution, vesting/supply checks, migration ownership path
-   - CCA auction integration and graduation flow
-4. `src/LiquidMultiCurve.sol`
+3. `src/LiquidInstant.sol` and `src/LiquidMultiCurve.sol`
    - curve parameter math and overflow safety
    - position creation/unwind consistency after callbacks
    - swap/initialize/remove-liquidity callback reentrancy and ordering
-5. `src/LiquidRouter.sol`
+4. `src/LiquidRouter.sol`
    - route entry/exit handling for direct swap/buy/sell paths and route policy
    - module pointer safety (`setFeeDistributor`, `setLiquidRegistry`)
    - fallback/revert behavior when distribution module reverts unexpectedly
    - token rescue and ETH rescue governance boundary
-6. `src/FeeDistributor.sol`
+5. `src/FeeDistributor.sol`
    - immutable protocol recipient and bootstrap guardrails
    - runtime split boundary checks (`setBeneficiaryShareBPS`) and their safety checks
    - beneficiary resolution via `setBeneficiaryRegistry` (points to `LiquidRegistry` address)
    - beneficiary/rule splitting, rounding, fallback transfer behavior
    - zero-value and misrouting transfer outcomes
    - RARE→ETH conversion path and price staleness checks
-7. `src/LiquidRegistry.sol`
+6. `src/LiquidRegistry.sol`
    - writer allowlist controls and ownership separation
    - mapping mutation safety and zero-address handling
    - dependency on module wiring in router
+7. `src/LiquidMigrationExecutor.sol`
+   - owner-only gate for migration execution and pause/kill-switch behavior
+   - validate migration calldata parsing and path integrity
+   - verify call forwarding/revert behavior cannot brick active modules
+   - confirm module/token transfer safety during migration handoffs
 
 ## 9) Minimal Testable Fixes to Prepare
 1. Add explicit invariants and negative tests for:

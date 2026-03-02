@@ -79,7 +79,6 @@ contract LiquidGraduatedMainnetForkTest is Test {
     NetworkConfig.Config internal config;
     address admin = makeAddr("admin");
     address creator = makeAddr("creator");
-    address migrator = makeAddr("migrator");
 
     LiquidFactory public factory;
     LiquidGraduated public implementation;
@@ -98,7 +97,6 @@ contract LiquidGraduatedMainnetForkTest is Test {
 
         rare = new MockRARE();
         rare.mint(creator, 1000 ether);
-        rare.mint(migrator, 1000 ether);
 
         mockCcaFactory = new MockCCAFactoryFork(address(rare));
 
@@ -144,7 +142,6 @@ contract LiquidGraduatedMainnetForkTest is Test {
             "https://example.com/1",
             "Fork Grad",
             "FGRAD",
-            migrator,
             AUCTION_SUPPLY,
             abi.encode(params),
             bytes32(0)

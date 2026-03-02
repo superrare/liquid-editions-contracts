@@ -3,9 +3,7 @@ pragma solidity ^0.8.0;
 
 import {console} from "forge-std/console.sol";
 import {LiquidAuctioneer} from "liquid-editions/LiquidAuctioneer.sol";
-import {IFeeDistributor} from "liquid-editions/interfaces/IFeeDistributor.sol";
 import {ILiquidRegistry} from "liquid-editions/interfaces/ILiquidRegistry.sol";
-import {FeeDistributor} from "liquid-editions/FeeDistributor.sol";
 import {LiquidRegistry} from "liquid-editions/LiquidRegistry.sol";
 import {DeployConfig} from "../config/DeployConfig.sol";
 import {NetworkConfig} from "../config/NetworkConfig.sol";
@@ -50,24 +48,16 @@ library DeployLiquidAuctioneer {
         require(baseToken != address(0), "Base token (RARE) cannot be zero");
         require(weth != address(0), "WETH cannot be zero");
 
-        FeeDistributor feeDistributor = new FeeDistributor(
-            owner,
-            address(0), // poolManager: not used for legacy auctioneer fee distribution
-            address(0), // rareToken: not used for legacy auctioneer fee distribution
-            protocolFeeRecipient,
-            5000,       // 50% beneficiary share (legacy default)
-            400         // 4% total fee
-        );
         LiquidRegistry liquidRegistry = new LiquidRegistry(owner);
-        feeDistributor.setBeneficiaryRegistry(address(liquidRegistry));
 
         LiquidAuctioneer auctioneerContract = new LiquidAuctioneer(
             owner,
             universalRouter,
-            address(feeDistributor),
+            protocolFeeRecipient,
             address(liquidRegistry),
             baseToken,
-            weth
+            weth,
+            400 // 4% ETH fee for native ETH bids
         );
         auctioneer = address(auctioneerContract);
         if (!silent) {
@@ -77,20 +67,24 @@ library DeployLiquidAuctioneer {
         return auctioneer;
     }
 
-    /// @notice Deploy LiquidAuctioneer with pre-deployed fee modules
+    /// @notice Deploy LiquidAuctioneer with pre-deployed registry
     /// @param owner Owner address
+    /// @param protocolFeeRecipient Address to receive ETH fees from native ETH bids (use owner if address(0))
+    /// @param liquidRegistry LiquidRegistry module address
     /// @param universalRouter Uniswap Universal Router address
     /// @param baseToken RARE token address
-    /// @param weth wrapped native token
+    /// @param weth wrapped native token address
+    /// @param ethFeeBps Fee in basis points for native ETH bids (e.g. 400 = 4%). Use 0 for no fee.
     /// @param silent suppress logs
     /// @return auctioneer Address of deployed LiquidAuctioneer
     function deployWithModules(
         address owner,
-        IFeeDistributor feeDistributor,
+        address protocolFeeRecipient,
         ILiquidRegistry liquidRegistry,
         address universalRouter,
         address baseToken,
         address weth,
+        uint16 ethFeeBps,
         bool silent
     ) internal returns (address auctioneer) {
         if (!silent) {
@@ -104,10 +98,6 @@ library DeployLiquidAuctioneer {
         require(baseToken != address(0), "Base token (RARE) cannot be zero");
         require(weth != address(0), "WETH cannot be zero");
         require(
-            address(feeDistributor) != address(0),
-            "FeeDistributor address cannot be zero"
-        );
-        require(
             address(liquidRegistry) != address(0),
             "LiquidRegistry address cannot be zero"
         );
@@ -115,10 +105,11 @@ library DeployLiquidAuctioneer {
         LiquidAuctioneer auctioneerContract = new LiquidAuctioneer(
             owner,
             universalRouter,
-            address(feeDistributor),
+            protocolFeeRecipient != address(0) ? protocolFeeRecipient : owner,
             address(liquidRegistry),
             baseToken,
-            weth
+            weth,
+            ethFeeBps
         );
 
         auctioneer = address(auctioneerContract);

@@ -115,6 +115,19 @@ interface ILiquidFactory {
     ///      if create paths are invoked before it is configured.
     function liquidMultiCurveImplementation() external view returns (address);
 
+    /// @notice Returns the LiquidGraduated implementation used for CCA auction token creation.
+    /// @dev This implementation is required for createLiquidTokenWithAuction; `ImplementationNotSet` is thrown
+    ///      if invoked before it is configured.
+    function liquidGraduatedImplementation() external view returns (address);
+
+    /// @notice Returns the CCA (Continuous Clearing Auction) factory address.
+    /// @dev Required for createLiquidTokenWithAuction.
+    function ccaFactory() external view returns (address);
+
+    /// @notice Returns the LBP strategy factory (FullRangeLBPStrategyFactory) address.
+    /// @dev Required for createLiquidTokenWithAuction; deploys strategy per graduated token.
+    function lbpStrategyFactory() external view returns (address);
+
     /// @notice Returns the Uniswap V4 PoolManager address.
     /// @dev Required for pool bootstrap, liquidity ops, and router-owned fee policy enforcement.
     function poolManager() external view returns (address);
@@ -161,6 +174,18 @@ interface ILiquidFactory {
     /// @notice Unpause token creation in factory
     function unpause() external;
 
+    /// @notice Predicts the token address for a graduated token deployment.
+    /// @dev Use this to compute the token address before calling createLiquidTokenWithAuction.
+    ///      Enables off-chain salt mining for valid V4 hook addresses.
+    ///      The effective salt is keccak256(abi.encode(_deployer, _salt)) to prevent front-running.
+    /// @param _salt The user-supplied salt that will be used for deployment
+    /// @param _deployer The address that will call createLiquidTokenWithAuction (msg.sender)
+    /// @return The predicted token clone address
+    function predictGraduatedTokenAddress(
+        bytes32 _salt,
+        address _deployer
+    ) external view returns (address);
+
     /// @notice Creates a new Liquid token with two-sided AMM liquidity
     /// @param _creator The address of the token creator (receives fees and launch reward)
     /// @param _tokenUri The ERC20z token URI (metadata link)
@@ -194,13 +219,11 @@ interface ILiquidFactory {
     ) external returns (address token);
 
     /// @notice Creates a new token through auction migration setup.
-    /// @dev `_migrator` is intentionally retained only for API compatibility and is ignored.
-    ///      Migration is driven by auction config + strategy factory internals.
+    /// @dev Migration is driven by auction config + strategy factory internals.
     /// @param _creator The token creator address (launch beneficiary/authority)
     /// @param _tokenUri Token metadata URI
     /// @param _name Token name
     /// @param _symbol Token symbol
-    /// @param _migrator Compatibility-only address (kept for stable API, not used)
     /// @param _auctionSupply Amount of token to seed for auction distribution
     /// @param _auctionConfigData ABI-encoded auction config payload
     /// @param _salt Deterministic salt for token strategy and address prediction
@@ -211,7 +234,6 @@ interface ILiquidFactory {
         string memory _tokenUri,
         string memory _name,
         string memory _symbol,
-        address _migrator,
         uint256 _auctionSupply,
         bytes calldata _auctionConfigData,
         bytes32 _salt
@@ -220,4 +242,60 @@ interface ILiquidFactory {
     /// @notice Configure the registry used for automatic token registration
     /// @param _liquidRegistry Registry address
     function setLiquidRegistry(address _liquidRegistry) external;
+
+    /// @notice Sets the LiquidGraduated implementation (for CCA auction launches)
+    /// @param _implementation The implementation address
+    function setLiquidGraduatedImplementation(address _implementation) external;
+
+    /// @notice Sets the LiquidMultiCurve implementation (for multicurve anti-sniping launches)
+    /// @param _implementation The implementation address
+    function setLiquidMultiCurveImplementation(address _implementation) external;
+
+    /// @notice Sets the LiquidInstant implementation (for two-sided AMM launches)
+    /// @param _implementation The implementation address
+    function setLiquidInstantImplementation(address _implementation) external;
+
+    /// @notice Sets the CCA (Continuous Clearing Auction) factory address
+    /// @param _ccaFactory The CCA factory address
+    function setCcaFactory(address _ccaFactory) external;
+
+    /// @notice Sets the LBP strategy factory (canonical FullRangeLBPStrategy)
+    /// @param _lbpStrategyFactory The LBP strategy factory address
+    function setLbpStrategyFactory(address _lbpStrategyFactory) external;
+
+    /// @notice Sets the protocol fee recipient used by protocol/auction flows
+    /// @param _protocolFeeRecipient The protocol fee recipient address
+    function setProtocolFeeRecipient(address _protocolFeeRecipient) external;
+
+    /// @notice Sets the migration executor address
+    /// @param _migrationExecutor The migration executor address
+    function setMigrationExecutor(address _migrationExecutor) external;
+
+    /// @notice Sets the base token address (RARE)
+    /// @param _baseToken The base token address (RARE)
+    function setBaseToken(address _baseToken) external;
+
+    /// @notice Sets the Uniswap V4 PoolManager address
+    /// @param _poolManager The PoolManager address
+    function setPoolManager(address _poolManager) external;
+
+    /// @notice Sets the Uniswap V4 hooks address
+    /// @param _poolHooks The pool hooks address (address(0) if none)
+    function setPoolHooks(address _poolHooks) external;
+
+    /// @notice Sets the Uniswap V4 tick spacing
+    /// @param _poolTickSpacing The pool tick spacing
+    function setPoolTickSpacing(int24 _poolTickSpacing) external;
+
+    /// @notice Sets the minimum RARE liquidity for optional head position
+    /// @param _minRareLiquidityWei Minimum RARE tokens (in wei) for head position (0 = no RARE required)
+    function setMinRareLiquidityWei(uint256 _minRareLiquidityWei) external;
+
+    /// @notice Sets the LP tick lower bound
+    /// @param _lower Lower tick for LP positions
+    function setLpTickLower(int24 _lower) external;
+
+    /// @notice Sets the LP tick upper bound
+    /// @param _upper Upper tick for LP positions
+    function setLpTickUpper(int24 _upper) external;
 }

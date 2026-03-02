@@ -11,15 +11,17 @@ contract LiquidRegistryUnitTest is Test {
     address public owner = makeAddr("owner");
     address public writer = makeAddr("writer");
     address public user = makeAddr("user");
+    MockToken public tokenFixture;
 
     LiquidRegistry public registry;
 
     function setUp() public {
         registry = new LiquidRegistry(owner);
+        tokenFixture = new MockToken();
     }
 
     function testOwnerCanSetBeneficiary() public {
-        address token = makeAddr("token");
+        address token = address(tokenFixture);
         address beneficiary = makeAddr("beneficiary");
 
         vm.prank(owner);
@@ -29,7 +31,7 @@ contract LiquidRegistryUnitTest is Test {
     }
 
     function testOnlyOwnerCanSetBeneficiary() public {
-        address token = makeAddr("token");
+        address token = address(tokenFixture);
         address beneficiary = makeAddr("beneficiary");
 
         vm.prank(user);
@@ -38,7 +40,7 @@ contract LiquidRegistryUnitTest is Test {
     }
 
     function testWriterCanSetBeneficiaryAfterPermissioned() public {
-        address token = makeAddr("token");
+        address token = address(tokenFixture);
         address beneficiary = makeAddr("beneficiary");
 
         vm.prank(owner);
@@ -51,7 +53,7 @@ contract LiquidRegistryUnitTest is Test {
     }
 
     function testWriterCanBeRemovedFromRegistry() public {
-        address token = makeAddr("token");
+        address token = address(tokenFixture);
         address beneficiary = makeAddr("beneficiary");
 
         vm.prank(owner);
@@ -68,7 +70,7 @@ contract LiquidRegistryUnitTest is Test {
     }
 
     function testWriterCanReassignBeneficiary() public {
-        address token = makeAddr("token");
+        address token = address(tokenFixture);
         address firstBeneficiary = makeAddr("firstBeneficiary");
         address secondBeneficiary = makeAddr("secondBeneficiary");
 
@@ -93,7 +95,7 @@ contract LiquidRegistryUnitTest is Test {
     }
 
     function testOnlyOwnerCanRemoveBeneficiary() public {
-        address token = makeAddr("token");
+        address token = address(tokenFixture);
         address beneficiary = makeAddr("beneficiary");
 
         vm.prank(owner);
@@ -113,7 +115,7 @@ contract LiquidRegistryUnitTest is Test {
     // ============================================
 
     function testSetBeneficiary_EmitsBeneficiarySet() public {
-        address token = makeAddr("eventToken");
+        address token = address(tokenFixture);
         address beneficiary = makeAddr("eventBeneficiary");
 
         vm.expectEmit(true, true, true, false);
@@ -124,7 +126,7 @@ contract LiquidRegistryUnitTest is Test {
     }
 
     function testSetBeneficiary_ByWriter_EmitsBeneficiarySet_WithWriterAsActor() public {
-        address token = makeAddr("writerEventToken");
+        address token = address(tokenFixture);
         address beneficiary = makeAddr("writerEventBeneficiary");
 
         vm.prank(owner);
@@ -138,7 +140,7 @@ contract LiquidRegistryUnitTest is Test {
     }
 
     function testRemoveBeneficiary_EmitsBeneficiaryRemoved() public {
-        address token = makeAddr("removeEventToken");
+        address token = address(tokenFixture);
         address beneficiary = makeAddr("removeEventBeneficiary");
 
         vm.prank(owner);
@@ -175,7 +177,7 @@ contract LiquidRegistryUnitTest is Test {
     // ============================================
 
     function testIsRegistered_FalseAfterRemoval() public {
-        address token = makeAddr("regToken");
+        address token = address(tokenFixture);
         address beneficiary = makeAddr("regBen");
 
         vm.prank(owner);
@@ -213,7 +215,7 @@ contract LiquidRegistryUnitTest is Test {
     function testSetBeneficiary_RevertsOnZeroBeneficiary() public {
         vm.prank(owner);
         vm.expectRevert(ILiquidRegistry.ZeroAddress.selector);
-        registry.setBeneficiary(makeAddr("tok"), address(0));
+        registry.setBeneficiary(address(tokenFixture), address(0));
     }
 
     function testRemoveBeneficiary_RevertsOnZeroToken() public {
@@ -240,7 +242,7 @@ contract LiquidRegistryUnitTest is Test {
     // ============================================
 
     function testSetBeneficiary_Idempotent() public {
-        address token = makeAddr("idempotentToken");
+        address token = address(tokenFixture);
         address beneficiary = makeAddr("idempotentBen");
 
         vm.prank(owner);
@@ -254,7 +256,7 @@ contract LiquidRegistryUnitTest is Test {
     }
 
     function testRemoveBeneficiary_NonExistent_Succeeds() public {
-        address token = makeAddr("nonExistentToken");
+        address token = address(tokenFixture);
         // Removing a token that was never set should not revert
         vm.prank(owner);
         registry.removeBeneficiary(token);
@@ -267,11 +269,10 @@ contract LiquidRegistryUnitTest is Test {
     // ============================================
 
     function testFuzz_BeneficiaryOf_IsRegistered_Consistent(
-        address token,
         address beneficiary
     ) public {
-        vm.assume(token != address(0));
         vm.assume(beneficiary != address(0));
+        address token = address(tokenFixture);
 
         vm.prank(owner);
         registry.setBeneficiary(token, beneficiary);
@@ -281,11 +282,10 @@ contract LiquidRegistryUnitTest is Test {
     }
 
     function testFuzz_AfterRemoval_NotRegistered(
-        address token,
         address beneficiary
     ) public {
-        vm.assume(token != address(0));
         vm.assume(beneficiary != address(0));
+        address token = address(tokenFixture);
 
         vm.prank(owner);
         registry.setBeneficiary(token, beneficiary);
@@ -298,11 +298,10 @@ contract LiquidRegistryUnitTest is Test {
     }
 
     function testFuzz_WriterSetBeneficiary_Succeeds(
-        address token,
         address beneficiary
     ) public {
-        vm.assume(token != address(0));
         vm.assume(beneficiary != address(0));
+        address token = address(tokenFixture);
 
         vm.prank(owner);
         registry.setWriter(writer, true);
@@ -313,3 +312,5 @@ contract LiquidRegistryUnitTest is Test {
         assertEq(registry.beneficiaryOf(token), beneficiary, "writer should be able to set beneficiary");
     }
 }
+
+contract MockToken {}

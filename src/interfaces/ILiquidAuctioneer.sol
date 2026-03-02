@@ -62,10 +62,10 @@ interface ILiquidAuctioneer {
         address indexed newUniversalRouter
     );
 
-    /// @notice Emitted when the fee distributor pointer is updated
-    event FeeDistributorUpdated(
-        address indexed oldFeeDistributor,
-        address indexed newFeeDistributor
+    /// @notice Emitted when the protocol fee recipient is updated
+    event ProtocolFeeRecipientUpdated(
+        address indexed oldRecipient,
+        address indexed newRecipient
     );
 
     /// @notice Emitted when the liquid registry pointer is updated
@@ -120,9 +120,13 @@ interface ILiquidAuctioneer {
     /// @param _universalRouter New Universal Router address
     function setUniversalRouter(address _universalRouter) external;
 
-    /// @notice Update the fee distributor module
-    /// @param _feeDistributor New fee distributor contract
-    function setFeeDistributor(address _feeDistributor) external;
+    /// @notice Update the protocol fee recipient (receives ETH fees from native ETH bids)
+    /// @param _recipient New protocol fee recipient address
+    function setProtocolFeeRecipient(address _recipient) external;
+
+    /// @notice Update ETH fee in basis points for native ETH bids (0 = no fee)
+    /// @param _bps Fee in basis points (max 10000)
+    function setEthFeeBps(uint16 _bps) external;
 
     /// @notice Update the liquid registry module
     /// @param _liquidRegistry New liquid registry contract
@@ -180,8 +184,11 @@ interface ILiquidAuctioneer {
     /// @param beneficiary The beneficiary address
     function setBeneficiary(address token, address beneficiary) external;
 
-    /// @notice Get active fee distributor
-    function feeDistributor() external view returns (address);
+    /// @notice Get protocol fee recipient (receives ETH fees from native ETH bids)
+    function protocolFeeRecipient() external view returns (address);
+
+    /// @notice Get ETH fee in basis points for native ETH bids
+    function ethFeeBps() external view returns (uint16);
 
     /// @notice Get active liquid registry
     function liquidRegistry() external view returns (address);
