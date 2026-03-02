@@ -135,7 +135,7 @@ chmod +x setup.sh
 This will:
 1. Install Foundry (if not already installed)
 2. Initialize all git submodules recursively
-3. Install non-submodule dependencies required by remappings
+3. Verify required dependency submodules are present
 4. Build all contracts
 
 ### Manual Setup
@@ -152,16 +152,33 @@ cd liquid-edition-contracts
 # If you already cloned without --recurse-submodules
 git submodule update --init --recursive
 
-# Install non-submodule dependencies
-forge install --no-git OpenZeppelin/openzeppelin-contracts
-forge install --no-git OpenZeppelin/openzeppelin-contracts-upgradeable
-forge install --no-git foundry-rs/forge-std
-forge install --no-git Uniswap/v4-core@rev=e50237c43811bd9b526eff40f26772152a42daba
-forge install --no-git Uniswap/v4-periphery@rev=3779387e5d296f39df543d23524b050f89a62917
-forge install --no-git Uniswap/continuous-clearing-auction
-
 # Build contracts
 forge build
+```
+
+### Maintainer Dependency Bootstrap
+
+Use this once when normalizing dependency tracking so `lib/*` entries are committed as submodules:
+
+```bash
+# Remove non-submodule dependency folders and stale module metadata
+rm -rf lib/forge-std lib/openzeppelin-contracts lib/openzeppelin-contracts-upgradeable lib/continuous-clearing-auction lib/v4-core lib/v4-periphery
+rm -rf .git/modules/lib/forge-std .git/modules/lib/openzeppelin-contracts .git/modules/lib/openzeppelin-contracts-upgradeable .git/modules/lib/continuous-clearing-auction .git/modules/lib/v4-core .git/modules/lib/v4-periphery
+
+# Re-add as forge-managed git submodules
+git submodule add --force https://github.com/foundry-rs/forge-std lib/forge-std
+git submodule add --force https://github.com/OpenZeppelin/openzeppelin-contracts lib/openzeppelin-contracts
+git submodule add --force https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable lib/openzeppelin-contracts-upgradeable
+git submodule add --force https://github.com/Uniswap/continuous-clearing-auction lib/continuous-clearing-auction
+git submodule add --force https://github.com/Uniswap/v4-core lib/v4-core
+git submodule add --force https://github.com/Uniswap/v4-periphery lib/v4-periphery
+
+# Pin Uniswap revisions expected by this repo
+git -C lib/v4-core checkout e50237c43811bd9b526eff40f26772152a42daba
+git -C lib/v4-periphery checkout 3779387e5d296f39df543d23524b050f89a62917
+
+# Persist submodule pointers
+git add .gitmodules lib/forge-std lib/openzeppelin-contracts lib/openzeppelin-contracts-upgradeable lib/continuous-clearing-auction lib/v4-core lib/v4-periphery
 ```
 
 ## Configuration

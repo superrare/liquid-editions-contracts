@@ -5,7 +5,14 @@
 /deployments
 
 # Dependencies
-/lib
+/lib/*
+!/lib/doppler
+!/lib/v4-core
+!/lib/v4-periphery
+!/lib/forge-std
+!/lib/openzeppelin-contracts
+!/lib/openzeppelin-contracts-upgradeable
+!/lib/continuous-clearing-auction
 
 # Environment variables
 .env
