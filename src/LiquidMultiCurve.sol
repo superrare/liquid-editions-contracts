@@ -231,6 +231,8 @@ contract LiquidMultiCurve is
     /// @param newSqrtPriceX96 The starting price for the new pool
     /// @param newPositions The liquidity positions to create in the new pool
     /// @param dustRecipient Address to receive any dust from rounding differences
+    /// @param maxDust0 Maximum allowed positive net delta for currency0 during migration settlement
+    /// @param maxDust1 Maximum allowed positive net delta for currency1 during migration settlement
     function migrateLiquidity(
         PoolKey calldata newPoolKey,
         uint160 newSqrtPriceX96,

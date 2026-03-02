@@ -5,17 +5,16 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ILiquidRegistry} from "liquid-editions/interfaces/ILiquidRegistry.sol";
 
 /// @title LiquidRegistry
-/// @notice Centralized registry of valid Liquid tokens and their beneficiaries with registration gating.
-/// @dev This registry serves as the gatekeeper for LiquidRouter and LiquidAuctioneer trading.
-///      Only tokens registered here (via factory or admin) can be traded through the router and auctioneer,
-///      preventing untrusted contracts from being used. This provides security by ensuring only legitimate
-///      Liquid tokens (created via LiquidFactory) are tradeable.
+/// @notice Centralized registry of Liquid tokens and their beneficiary mappings.
+/// @dev This registry is the canonical source for token registration and beneficiary resolution.
+///      LiquidAuctioneer gates bids on isRegistered(). LiquidRouter checks isRegistered() for Liquid
+///      tokens and also allows explicitly owner-whitelisted currency endpoints (for route inputs/outputs).
 ///
 ///      **Key Features:**
 ///      - Token registration requirement (isRegistered() check)
 ///      - Writer-based access control (factory can register tokens automatically)
 ///      - Beneficiary mapping (token address → beneficiary address)
-///      - Registration gating (Router/Auctioneer check isRegistered() before allowing trades)
+///      - Registration gating for auction tokens and Liquid-token router flows
 ///
 ///      **Relationship to beneficiary mapping patterns:**
 ///      - LiquidRegistry combines beneficiary resolution with token registration requirements
@@ -23,7 +22,7 @@ import {ILiquidRegistry} from "liquid-editions/interfaces/ILiquidRegistry.sol";
 ///      - The registry enforces trading security checks at the protocol level.
 ///
 ///      **Registration Requirements:**
-///      - LiquidRouter.buy()/sell()/swap() check isRegistered() before executing trades
+///      - LiquidRouter checks isRegistered() for Liquid tokens and allows owner-whitelisted currency tokens
 ///      - LiquidAuctioneer.bid() checks isRegistered() before accepting bids
 ///      - Only registered tokens can receive fee distributions (beneficiary must be set)
 ///      - Factory automatically registers tokens during creation via setBeneficiary()
@@ -32,6 +31,7 @@ contract LiquidRegistry is ILiquidRegistry, Ownable {
     mapping(address => address) private beneficiaries;
     mapping(address => bool) public isWriter;
 
+    /// @param _owner Initial owner for registry admin and writer management.
     constructor(address _owner) Ownable(_owner) {}
 
     modifier onlyWriterOrOwner() {
@@ -77,7 +77,7 @@ contract LiquidRegistry is ILiquidRegistry, Ownable {
     /// @notice Sets the beneficiary for a token (writer or owner only)
     /// @dev Registers token if not already registered, or updates beneficiary if already registered.
     ///      Setting beneficiary to non-zero effectively registers the token.
-    /// @param token The token address (must not be address(0))
+    /// @param token The token contract address (must be non-zero and have code)
     /// @param beneficiary The beneficiary address (must not be address(0))
     function setBeneficiary(
         address token,

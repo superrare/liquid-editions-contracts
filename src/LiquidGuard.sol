@@ -137,6 +137,12 @@ contract LiquidGuard is IHooks, Ownable, ILiquidGuard {
     // HOOK CALLBACKS
     // ============================================
 
+    /// @notice Notifies the fee distributor about a collected RARE fee.
+    /// @dev This helper must not block swaps. Distributor failures are swallowed and emitted as
+    ///      FeeNotifyFailed so hook accounting can continue.
+    /// @param distributor FeeDistributor contract to notify.
+    /// @param liquidToken Liquid token paired with RARE in the pool.
+    /// @param rareAmount RARE fee amount collected for this swap.
     function _notifyFee(
         address distributor,
         address liquidToken,

@@ -319,6 +319,8 @@ contract LiquidInstant is
     /// @param newSqrtPriceX96 The starting price for the new pool
     /// @param newPositions The liquidity positions to create in the new pool (must be exactly 1 for Instant)
     /// @param dustRecipient Address to receive any dust from rounding differences
+    /// @param maxDust0 Maximum allowed positive net delta for currency0 during migration settlement
+    /// @param maxDust1 Maximum allowed positive net delta for currency1 during migration settlement
     function migrateLiquidity(
         PoolKey calldata newPoolKey,
         uint160 newSqrtPriceX96,
@@ -353,19 +355,9 @@ contract LiquidInstant is
     }
 
     // ============================================
-    // QUOTE HELPERS (STATIC CALL ONLY - NOT VIEW)
+    // MARKET STATE & QUOTE HELPERS
     // ============================================
 
-    /**
-     * @notice Returns the current raw pool price (no fees) in both directions
-     * @dev Reads directly from Uniswap V4 pool slot0. Returns WEI values scaled to 1e18.
-     *      sqrtPriceX96 represents sqrt(token1/token0) * 2^96.
-     *      Converts to actual price ratios and returns both directions.
-     *      Uses FullMath.mulDiv to prevent overflow on extreme prices.
-     *      Price is in RARE (base token), not ETH. Use client-side quoter for ETH prices.
-     * @return rarePerToken WEI of RARE per 1e18 tokens
-     * @return tokenPerRare WEI of tokens per 1e18 RARE
-     */
     /// @inheritdoc ILiquidBase
     function getLaunchState()
         external
@@ -391,6 +383,7 @@ contract LiquidInstant is
         return StateLibrary.getLiquidity(IPoolManager(poolManager), poolId);
     }
 
+    /// @inheritdoc ILiquid
     function getCurrentPrice()
         external
         view
@@ -699,7 +692,7 @@ contract LiquidInstant is
     ///      which simulates the swap and reverts with QuoteResult containing the output.
     ///      This pattern allows gas-free simulation via eth_call while still executing V4 swap logic.
     ///      If the callback completes without reverting (unexpected), throws QuoteSimulationDidNotRevert.
-    /// @param rareAmount Amount of RARE to simulate swapping (after fees)
+    /// @param rareAmount Amount of RARE to simulate swapping
     /// @return amountOut Expected LIQUID tokens output from the swap
     /// @return sqrtPriceAfter Post-swap sqrt price
     function _simulateQuoteBuy(
@@ -730,7 +723,7 @@ contract LiquidInstant is
     ///      This pattern allows gas-free simulation via eth_call while still executing V4 swap logic.
     ///      If the callback completes without reverting (unexpected), throws QuoteSimulationDidNotRevert.
     /// @param tokenAmount Amount of LIQUID tokens to simulate swapping
-    /// @return amountOut Expected RARE output from the swap (before fees)
+    /// @return amountOut Expected RARE output from the swap
     /// @return sqrtPriceAfter Post-swap sqrt price
     function _simulateQuoteSell(
         uint256 tokenAmount

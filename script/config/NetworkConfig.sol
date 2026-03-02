@@ -147,15 +147,15 @@ library NetworkConfig {
                     lbpStrategyFactory: 0x89Dd5691e53Ea95d19ED2AbdEdCf4cBbE50da1ff,
                     protocolFeeRecipient: 0xBa68422A154e459f7b4992a95Ad358d412b6bd1d,
                     liquid: LiquidAddresses({
-                        factory: 0x074598D92570915940aFC6662E9268FAa21533E4,
-                        router: 0x5428da796D33dFb99d1E2EFB095028302edFA636,
-                        auctioneer: 0x67a5b1Bc2c4834206dA31844C172572F05099D87,
-                        swapGuard: 0x69E682bde73c1906CCcE0B0aA0587D63B4C4E080,
+                        factory: 0xAe2fD22cf7341548ca104EeCf3E57A03e53a374a,
+                        router: 0x3F99F1749D09534819DF15Fb10D58A9ef1a42d7D,
+                        auctioneer: 0xB812CA7c06Cb0A8f33FceCE9992da1bE6773f689,
+                        swapGuard: address(0),
                         initGuard: address(0),
-                        liquidGuard: 0x36F5Ab31b001c8F2AC5eE76Ccf5AfE887503a0Cc,
-                        feeDistributor: 0x93e73F99f37b8a195D5E318cc7Bcb1B3a08bDe96,
-                        liquidRegistry: 0xD395973ebb3AEB36d18d376312046d2A8d8D8926,
-                        migrationExecutor: address(0) // not yet deployed
+                        liquidGuard: 0xC55bB402E0f3594fa82871efe96726FfEE2FE0CC,
+                        feeDistributor: 0x45DC8a7F9fB74ac83FC02d48B2168F8525d53EF1,
+                        liquidRegistry: 0x1B79e730E1Fcd26c851C093158FF02f99310ef5e,
+                        migrationExecutor: 0x73aCd13D5603bCc598A19E13079b64CDFdC479BE
                     })
                 });
         }
