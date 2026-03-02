@@ -134,8 +134,9 @@ chmod +x setup.sh
 
 This will:
 1. Install Foundry (if not already installed)
-2. Install OpenZeppelin and Forge-std dependencies
-3. Build all contracts
+2. Initialize all git submodules recursively
+3. Install non-submodule dependencies required by remappings
+4. Build all contracts
 
 ### Manual Setup
 
@@ -145,14 +146,19 @@ curl -L https://foundry.paradigm.xyz | bash
 foundryup
 
 # Clone the repository
-git clone <repository-url>
+git clone --recurse-submodules <repository-url>
 cd liquid-edition-contracts
 
-# Install dependencies
-forge install OpenZeppelin/openzeppelin-contracts
-forge install OpenZeppelin/openzeppelin-contracts-upgradeable
-forge install foundry-rs/forge-std
-forge install Uniswap/v4-core
+# If you already cloned without --recurse-submodules
+git submodule update --init --recursive
+
+# Install non-submodule dependencies
+forge install --no-git OpenZeppelin/openzeppelin-contracts
+forge install --no-git OpenZeppelin/openzeppelin-contracts-upgradeable
+forge install --no-git foundry-rs/forge-std
+forge install --no-git Uniswap/v4-core@rev=e50237c43811bd9b526eff40f26772152a42daba
+forge install --no-git Uniswap/v4-periphery@rev=3779387e5d296f39df543d23524b050f89a62917
+forge install --no-git Uniswap/continuous-clearing-auction
 
 # Build contracts
 forge build
