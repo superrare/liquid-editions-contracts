@@ -84,6 +84,9 @@ library DeployLiquidFactory {
             result.graduatedImplementation,
             network.rareToken
         );
+
+        // Apply supply params if they differ from the hardcoded storage defaults
+        configureSupplyParams(result.factory, config);
     }
 
     function _deployFactory(
@@ -142,6 +145,30 @@ library DeployLiquidFactory {
             factoryContract.setBaseToken(rareToken);
             console.log("Base token set to:");
             console.logAddress(rareToken);
+        }
+    }
+
+    function configureSupplyParams(
+        address factory,
+        DeployConfig.FactoryConfig memory config
+    ) internal {
+        LiquidFactory factoryContract = LiquidFactory(factory);
+
+        uint256 defaultMaxSupply = 1_000_000e18;
+        uint256 defaultCreatorReward = 100_000e18;
+
+        if (config.maxTotalSupplyWei != 0 && config.maxTotalSupplyWei != defaultMaxSupply) {
+            console.log("Setting maxTotalSupply...");
+            console.logUint(config.maxTotalSupplyWei);
+            factoryContract.setMaxTotalSupply(config.maxTotalSupplyWei);
+        }
+
+        // creatorLaunchReward: call setter when explicitly configured and differs from default.
+        // Zero is a valid value (no carve-out), so we check against the default 100K.
+        if (config.creatorLaunchRewardWei != defaultCreatorReward) {
+            console.log("Setting creatorLaunchReward...");
+            console.logUint(config.creatorLaunchRewardWei);
+            factoryContract.setCreatorLaunchReward(config.creatorLaunchRewardWei);
         }
     }
 }

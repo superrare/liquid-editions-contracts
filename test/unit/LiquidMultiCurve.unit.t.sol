@@ -115,21 +115,22 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
         assertEq(token.lpLiquidity(), 0);
     }
 
-    function test_Initialize_Revert_InsufficientRare() public {
+    function test_Initialize_Success_WithZeroOptionalRare() public {
         Curve[] memory curves = _defaultCurves();
 
         vm.startPrank(creator);
-        baseToken.approve(address(factory), MIN_RARE - 1);
-        vm.expectRevert(ILiquidFactory.InvalidAmount.selector);
-        factory.createLiquidTokenMultiCurve(
+        address tokenAddr = factory.createLiquidTokenMultiCurve(
             creator,
             "ipfs://test",
             "Test",
             "TMC",
-            MIN_RARE - 1,
+            0,
             curves
         );
         vm.stopPrank();
+        assertTrue(tokenAddr != address(0));
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
+        assertEq(token.tokenCreator(), creator);
     }
 
     function test_Initialize_Revert_ZeroCurves() public {
@@ -403,7 +404,7 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
 
     function test_MaxTotalSupply_IsExpected() public {
         LiquidMultiCurve token = _deployToken();
-        assertEq(token.MAX_TOTAL_SUPPLY(), 1_000_000e18, "MAX_TOTAL_SUPPLY should be 1 million tokens");
+        assertEq(token.maxTotalSupply(), 1_000_000e18, "MAX_TOTAL_SUPPLY should be 1 million tokens");
     }
 
     function test_CreatorLaunchReward_IsDistributedOnInit() public {

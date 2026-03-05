@@ -23,6 +23,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
 import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
+import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
 
 contract LiquidFactoryTest is Test, InitGuardTestHelper {
     // Test accounts
@@ -38,6 +39,7 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
     // Contract instances
     RAREBurner public burner;
     LiquidMultiCurve public liquidImplementation;
+    LiquidInstant public instantImplementation;
     LiquidFactory public factory;
     MockRARE public mockRARE;
 
@@ -89,6 +91,7 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             false // disabled initially
         );
         liquidImplementation = new LiquidMultiCurve();
+        instantImplementation = new LiquidInstant();
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         factory = new LiquidFactory(
             admin,
@@ -106,6 +109,7 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
 
         // Set the implementation in the factory
         factory.setLiquidMultiCurveImplementation(address(liquidImplementation));
+        factory.setLiquidInstantImplementation(address(instantImplementation));
 
         // Set base token (RARE) in factory
         factory.setBaseToken(address(mockRARE));
@@ -345,19 +349,17 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
     /// @dev Verifies InvalidAmount() error when RARE amount < minRareLiquidityWei
     function test_RevertWhen_CreateTokenBelowMinInitialLiquidity() public {
         uint256 minInitialLiquidity = factory.minRareLiquidityWei();
-        Curve[] memory curves = _defaultSingleCurve(factory);
 
         // Try to create token with RARE below minimum
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), minInitialLiquidity - 1);
         vm.expectRevert(ILiquidFactory.InvalidAmount.selector);
-        factory.createLiquidTokenMultiCurve(
+        factory.createLiquidTokenInstant(
             tokenCreator,
             "ipfs://test",
             "Test",
             "TEST",
-            minInitialLiquidity - 1,
-            curves
+            minInitialLiquidity - 1
         );
         vm.stopPrank();
     }
@@ -370,13 +372,12 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
         // Create token with exact minimum
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), minInitialLiquidity);
-        address newToken = factory.createLiquidTokenMultiCurve(
+        address newToken = factory.createLiquidTokenInstant(
             tokenCreator,
             "ipfs://exact-min",
             "ExactMin",
             "EMIN",
-            minInitialLiquidity,
-            _defaultSingleCurve(factory)
+            minInitialLiquidity
         );
         vm.stopPrank();
 
@@ -385,7 +386,7 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
             newToken != address(0),
             "Token should be created at exact minimum"
         );
-        LiquidMultiCurve liquidToken = LiquidMultiCurve(payable(newToken));
+        ILiquid liquidToken = ILiquid(newToken);
         assertEq(
             liquidToken.balanceOf(tokenCreator),
             100_000e18,

@@ -208,9 +208,14 @@ interface ILiquid is IERC20Metadata {
     /// @return The PoolId for this token's pool (bytes32(0) if not yet initialized)
     function poolId() external view returns (PoolId);
 
-    /// @notice Returns the maximum total supply of tokens
-    /// @return The maximum total supply (1,000,000 tokens)
-    function MAX_TOTAL_SUPPLY() external view returns (uint256);
+    /// @notice Returns the maximum total supply minted at launch for this token
+    function maxTotalSupply() external view returns (uint256);
+
+    /// @notice Returns the tokens allocated to the pool at launch (maxTotalSupply - creatorLaunchReward)
+    function poolLaunchSupply() external view returns (uint256);
+
+    /// @notice Returns the tokens sent to the creator at launch (may be zero)
+    function creatorLaunchReward() external view returns (uint256);
 
     /// @notice Returns the lower tick bound for LP position
     /// @return The lower tick bound

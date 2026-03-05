@@ -89,6 +89,12 @@ interface ILiquidFactory {
     /// @notice Emitted when minimum RARE liquidity requirement is updated
     event MinRareLiquidityWeiUpdated(uint256 minRareLiquidityWei);
 
+    /// @notice Emitted when the max total supply for new tokens is updated
+    event MaxTotalSupplyUpdated(uint256 maxTotalSupply);
+
+    /// @notice Emitted when the creator launch reward for new tokens is updated
+    event CreatorLaunchRewardUpdated(uint256 creatorLaunchReward);
+
     /// @notice Emitted when LP tick lower is updated
     /// @param lpTickLower The requested lower tick (validated to be multiple of tickSpacing)
     event LpTickLowerUpdated(int24 lpTickLower);
@@ -148,9 +154,16 @@ interface ILiquidFactory {
     /// @dev New multicurve tokens must pass pool-hook validation before first launch through this hook.
     function poolHooks() external view returns (address);
 
-    /// @notice Returns the minimum RARE liquidity required for launch-time pool setup.
-    /// @dev Applied when creating multicurve launches via `createLiquidTokenMultiCurve`.
+    /// @notice Returns the minimum RARE liquidity required for instant pool setup.
+    /// @dev Applied when creating instant launches via `createLiquidTokenInstant`.
     function minRareLiquidityWei() external view returns (uint256);
+
+    /// @notice Returns the max total supply minted for each new token at launch.
+    function maxTotalSupply() external view returns (uint256);
+
+    /// @notice Returns the amount of tokens transferred to the creator at launch.
+    /// @dev May be zero (all tokens go to the pool).
+    function creatorLaunchReward() external view returns (uint256);
 
     /// @notice Returns the lower LP tick used for pool creation.
     /// @dev Interpreted relative to token ordering against `baseToken`; see implementation comments.
@@ -261,7 +274,9 @@ interface ILiquidFactory {
 
     /// @notice Sets the LiquidMultiCurve implementation (for multicurve anti-sniping launches)
     /// @param _implementation The implementation address
-    function setLiquidMultiCurveImplementation(address _implementation) external;
+    function setLiquidMultiCurveImplementation(
+        address _implementation
+    ) external;
 
     /// @notice Sets the LiquidInstant implementation (for two-sided AMM launches)
     /// @param _implementation The implementation address
@@ -299,9 +314,17 @@ interface ILiquidFactory {
     /// @param _poolTickSpacing The pool tick spacing
     function setPoolTickSpacing(int24 _poolTickSpacing) external;
 
-    /// @notice Sets the minimum RARE liquidity for optional head position
-    /// @param _minRareLiquidityWei Minimum RARE tokens (in wei) for head position (0 = no RARE required)
+    /// @notice Sets the minimum RARE liquidity required for instant launches
+    /// @param _minRareLiquidityWei Minimum RARE tokens (in wei) for instant launches (0 = no minimum)
     function setMinRareLiquidityWei(uint256 _minRareLiquidityWei) external;
+
+    /// @notice Sets the max total supply minted for each new token at launch
+    /// @param _supply New max total supply (must be > 0 and > current creatorLaunchReward)
+    function setMaxTotalSupply(uint256 _supply) external;
+
+    /// @notice Sets the creator launch reward for new tokens (tokens sent to creator at launch)
+    /// @param _reward New creator reward amount (0 is allowed; must be < maxTotalSupply)
+    function setCreatorLaunchReward(uint256 _reward) external;
 
     /// @notice Sets the LP tick lower bound
     /// @param _lower Lower tick for LP positions

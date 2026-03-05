@@ -196,7 +196,7 @@ contract LiquidMultiCurveDatasurfaceTest is Test, InitGuardTestHelper {
     }
 
     function test_IdenticalILiquidInterface() public view {
-        assertEq(instantToken.MAX_TOTAL_SUPPLY(), multiCurveToken.MAX_TOTAL_SUPPLY());
+        assertEq(instantToken.maxTotalSupply(), multiCurveToken.maxTotalSupply());
         assertEq(instantToken.totalSupply(), multiCurveToken.totalSupply());
         assertEq(instantToken.tokenCreator(), multiCurveToken.tokenCreator());
         assertEq(instantToken.baseToken(), multiCurveToken.baseToken());

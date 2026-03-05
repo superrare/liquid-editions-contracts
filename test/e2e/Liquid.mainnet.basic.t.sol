@@ -251,7 +251,7 @@ contract LiquidInstantMainnetBasicTest is Test, InitGuardTestHelper {
 
     function testConstants() public view {
         // Test that constants are set correctly
-        assertEq(liquid.MAX_TOTAL_SUPPLY(), 1_000_000e18);
+        assertEq(liquid.maxTotalSupply(), 1_000_000e18);
         // Note: Fee handling is now done in LiquidRouter, not stored in LiquidMultiCurve contracts
     }
 

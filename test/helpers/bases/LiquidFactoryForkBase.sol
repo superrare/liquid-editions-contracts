@@ -15,9 +15,9 @@ import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHel
 /// @notice Shared setup for fork tests: Factory + MockRARE + common accounts
 /// @dev Inheritors get factory, mockRARE, multiCurveImpl, and funded admin/tokenCreator/protocolFeeRecipient
 abstract contract LiquidFactoryForkBase is ForkTestBase, InitGuardTestHelper {
-    // Standard LP tick range
-    int24 constant LP_TICK_LOWER = -180;
-    int24 constant LP_TICK_UPPER = 120000;
+    // Full-range LP ticks (TickMath.MIN_TICK / MAX_TICK rounded to tickSpacing=60)
+    int24 constant LP_TICK_LOWER = -887220;
+    int24 constant LP_TICK_UPPER = 887220;
 
     address public admin;
     address public tokenCreator;

@@ -28,6 +28,10 @@ library DeployConfig {
         bool useLiquidGuard;
         int24 poolTickSpacing;
         uint256 minRareLiquidityWei;
+        /// @notice Total token supply minted for each new token at launch (default 1_000_000e18).
+        uint256 maxTotalSupplyWei;
+        /// @notice Tokens transferred to creator at launch (default 100_000e18; 0 = no carve-out).
+        uint256 creatorLaunchRewardWei;
     }
 
     /// @notice Default multicurve configuration (250 RARE anchor, ~$500K FDV ceiling)
@@ -98,16 +102,18 @@ library DeployConfig {
                 enabled: true
             }),
             factory: FactoryConfig({
-                lpTickLower: -180, // max expensive (after price rises) - multiple of 60
-                lpTickUpper: 120000, // starting point (cheap tokens, bonding curve bottom) - multiple of 60
+                lpTickLower: -887220, // Full range: TickMath.MIN_TICK rounded to tickSpacing=60 used in LiquidInstant
+                lpTickUpper: 887220, // Full range: TickMath.MAX_TICK rounded to tickSpacing=60 used in LiquidInstant
                 poolHooks: address(0), // ignored when useSwapGuard/useLiquidGuard is true (resolved from guard at deploy time)
                 useSwapGuard: false, // legacy: use LiquidSwapGuard (restricts swaps to LiquidRouter)
                 useLiquidGuard: true, // use LiquidGuard (hook-level fee skimming, no caller restrictions)
                 poolTickSpacing: 60, // Price granularity (ticks must be multiples of this). Common values: 1, 10, 60, 200
-                minRareLiquidityWei: 0 // No RARE required — bonding curve is funded by 900K LIQUID tokens, not creator RARE
+                minRareLiquidityWei: 0, // No RARE required — bonding curve is funded by LIQUID tokens, not creator RARE
+                maxTotalSupplyWei: 1_000_000e18, // 1M tokens minted per edition
+                creatorLaunchRewardWei: 100_000e18 // 100K tokens sent to creator at launch (10%)
             }),
             fees: FeeConfig({
-                totalFeeBPS: 400 // 4% gross fees
+                totalFeeBPS: 500 // 4% gross fees
             }),
             auctioneerRoutes: AuctioneerRoutesConfig({
                 ethToRare: AuctionRouteConfig({

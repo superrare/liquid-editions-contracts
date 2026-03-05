@@ -71,7 +71,7 @@ contract LiquidLensDemoV2 is ERC721, Ownable {
         ) = ILiquid(LIQUID_EDITION).getMarketState();
 
         uint256 maxTotalSupply = LiquidInstant(LIQUID_EDITION)
-            .MAX_TOTAL_SUPPLY();
+            .maxTotalSupply();
 
         DerivedMetrics memory metrics = _calculateDerivedMetrics(
             rarePerToken,

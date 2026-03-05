@@ -215,7 +215,7 @@ contract LiquidGraduatedUnitTest is Test {
 
     function test_MaxTotalSupply_IsExpected() public {
         _createGraduatedToken();
-        assertEq(graduated.MAX_TOTAL_SUPPLY(), 1_000_000e18, "MAX_TOTAL_SUPPLY should be 1 million tokens");
+        assertEq(graduated.maxTotalSupply(), 1_000_000e18, "MAX_TOTAL_SUPPLY should be 1 million tokens");
     }
 
     function test_CreatorLaunchReward_IsDistributedOnInit() public {

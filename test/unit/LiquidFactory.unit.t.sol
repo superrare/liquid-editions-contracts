@@ -367,6 +367,214 @@ contract LiquidFactoryUnitTest is Test {
         assertTrue(ILiquidGuard(address(validHook)).allowedInitializers(token));
     }
 
+    // ============================================
+    // setMaxTotalSupply / setCreatorLaunchReward
+    // ============================================
+
+    function test_DefaultSupplyParams() public view {
+        assertEq(factory.maxTotalSupply(), 1_000_000e18);
+        assertEq(factory.creatorLaunchReward(), 100_000e18);
+    }
+
+    function test_SetMaxTotalSupply_UpdatesValue() public {
+        vm.prank(admin);
+        factory.setMaxTotalSupply(2_000_000e18);
+        assertEq(factory.maxTotalSupply(), 2_000_000e18);
+    }
+
+    function test_SetMaxTotalSupply_EmitsEvent() public {
+        vm.prank(admin);
+        vm.expectEmit(false, false, false, true);
+        emit ILiquidFactory.MaxTotalSupplyUpdated(2_000_000e18);
+        factory.setMaxTotalSupply(2_000_000e18);
+    }
+
+    function test_SetCreatorLaunchReward_UpdatesValue() public {
+        vm.prank(admin);
+        factory.setCreatorLaunchReward(50_000e18);
+        assertEq(factory.creatorLaunchReward(), 50_000e18);
+    }
+
+    function test_SetCreatorLaunchReward_ZeroIsAllowed() public {
+        vm.prank(admin);
+        factory.setCreatorLaunchReward(0);
+        assertEq(factory.creatorLaunchReward(), 0);
+    }
+
+    function test_SetCreatorLaunchReward_EmitsEvent() public {
+        vm.prank(admin);
+        vm.expectEmit(false, false, false, true);
+        emit ILiquidFactory.CreatorLaunchRewardUpdated(50_000e18);
+        factory.setCreatorLaunchReward(50_000e18);
+    }
+
+    // --- Access control ---
+
+    function test_SetMaxTotalSupply_RevertsWhen_NotOwner() public {
+        vm.prank(user1);
+        vm.expectRevert();
+        factory.setMaxTotalSupply(2_000_000e18);
+    }
+
+    function test_SetCreatorLaunchReward_RevertsWhen_NotOwner() public {
+        vm.prank(user1);
+        vm.expectRevert();
+        factory.setCreatorLaunchReward(50_000e18);
+    }
+
+    // --- Invalid amount guards ---
+
+    function test_SetMaxTotalSupply_RevertsWhen_Zero() public {
+        vm.prank(admin);
+        vm.expectRevert(ILiquidFactory.InvalidAmount.selector);
+        factory.setMaxTotalSupply(0);
+    }
+
+    function test_SetMaxTotalSupply_RevertsWhen_EqualToCreatorReward() public {
+        // Read first — vm.expectRevert must immediately precede the reverting call
+        uint256 currentReward = factory.creatorLaunchReward();
+        vm.prank(admin);
+        vm.expectRevert(ILiquidFactory.InvalidAmount.selector);
+        factory.setMaxTotalSupply(currentReward);
+    }
+
+    function test_SetMaxTotalSupply_RevertsWhen_LessThanCreatorReward() public {
+        uint256 currentReward = factory.creatorLaunchReward();
+        vm.prank(admin);
+        vm.expectRevert(ILiquidFactory.InvalidAmount.selector);
+        factory.setMaxTotalSupply(currentReward - 1);
+    }
+
+    function test_SetCreatorLaunchReward_RevertsWhen_EqualToMaxTotalSupply() public {
+        uint256 currentMax = factory.maxTotalSupply();
+        vm.prank(admin);
+        vm.expectRevert(ILiquidFactory.InvalidAmount.selector);
+        factory.setCreatorLaunchReward(currentMax);
+    }
+
+    function test_SetCreatorLaunchReward_RevertsWhen_GreaterThanMaxTotalSupply() public {
+        uint256 currentMax = factory.maxTotalSupply();
+        vm.prank(admin);
+        vm.expectRevert(ILiquidFactory.InvalidAmount.selector);
+        factory.setCreatorLaunchReward(currentMax + 1);
+    }
+
+    // --- Cross-validation: setting one validates against the other ---
+
+    function test_SetMaxTotalSupply_RevertsWhen_WouldViolateCrossCheck() public {
+        // Set reward to 500K, then try to set supply to 400K (reward >= supply)
+        vm.prank(admin);
+        factory.setCreatorLaunchReward(500_000e18);
+
+        vm.prank(admin);
+        vm.expectRevert(ILiquidFactory.InvalidAmount.selector);
+        factory.setMaxTotalSupply(400_000e18);
+    }
+
+    function test_SetCreatorLaunchReward_RevertsWhen_WouldViolateCrossCheck() public {
+        // Set supply to 500K, then try to set reward to 500K (reward >= supply)
+        vm.prank(admin);
+        factory.setMaxTotalSupply(500_000e18);
+
+        vm.prank(admin);
+        vm.expectRevert(ILiquidFactory.InvalidAmount.selector);
+        factory.setCreatorLaunchReward(500_000e18);
+    }
+
+    // --- Token inherits factory values at launch ---
+
+    function test_LaunchedToken_InheritsSupplyParamsFromFactory() public {
+        vm.prank(admin);
+        factory.setMaxTotalSupply(2_000_000e18);
+        vm.prank(admin);
+        factory.setCreatorLaunchReward(200_000e18);
+
+        LiquidGuard guard = _deployLiquidGuardWithRequiredFlags();
+        vm.prank(admin);
+        guard.setFactory(address(factory));
+        vm.prank(admin);
+        factory.setPoolHooks(address(guard));
+
+        Curve[] memory curves = _defaultSingleCurve();
+        vm.prank(user1);
+        baseToken.approve(address(factory), 0);
+        vm.prank(user1);
+        address tokenAddr = factory.createLiquidTokenMultiCurve(user1, "uri", "Token", "TKN", 0, curves);
+
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
+        assertEq(token.maxTotalSupply(), 2_000_000e18);
+        assertEq(token.creatorLaunchReward(), 200_000e18);
+        assertEq(token.poolLaunchSupply(), 1_800_000e18);
+        assertEq(token.totalSupply(), 2_000_000e18);
+        assertEq(token.balanceOf(user1), 200_000e18);
+    }
+
+    function test_LaunchedToken_WithZeroCreatorReward_AllTokensGoToPool() public {
+        vm.prank(admin);
+        factory.setCreatorLaunchReward(0);
+
+        LiquidGuard guard = _deployLiquidGuardWithRequiredFlags();
+        vm.prank(admin);
+        guard.setFactory(address(factory));
+        vm.prank(admin);
+        factory.setPoolHooks(address(guard));
+
+        Curve[] memory curves = _defaultSingleCurve();
+        vm.prank(user1);
+        address tokenAddr = factory.createLiquidTokenMultiCurve(user1, "uri", "Token", "TKN", 0, curves);
+
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
+        assertEq(token.creatorLaunchReward(), 0);
+        assertEq(token.poolLaunchSupply(), 1_000_000e18);
+        assertEq(token.balanceOf(user1), 0, "creator should receive nothing when reward is zero");
+        assertEq(token.totalSupply(), 1_000_000e18);
+    }
+
+    // ============================================
+    // Creator identity guard (_creator == msg.sender)
+    // ============================================
+
+    /// @dev Regression: createLiquidTokenMultiCurve must reject calls where _creator != msg.sender
+    ///      to prevent an attacker from attributing a token to a victim's address.
+    function test_CreateLiquidTokenMultiCurve_RevertsWhen_CreatorIsNotCaller() public {
+        address attacker = makeAddr("attacker");
+        address victim = makeAddr("victim");
+
+        Curve[] memory curves = _defaultSingleCurve();
+
+        vm.prank(attacker);
+        vm.expectRevert(ILiquidFactory.Unauthorized.selector);
+        factory.createLiquidTokenMultiCurve(
+            victim,
+            "uri",
+            "Token",
+            "TKN",
+            0,
+            curves
+        );
+    }
+
+    /// @dev Regression: createLiquidTokenInstant must reject calls where _creator != msg.sender
+    ///      to prevent an attacker from attributing a token to a victim's address.
+    ///      (Mirrors the guard already present on createLiquidTokenMultiCurve.)
+    function test_CreateLiquidTokenInstant_RevertsWhen_CreatorIsNotCaller() public {
+        address attacker = makeAddr("attacker");
+        address victim = makeAddr("victim");
+
+        vm.prank(attacker);
+        baseToken.approve(address(factory), 1e15);
+
+        vm.prank(attacker);
+        vm.expectRevert(ILiquidFactory.Unauthorized.selector);
+        factory.createLiquidTokenInstant(
+            victim,
+            "uri",
+            "Token",
+            "TKN",
+            1e15
+        );
+    }
+
     function test_RevertWhen_NonAdmin_Pause() public {
         vm.prank(user1);
         vm.expectRevert();

@@ -35,6 +35,7 @@ import {Curve} from "doppler/libraries/Multicurve.sol";
 import {InitGuardTestHelper} from "liquid-editions-test/helpers/InitGuardTestHelper.sol";
 import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
 import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol";
+import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
 
 // Mock ERC721 for testing onERC721Received
 contract MockERC721 {
@@ -306,6 +307,7 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
     LiquidMultiCurve public liquidImplementation;
     LiquidFactory public factory;
     LiquidMultiCurve public liquid;
+    LiquidInstant public instantImplementation;
     MockV4PoolManager public mockPoolManager;
     MockV4Quoter public mockQuoter;
     MockRARE public mockRARE;
@@ -333,6 +335,7 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
 
         // Deploy LiquidMultiCurve implementation
         liquidImplementation = new LiquidMultiCurve();
+        instantImplementation = new LiquidInstant();
 
         // Deploy init guard and factory
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
@@ -346,9 +349,10 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             1e15 // minRareLiquidityWei (0.001 RARE)
         );
         LiquidGuard(initGuardAddr).setFactory(address(factory));
-                factory.setLiquidRegistry(address(1));
+        factory.setLiquidRegistry(address(1));
 
         factory.setLiquidMultiCurveImplementation(address(liquidImplementation));
+        factory.setLiquidInstantImplementation(address(instantImplementation));
         factory.setBaseToken(address(mockRARE));
 
         // Fund test accounts with RARE tokens
@@ -438,21 +442,19 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
         vm.stopPrank();
     }
 
-    /// @notice Test that initialize() reverts when RARE balance is insufficient
+    /// @notice Test that createLiquidTokenInstant() reverts when RARE balance is below factory minimum
     function test_Initialize_RevertsWhen_RAREBalanceInsufficient() external {
         vm.startPrank(tokenCreator);
         mockRARE.mint(tokenCreator, 0.1 ether);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        Curve[] memory curves = _defaultSingleCurve();
 
         vm.expectRevert(ILiquidFactory.InvalidAmount.selector);
-        factory.createLiquidTokenMultiCurve(
+        factory.createLiquidTokenInstant(
             tokenCreator,
             "ipfs://test",
             "Test Token",
             "TEST",
-            1e14, // 0.0001 RARE, below minimum
-            curves
+            1e14 // 0.0001 RARE, below minimum
         );
         vm.stopPrank();
     }
@@ -524,15 +526,16 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
             "ipfs://test2",
             "Test Token 2",
             "TEST2",
-            1e15,
-            reinitializeCurves
+            reinitializeCurves,
+            1_000_000e18,
+            100_000e18
         );
 
         // Re-check immutable launch state did not change after failed re-init attempt
         assertEq(token.factory(), address(factory), "Factory should remain unchanged");
         assertEq(
             token.totalSupply(),
-            token.MAX_TOTAL_SUPPLY(),
+            token.maxTotalSupply(),
             "Re-initialization should not rebalance supply"
         );
     }
@@ -640,7 +643,7 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
         LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddress));
 
         // Quote sell with amount larger than total supply
-        uint256 hugeAmount = token.MAX_TOTAL_SUPPLY() + 1;
+        uint256 hugeAmount = token.maxTotalSupply() + 1;
 
         // V4 quoter may not revert; if it returns, output must be bounded by pool liquidity
         (uint256 rareOut, ) = token.quoteSell(hugeAmount);
@@ -942,7 +945,7 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
 
         // Verify creator received launch reward (mint event should have been emitted)
         assertEq(token.balanceOf(tokenCreator), 100_000e18);
-        assertEq(token.totalSupply(), token.MAX_TOTAL_SUPPLY());
+        assertEq(token.totalSupply(), token.maxTotalSupply());
     }
 
     /// @notice Test that LiquidTransfer event fields are accurate on transfer

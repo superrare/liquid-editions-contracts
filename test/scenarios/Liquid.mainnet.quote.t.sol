@@ -245,7 +245,7 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
         );
         assertEq(
             currentSupply,
-            testedToken.MAX_TOTAL_SUPPLY(),
+            testedToken.maxTotalSupply(),
             "market state should report max supply"
         );
 

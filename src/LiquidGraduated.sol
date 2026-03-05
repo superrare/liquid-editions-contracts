@@ -57,15 +57,14 @@ contract LiquidGraduated is
 
     /// @notice Maximum total supply of liquid tokens
     /// @dev All tokens are minted at initialization
-    uint256 public constant MAX_TOTAL_SUPPLY = 1_000_000e18;
+    /// @notice Maximum total supply of this token (set at launch from factory config)
+    uint256 public maxTotalSupply;
 
-    /// @notice Amount of tokens allocated to Uniswap V4 pool at launch
-    /// @dev These tokens provide the initial liquidity for trading
-    uint256 internal constant POOL_LAUNCH_SUPPLY = 900_000e18;
+    /// @notice Tokens allocated to the strategy (auction) at launch (maxTotalSupply - creatorLaunchReward)
+    uint256 public poolLaunchSupply;
 
-    /// @notice Amount of tokens rewarded to creator at launch
-    /// @dev Immediately transferred to creator as launch reward
-    uint256 internal constant CREATOR_LAUNCH_REWARD = 100_000e18;
+    /// @notice Tokens sent to the creator at launch (may be zero)
+    uint256 public creatorLaunchReward;
 
     // ============================================
     // TRADING CONSTANTS
@@ -158,9 +157,9 @@ contract LiquidGraduated is
     /// @dev Called once by factory after cloning. This is the first phase of graduated launch:
     ///
     ///      **Phase 1: Initialization (this function)**
-    ///      - Mints all tokens (1M total supply)
-    ///      - Sends creator reward (100K tokens)
-    ///      - Sends LP supply (900K tokens) to strategy
+    ///      - Mints all tokens (maxTotalSupply)
+    ///      - Sends creator reward (creatorLaunchReward tokens, may be zero)
+    ///      - Sends LP supply (poolLaunchSupply tokens) to strategy
     ///      - Strategy creates CCA auction
     ///      - Pool is NOT created yet (no Uniswap V4 pool exists)
     ///
@@ -183,15 +182,19 @@ contract LiquidGraduated is
     /// @param _tokenUri The location of initial token metadata
     /// @param _name The liquid token name
     /// @param _symbol The liquid token symbol
-    /// @param _strategy The LBP strategy contract (receives POOL_LAUNCH_SUPPLY, creates auction)
+    /// @param _strategy The LBP strategy contract (receives pool launch supply, creates auction)
     /// @param _poolHooksOverride When non-zero, use as pool hooks (e.g. strategy for FullRangeLBPStrategy). When zero, use factory.poolHooks().
+    /// @param _maxTotalSupply Total token supply to mint at launch
+    /// @param _creatorLaunchReward Tokens transferred to creator at launch (may be zero)
     function initialize(
         address _creator,
         string memory _tokenUri,
         string memory _name,
         string memory _symbol,
         address _strategy,
-        address _poolHooksOverride
+        address _poolHooksOverride,
+        uint256 _maxTotalSupply,
+        uint256 _creatorLaunchReward
     ) external initializer {
         factory = msg.sender;
 
@@ -207,6 +210,11 @@ contract LiquidGraduated is
         __ERC20_init(_name, _symbol);
         __ReentrancyGuard_init();
 
+        // Store supply split (set-once; externally visible)
+        maxTotalSupply = _maxTotalSupply;
+        creatorLaunchReward = _creatorLaunchReward;
+        poolLaunchSupply = _maxTotalSupply - _creatorLaunchReward;
+
         tokenCreator = _creator;
         initialTokenUri = _tokenUri;
         strategy = _strategy;
@@ -220,9 +228,11 @@ contract LiquidGraduated is
         // Pre-compute poolKey and poolId
         _computeAndSetPoolKey();
 
-        _mint(address(this), MAX_TOTAL_SUPPLY);
-        _transfer(address(this), _creator, CREATOR_LAUNCH_REWARD);
-        _transfer(address(this), _strategy, POOL_LAUNCH_SUPPLY);
+        _mint(address(this), _maxTotalSupply);
+        if (_creatorLaunchReward > 0) {
+            _transfer(address(this), _creator, _creatorLaunchReward);
+        }
+        _transfer(address(this), _strategy, poolLaunchSupply);
         // Factory calls strategy.onTokensReceived() after this
     }
 
@@ -351,7 +361,14 @@ contract LiquidGraduated is
     }
 
     /// @notice Not applicable for graduated tokens (LP managed by strategy/PositionManager)
-    function migrateLiquidity(PoolKey calldata, uint160, Position[] calldata, address, uint256, uint256) external pure {
+    function migrateLiquidity(
+        PoolKey calldata,
+        uint160,
+        Position[] calldata,
+        address,
+        uint256,
+        uint256
+    ) external pure {
         revert("Graduated: use strategy");
     }
 

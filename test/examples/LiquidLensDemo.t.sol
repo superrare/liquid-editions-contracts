@@ -13,7 +13,9 @@ import {Position} from "doppler/types/Position.sol";
 
 /// @notice Mock Liquid Edition contract for testing render contract
 contract MockLiquid is ERC20, ILiquid {
-    uint256 public constant MAX_TOTAL_SUPPLY = 1_000_000e18;
+    uint256 public maxTotalSupply = 1_000_000e18;
+    uint256 public poolLaunchSupply = 900_000e18;
+    uint256 public creatorLaunchReward = 100_000e18;
     address public tokenCreator;
 
     // Mock state values (public for testing)

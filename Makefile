@@ -10,7 +10,7 @@ export
 export FORK_URL
 
 # Test commands
-.PHONY: test test-factory test-liquid test-mainnet test-bonding test-bonding-explorer test-unit test-rare test-burner test-invariants test-mev coverage coverage-report deploy-sepolia deploy-sepolia-dry help
+.PHONY: test test-factory test-liquid test-mainnet test-bonding test-bonding-explorer test-unit test-rare test-burner test-invariants test-mev test-sepolia-behavior test-sepolia-behavior-multicurve test-mainnet-behavior-multicurve coverage coverage-report deploy-sepolia deploy-sepolia-dry help
 
 help:
 	@echo "Available commands:"
@@ -23,6 +23,9 @@ help:
 	@echo "  test-burner       - Run burner integration tests"
 	@echo "  test-invariants   - Run invariant tests"
 	@echo "  test-mev          - Run MEV protection tests"
+	@echo "  test-sepolia-behavior - Run Eth Sepolia instant user behavior simulation (requires ETH_SEPOLIA)"
+	@echo "  test-sepolia-behavior-multicurve - Run Eth Sepolia multicurve user behavior simulation (requires ETH_SEPOLIA)"
+	@echo "  test-mainnet-behavior-multicurve - Run Eth Mainnet multicurve user behavior simulation (requires MAINNET_RPC_URL)"
 	@echo "  test-unit         - Run mainnet unit tests"
 	@echo "  test-rare         - Run RARE burn config tests (no fork)"
 	@echo "  coverage          - Generate test coverage summary"
@@ -82,6 +85,18 @@ test-mev:
 # Run mainnet unit tests (creates fork in setUp)
 test-unit:
 	forge test test/e2e/Liquid.mainnet.unit.t.sol --jobs 2 -v
+
+# Run Eth Sepolia instant user behavior simulation (requires ETH_SEPOLIA in .env)
+test-sepolia-behavior:
+	forge test test/scenarios/Liquid.sepolia.userBehavior.instant.t.sol --jobs 1 -vv
+
+# Run Eth Sepolia multicurve user behavior simulation (requires ETH_SEPOLIA in .env)
+test-sepolia-behavior-multicurve:
+	forge test test/scenarios/Liquid.sepolia.userBehavior.multicurve.t.sol --jobs 1 -vv
+
+# Run Eth Mainnet multicurve user behavior simulation (requires MAINNET_RPC_URL in .env)
+test-mainnet-behavior-multicurve:
+	forge test test/scenarios/Liquid.mainnet.userBehavior.multicurve.t.sol --jobs 1 -vv
 
 # Run RARE burn tests (no fork needed)
 test-rare:

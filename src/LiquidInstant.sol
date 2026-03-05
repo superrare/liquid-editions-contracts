@@ -59,20 +59,17 @@ contract LiquidInstant is
     using SafeERC20 for IERC20;
 
     // ============================================
-    // TOKEN SUPPLY CONSTANTS
+    // TOKEN SUPPLY STATE (set once at initialization)
     // ============================================
 
-    /// @notice Maximum total supply of liquid tokens
-    /// @dev All tokens are minted at initialization
-    uint256 public constant MAX_TOTAL_SUPPLY = 1_000_000e18;
+    /// @notice Maximum total supply of this token (set at launch from factory config)
+    uint256 public maxTotalSupply;
 
-    /// @notice Amount of tokens allocated to Uniswap V4 pool at launch
-    /// @dev These tokens provide the initial liquidity for trading
-    uint256 internal constant POOL_LAUNCH_SUPPLY = 900_000e18;
+    /// @notice Tokens allocated to the Uniswap V4 pool at launch (maxTotalSupply - creatorLaunchReward)
+    uint256 public poolLaunchSupply;
 
-    /// @notice Amount of tokens rewarded to creator at launch
-    /// @dev Immediately transferred to creator as launch reward
-    uint256 internal constant CREATOR_LAUNCH_REWARD = 100_000e18;
+    /// @notice Tokens sent to the creator at launch (may be zero)
+    uint256 public creatorLaunchReward;
 
     // ============================================
     // TRADING CONSTANTS
@@ -167,12 +164,16 @@ contract LiquidInstant is
     /// @param _name The liquid token name
     /// @param _symbol The liquid token symbol
     /// @param _minRequiredRareLiquidity The minimum RARE tokens (in wei) required to bootstrap the pool (threshold check)
+    /// @param _maxTotalSupply Total token supply to mint at launch
+    /// @param _creatorLaunchReward Tokens transferred to creator at launch (may be zero)
     function initialize(
         address _creator,
         string memory _tokenUri,
         string memory _name,
         string memory _symbol,
-        uint256 _minRequiredRareLiquidity
+        uint256 _minRequiredRareLiquidity,
+        uint256 _maxTotalSupply,
+        uint256 _creatorLaunchReward
     ) external initializer {
         // Store factory address (msg.sender is factory during initialization)
         factory = msg.sender;
@@ -206,15 +207,22 @@ contract LiquidInstant is
         __ERC20_init(_name, _symbol);
         __ReentrancyGuard_init();
 
+        // Store supply split (set-once; used by _deployPool and externally visible)
+        maxTotalSupply = _maxTotalSupply;
+        creatorLaunchReward = _creatorLaunchReward;
+        poolLaunchSupply = _maxTotalSupply - _creatorLaunchReward;
+
         // Initialize liquid token state
         tokenCreator = _creator;
         initialTokenUri = _tokenUri;
 
         // Mint the entire total supply to this contract
-        _mint(address(this), MAX_TOTAL_SUPPLY);
+        _mint(address(this), _maxTotalSupply);
 
-        // Distribute launch rewards to creator
-        _transfer(address(this), _creator, CREATOR_LAUNCH_REWARD);
+        // Distribute launch rewards to creator (zero reward is valid — skip the transfer)
+        if (_creatorLaunchReward > 0) {
+            _transfer(address(this), _creator, _creatorLaunchReward);
+        }
 
         // Deploy Uniswap V4 pool with two-sided liquidity (LIQUID + RARE)
         // Optimal starting price is calculated to use all provided RARE and LIQUID tokens
@@ -338,8 +346,10 @@ contract LiquidInstant is
 
         // Defense-in-depth: verify currencies match even though executor validates this
         if (
-            Currency.unwrap(newPoolKey.currency0) != Currency.unwrap(poolKey.currency0) ||
-            Currency.unwrap(newPoolKey.currency1) != Currency.unwrap(poolKey.currency1)
+            Currency.unwrap(newPoolKey.currency0) !=
+            Currency.unwrap(poolKey.currency0) ||
+            Currency.unwrap(newPoolKey.currency1) !=
+            Currency.unwrap(poolKey.currency1)
         ) revert CurrencyMismatch();
 
         _unlockExpected = true;
@@ -347,7 +357,14 @@ contract LiquidInstant is
             abi.encode(
                 UnlockContext({
                     action: UnlockAction.MIGRATE_LIQUIDITY,
-                    data: abi.encode(newPoolKey, newSqrtPriceX96, newPositions, dustRecipient, maxDust0, maxDust1)
+                    data: abi.encode(
+                        newPoolKey,
+                        newSqrtPriceX96,
+                        newPositions,
+                        dustRecipient,
+                        maxDust0,
+                        maxDust1
+                    )
                 })
             )
         );
@@ -615,7 +632,7 @@ contract LiquidInstant is
         if (lpTickLower >= lpTickUpper) revert InvalidTickRange();
 
         // Calculate liquidity bounds for the position
-        // We're providing: liquidityAmount RARE + POOL_LAUNCH_SUPPLY LIQUID tokens
+        // We're providing: liquidityAmount RARE + poolLaunchSupply LIQUID tokens
         uint160 sqrtPriceLowerX96 = TickMath.getSqrtPriceAtTick(lpTickLower);
         uint160 sqrtPriceUpperX96 = TickMath.getSqrtPriceAtTick(lpTickUpper);
 
@@ -625,9 +642,9 @@ contract LiquidInstant is
         uint256 amount1;
         if (baseTokenIsCurrency0) {
             amount0 = liquidityAmount; // RARE is currency0
-            amount1 = POOL_LAUNCH_SUPPLY; // LIQUID is currency1
+            amount1 = poolLaunchSupply; // LIQUID is currency1
         } else {
-            amount0 = POOL_LAUNCH_SUPPLY; // LIQUID is currency0
+            amount0 = poolLaunchSupply; // LIQUID is currency0
             amount1 = liquidityAmount; // RARE is currency1
         }
 
@@ -641,22 +658,22 @@ contract LiquidInstant is
         // Calculate liquidity based on currency ordering
         if (baseTokenIsCurrency0) {
             // baseToken (RARE) is currency0, LIQUID is currency1
-            // liquidityAmount RARE (currency0) + POOL_LAUNCH_SUPPLY LIQUID (currency1)
+            // liquidityAmount RARE (currency0) + poolLaunchSupply LIQUID (currency1)
             lpLiquidity = _calculateLiquidity(
                 sqrtPriceX96,
                 sqrtPriceLowerX96,
                 sqrtPriceUpperX96,
                 liquidityAmount,
-                POOL_LAUNCH_SUPPLY
+                poolLaunchSupply
             );
         } else {
             // LIQUID is currency0, baseToken (RARE) is currency1
-            // POOL_LAUNCH_SUPPLY LIQUID (currency0) + liquidityAmount RARE (currency1)
+            // poolLaunchSupply LIQUID (currency0) + liquidityAmount RARE (currency1)
             lpLiquidity = _calculateLiquidity(
                 sqrtPriceX96,
                 sqrtPriceLowerX96,
                 sqrtPriceUpperX96,
-                POOL_LAUNCH_SUPPLY,
+                poolLaunchSupply,
                 liquidityAmount
             );
         }
@@ -682,7 +699,7 @@ contract LiquidInstant is
             address(this),
             address(poolManager),
             liquidityAmount, // RARE amount
-            POOL_LAUNCH_SUPPLY, // LIQUID amount
+            poolLaunchSupply, // LIQUID amount
             uint256(lpLiquidity)
         );
     }
@@ -917,7 +934,10 @@ contract LiquidInstant is
             address dustRecipient,
             uint256 maxDust0,
             uint256 maxDust1
-        ) = abi.decode(data, (PoolKey, uint160, Position[], address, uint256, uint256));
+        ) = abi.decode(
+                data,
+                (PoolKey, uint160, Position[], address, uint256, uint256)
+            );
 
         IPoolManager pm = IPoolManager(poolManager);
 
@@ -968,7 +988,11 @@ contract LiquidInstant is
         // Phase 4: Settle net deltas
         if (netDelta0 > 0) {
             if (uint256(netDelta0) > maxDust0) {
-                revert DustExceeded(Currency.unwrap(newKey.currency0), uint256(netDelta0), maxDust0);
+                revert DustExceeded(
+                    Currency.unwrap(newKey.currency0),
+                    uint256(netDelta0),
+                    maxDust0
+                );
             }
             pm.take(newKey.currency0, dustRecipient, uint256(netDelta0));
         } else if (netDelta0 < 0) {
@@ -985,7 +1009,11 @@ contract LiquidInstant is
 
         if (netDelta1 > 0) {
             if (uint256(netDelta1) > maxDust1) {
-                revert DustExceeded(Currency.unwrap(newKey.currency1), uint256(netDelta1), maxDust1);
+                revert DustExceeded(
+                    Currency.unwrap(newKey.currency1),
+                    uint256(netDelta1),
+                    maxDust1
+                );
             }
             pm.take(newKey.currency1, dustRecipient, uint256(netDelta1));
         } else if (netDelta1 < 0) {
@@ -1174,8 +1202,7 @@ contract LiquidInstant is
     function _toUint128Neg256(int256 x) internal pure returns (uint128) {
         require(x <= 0, "positive value");
         uint256 y = uint256(-x);
-        if (y > type(uint128).max)
-            revert AmountExceedsUint128(y);
+        if (y > type(uint128).max) revert AmountExceedsUint128(y);
         return uint128(y);
     }
 
@@ -1229,10 +1256,28 @@ contract LiquidInstant is
 
         // Discriminant D = b² + 4*a*|c| (positive since c is negative in original equation)
         // D = bAbs² + 4 * a * cAbs
-        uint256 discriminant = bAbs * bAbs + 4 * a * cAbs;
+        //
+        // For very wide tick ranges (e.g. full-range MIN_TICK to MAX_TICK), 4*a*cAbs can
+        // overflow uint256 because sqrtUpper is near MAX_SQRT_PRICE.  In that regime
+        // 4ac >> b², so the quadratic solution reduces to the constant-product formula:
+        //   sqrtPrice = Q96 * sqrt(amount1 / amount0)
+        // We detect the overflow and return this exact result directly.
+        uint256 fourA = 4 * a;
+        if (fourA != 0 && cAbs > type(uint256).max / fourA) {
+            // Overflow: use full-range constant-product formula
+            // sqrtPriceX96 = sqrt(amount1 * Q96² / amount0)
+            uint256 Q192 = uint256(FixedPoint96.Q96) *
+                uint256(FixedPoint96.Q96);
+            uint256 ratioQ192 = FullMath.mulDiv(amount1, Q192, amount0);
+            uint256 sqrtPriceFullRange = Math.sqrt(ratioQ192);
+            if (sqrtPriceFullRange <= sqrtLower)
+                sqrtPriceFullRange = sqrtLower + 1;
+            if (sqrtPriceFullRange >= sqrtUpper)
+                sqrtPriceFullRange = sqrtUpper - 1;
+            return uint160(sqrtPriceFullRange);
+        }
 
-        // sqrt(D) using OpenZeppelin's battle-tested implementation
-        uint256 sqrtD = Math.sqrt(discriminant);
+        uint256 sqrtD = Math.sqrt(bAbs * bAbs + fourA * cAbs);
 
         // sqrtPrice = (-b + sqrt(D)) / (2a)
         // If b < 0 (bIsNegative = true):  sqrtPrice = (|b| + sqrtD) / (2a)

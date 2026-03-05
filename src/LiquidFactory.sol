@@ -63,7 +63,13 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
     address public poolHooks;
     address public baseToken; // RARE token address
 
-    uint256 public minRareLiquidityWei; // Minimum RARE for optional head position (0 = no RARE required)
+    uint256 public minRareLiquidityWei; // Minimum RARE required for instant launches (0 = no minimum)
+
+    /// @notice Max total supply minted for each new token at launch (default 1M)
+    uint256 public maxTotalSupply = 1_000_000e18;
+
+    /// @notice Tokens transferred to creator at launch (default 100K; 0 = no carve-out)
+    uint256 public creatorLaunchReward = 100_000e18;
 
     // LP band (used at pool deploy only)
     /// @notice Lower tick bound for LP positions (defines price range)
@@ -109,7 +115,7 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
     ///                      NOTE: Semantic meaning depends on token ordering - see lpTickLower documentation.
     /// @param _poolHooks The Uniswap V4 hooks contract for the pool (address(0) if none)
     /// @param _poolTickSpacing Tick spacing to use when initializing the V4 pool
-    /// @param _minRareLiquidityWei Minimum RARE tokens (in wei) for optional head position (0 = no RARE required)
+    /// @param _minRareLiquidityWei Minimum RARE tokens (in wei) required for instant launches (0 = no minimum)
     constructor(
         address _owner,
         address _poolManager,
@@ -235,9 +241,6 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         if (_creator == address(0)) revert AddressZero();
         // Validate curves array is non-empty
         if (_curves.length == 0) revert InvalidAmount();
-        // Validate initial liquidity meets minimum threshold
-        if (_initialRareLiquidity < minRareLiquidityWei) revert InvalidAmount();
-
         // Create EIP-1167 minimal proxy clone (gas-efficient deployment)
         address clone = Clones.clone(liquidMultiCurveImplementation);
 
@@ -262,14 +265,7 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
 
         // Initialize the clone (this creates the Uniswap V4 pool with multicurve liquidity)
         LiquidMultiCurve liquid = LiquidMultiCurve(payable(clone));
-        liquid.initialize(
-            _creator,
-            _tokenUri,
-            _name,
-            _symbol,
-            minRareLiquidityWei,
-            _curves
-        );
+        liquid.initialize(_creator, _tokenUri, _name, _symbol, _curves, maxTotalSupply, creatorLaunchReward);
 
         // Emit event and register token in registry
         emit LiquidTokenCreated(clone, _creator, _tokenUri);
@@ -295,6 +291,10 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         string memory _symbol,
         uint256 _initialRareLiquidity
     ) external whenNotPaused returns (address token) {
+        // Simple protection against malicious creation of tokens on behalf of others.
+        // Keeping _creator in function params so we can enable concierge service later without changing interface.
+        if (_creator != msg.sender) revert Unauthorized();
+
         return
             _createLiquidTokenInstant(
                 _creator,
@@ -340,6 +340,7 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         if (_creator == address(0)) revert AddressZero();
         // RARE is required — LiquidInstant needs both sides to seed the pool
         if (_initialRareLiquidity == 0) revert InvalidAmount();
+        if (_initialRareLiquidity < minRareLiquidityWei) revert InvalidAmount();
 
         // Create EIP-1167 minimal proxy clone (gas-efficient deployment)
         address clone = Clones.clone(liquidInstantImplementation);
@@ -367,7 +368,9 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
             _tokenUri,
             _name,
             _symbol,
-            _initialRareLiquidity
+            _initialRareLiquidity,
+            maxTotalSupply,
+            creatorLaunchReward
         );
 
         // Emit event and register token in registry
@@ -427,7 +430,7 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         if (ccaFactory == address(0)) revert AddressZero();
         if (baseToken == address(0)) revert AddressZero();
         if (_creator == address(0)) revert AddressZero();
-        if (_auctionSupply > 900_000e18) revert InvalidAmount();
+        if (_auctionSupply > maxTotalSupply - creatorLaunchReward) revert InvalidAmount();
 
         // Bind salt to msg.sender to prevent front-running / salt squatting.
         // An attacker who copies the salt from the mempool cannot claim the same
@@ -484,10 +487,12 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
             _name,
             _symbol,
             strategyAddr,
-            strategyAddr
+            strategyAddr,
+            maxTotalSupply,
+            creatorLaunchReward
         );
 
-        // Strategy receives POOL_LAUNCH_SUPPLY - notify it to set up auction
+        // Strategy receives pool launch supply (maxTotalSupply - creatorLaunchReward) - notify it to set up auction
         IDistributionContract(strategyAddr).onTokensReceived();
 
         address auctionAddr = _getInitializer(strategyAddr);
@@ -652,11 +657,11 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         if (poolHooks.code.length == 0) revert InvalidPoolHook(poolHooks);
 
         uint160 actualFlags = uint160(poolHooks) & Hooks.ALL_HOOK_MASK;
-        uint160 requiredFlags = Hooks.BEFORE_INITIALIZE_FLAG
-            | Hooks.BEFORE_SWAP_FLAG
-            | Hooks.AFTER_SWAP_FLAG
-            | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG
-            | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG;
+        uint160 requiredFlags = Hooks.BEFORE_INITIALIZE_FLAG |
+            Hooks.BEFORE_SWAP_FLAG |
+            Hooks.AFTER_SWAP_FLAG |
+            Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG |
+            Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG;
         if ((actualFlags & requiredFlags) != requiredFlags) {
             revert PoolHookMissingFlags(poolHooks, actualFlags, requiredFlags);
         }
@@ -699,13 +704,34 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         emit PoolTickSpacingUpdated(_poolTickSpacing);
     }
 
-    /// @notice Sets the minimum RARE liquidity for optional head position
-    /// @param _minRareLiquidityWei Minimum RARE tokens (in wei) for head position (0 = no RARE required)
+    /// @notice Sets the minimum RARE liquidity required for instant launches
+    /// @param _minRareLiquidityWei Minimum RARE tokens (in wei) for instant launches (0 = no minimum)
     function setMinRareLiquidityWei(
         uint256 _minRareLiquidityWei
     ) external onlyOwner {
         minRareLiquidityWei = _minRareLiquidityWei;
         emit MinRareLiquidityWeiUpdated(_minRareLiquidityWei);
+    }
+
+    /// @notice Sets the max total supply minted for each new token at launch
+    /// @dev Must be greater than zero and greater than the current creatorLaunchReward
+    ///      (pool must receive at least 1 token). Only affects future launches.
+    /// @param _supply New max total supply
+    function setMaxTotalSupply(uint256 _supply) external onlyOwner {
+        if (_supply == 0) revert InvalidAmount();
+        if (creatorLaunchReward >= _supply) revert InvalidAmount();
+        maxTotalSupply = _supply;
+        emit MaxTotalSupplyUpdated(_supply);
+    }
+
+    /// @notice Sets the creator launch reward for new tokens (tokens sent to creator at launch)
+    /// @dev Zero is explicitly allowed (creator receives no carve-out; all tokens go to pool).
+    ///      Must be strictly less than maxTotalSupply. Only affects future launches.
+    /// @param _reward New creator reward amount
+    function setCreatorLaunchReward(uint256 _reward) external onlyOwner {
+        if (_reward >= maxTotalSupply) revert InvalidAmount();
+        creatorLaunchReward = _reward;
+        emit CreatorLaunchRewardUpdated(_reward);
     }
 
     /// @notice Sets the LP tick lower bound

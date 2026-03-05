@@ -61,11 +61,17 @@ contract LiquidMultiCurve is
     using QuoterRevert for bytes;
     using SafeERC20 for IERC20;
 
-    uint256 public constant MAX_TOTAL_SUPPLY = 1_000_000e18;
-    uint256 internal constant POOL_LAUNCH_SUPPLY = 900_000e18;
-    uint256 internal constant CREATOR_LAUNCH_REWARD = 100_000e18;
     uint24 internal constant LP_FEE = 0;
     uint256 internal constant MAX_POSITIONS = 25;
+
+    /// @notice Maximum total supply of this token (set at launch from factory config)
+    uint256 public maxTotalSupply;
+
+    /// @notice Tokens allocated to the Uniswap V4 pool at launch (maxTotalSupply - creatorLaunchReward)
+    uint256 public poolLaunchSupply;
+
+    /// @notice Tokens sent to the creator at launch (may be zero)
+    uint256 public creatorLaunchReward;
 
     address public factory;
     address public baseToken;
@@ -119,21 +125,23 @@ contract LiquidMultiCurve is
     /// @notice Initializes a new Liquid token with multicurve liquidity (anti-sniping launch)
     /// @dev Called once by factory after cloning. Creates Uniswap V4 pool with liquidity distributed
     ///      across multiple concentrated positions per the provided curves. The bonding curve is funded
-    ///      by LIQUID tokens (900K POOL_LAUNCH_SUPPLY), not by creator RARE. Optional RARE (can be 0)
+    ///      by LIQUID tokens (poolLaunchSupply), not by creator RARE. Optional RARE (can be 0)
     ///      creates a head position beyond the curve range.
     /// @param _creator The address of the liquid token creator (receives launch reward)
     /// @param _tokenUri The location of initial token metadata
     /// @param _name The liquid token name
     /// @param _symbol The liquid token symbol
-    /// @param _minRequiredRareLiquidity Minimum RARE balance check (0 = no RARE required)
     /// @param _curves Curve configuration (tick ranges, positions) for multicurve deployment
+    /// @param _maxTotalSupply Total token supply to mint at launch
+    /// @param _creatorLaunchReward Tokens transferred to creator at launch (may be zero)
     function initialize(
         address _creator,
         string memory _tokenUri,
         string memory _name,
         string memory _symbol,
-        uint256 _minRequiredRareLiquidity,
-        Curve[] calldata _curves
+        Curve[] calldata _curves,
+        uint256 _maxTotalSupply,
+        uint256 _creatorLaunchReward
     ) external initializer {
         if (factory != address(0)) revert AlreadyInitialized();
 
@@ -151,10 +159,8 @@ contract LiquidMultiCurve is
         // Validate token URI
         if (bytes(_tokenUri).length == 0) revert InvalidTokenURI();
 
-        // Factory transfers RARE to this contract before calling initialize - verify we have enough
+        // Factory may transfer any amount of RARE (including zero) before calling initialize
         uint256 rareBalance = IERC20(baseToken).balanceOf(address(this));
-        if (rareBalance < _minRequiredRareLiquidity)
-            revert RARELiquidityTooSmall();
 
         if (_creator == address(0)) revert AddressZero();
 
@@ -162,12 +168,19 @@ contract LiquidMultiCurve is
         __ERC20_init(_name, _symbol);
         __ReentrancyGuard_init();
 
+        // Store supply split (set-once; used by _deployPool and externally visible)
+        maxTotalSupply = _maxTotalSupply;
+        creatorLaunchReward = _creatorLaunchReward;
+        poolLaunchSupply = _maxTotalSupply - _creatorLaunchReward;
+
         tokenCreator = _creator;
         initialTokenUri = _tokenUri;
 
-        // Mint full supply and distribute: creator gets reward, rest goes to pool
-        _mint(address(this), MAX_TOTAL_SUPPLY);
-        _transfer(address(this), _creator, CREATOR_LAUNCH_REWARD);
+        // Mint full supply and distribute: creator gets reward (if any), rest goes to pool
+        _mint(address(this), _maxTotalSupply);
+        if (_creatorLaunchReward > 0) {
+            _transfer(address(this), _creator, _creatorLaunchReward);
+        }
 
         // Deploy pool with multicurve liquidity (multiple concentrated positions)
         _deployPool(rareBalance, _curves);
@@ -250,8 +263,10 @@ contract LiquidMultiCurve is
 
         // Defense-in-depth: verify currencies match even though executor validates this
         if (
-            Currency.unwrap(newPoolKey.currency0) != Currency.unwrap(poolKey.currency0) ||
-            Currency.unwrap(newPoolKey.currency1) != Currency.unwrap(poolKey.currency1)
+            Currency.unwrap(newPoolKey.currency0) !=
+            Currency.unwrap(poolKey.currency0) ||
+            Currency.unwrap(newPoolKey.currency1) !=
+            Currency.unwrap(poolKey.currency1)
         ) revert CurrencyMismatch();
 
         _unlockExpected = true;
@@ -259,7 +274,14 @@ contract LiquidMultiCurve is
             abi.encode(
                 UnlockContext({
                     action: UnlockAction.MIGRATE_LIQUIDITY,
-                    data: abi.encode(newPoolKey, newSqrtPriceX96, newPositions, dustRecipient, maxDust0, maxDust1)
+                    data: abi.encode(
+                        newPoolKey,
+                        newSqrtPriceX96,
+                        newPositions,
+                        dustRecipient,
+                        maxDust0,
+                        maxDust1
+                    )
                 })
             )
         );
@@ -461,7 +483,7 @@ contract LiquidMultiCurve is
         Position[] memory positions = Multicurve.calculatePositions(
             adjustedCurves,
             tickSpacing,
-            POOL_LAUNCH_SUPPLY,
+            poolLaunchSupply,
             rareBalance,
             isToken0
         );
@@ -490,7 +512,7 @@ contract LiquidMultiCurve is
             address(this),
             address(poolManager),
             rareBalance,
-            POOL_LAUNCH_SUPPLY,
+            poolLaunchSupply,
             0
         );
     }
@@ -712,7 +734,10 @@ contract LiquidMultiCurve is
             address dustRecipient,
             uint256 maxDust0,
             uint256 maxDust1
-        ) = abi.decode(data, (PoolKey, uint160, Position[], address, uint256, uint256));
+        ) = abi.decode(
+                data,
+                (PoolKey, uint160, Position[], address, uint256, uint256)
+            );
 
         IPoolManager pm = IPoolManager(poolManager);
 
@@ -775,7 +800,11 @@ contract LiquidMultiCurve is
         // Negative net = we owe tokens (settle from token's balance)
         if (netDelta0 > 0) {
             if (uint256(netDelta0) > maxDust0) {
-                revert DustExceeded(Currency.unwrap(newKey.currency0), uint256(netDelta0), maxDust0);
+                revert DustExceeded(
+                    Currency.unwrap(newKey.currency0),
+                    uint256(netDelta0),
+                    maxDust0
+                );
             }
             pm.take(newKey.currency0, dustRecipient, uint256(netDelta0));
         } else if (netDelta0 < 0) {
@@ -792,7 +821,11 @@ contract LiquidMultiCurve is
 
         if (netDelta1 > 0) {
             if (uint256(netDelta1) > maxDust1) {
-                revert DustExceeded(Currency.unwrap(newKey.currency1), uint256(netDelta1), maxDust1);
+                revert DustExceeded(
+                    Currency.unwrap(newKey.currency1),
+                    uint256(netDelta1),
+                    maxDust1
+                );
             }
             pm.take(newKey.currency1, dustRecipient, uint256(netDelta1));
         } else if (netDelta1 < 0) {
@@ -817,8 +850,10 @@ contract LiquidMultiCurve is
             int24 newTickLower = _storedPositions[0].tickLower;
             int24 newTickUpper = _storedPositions[0].tickUpper;
             for (uint256 i = 1; i < _storedPositions.length; i++) {
-                if (_storedPositions[i].tickLower < newTickLower) newTickLower = _storedPositions[i].tickLower;
-                if (_storedPositions[i].tickUpper > newTickUpper) newTickUpper = _storedPositions[i].tickUpper;
+                if (_storedPositions[i].tickLower < newTickLower)
+                    newTickLower = _storedPositions[i].tickLower;
+                if (_storedPositions[i].tickUpper > newTickUpper)
+                    newTickUpper = _storedPositions[i].tickUpper;
             }
             lpTickLower = newTickLower;
             lpTickUpper = newTickUpper;
@@ -961,8 +996,7 @@ contract LiquidMultiCurve is
     function _toUint128Neg256(int256 x) internal pure returns (uint128) {
         require(x <= 0, "positive value");
         uint256 y = uint256(-x);
-        if (y > type(uint128).max)
-            revert AmountExceedsUint128(y);
+        if (y > type(uint128).max) revert AmountExceedsUint128(y);
         return uint128(y);
     }
 }

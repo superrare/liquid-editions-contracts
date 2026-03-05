@@ -105,7 +105,7 @@ abstract contract LiquidTokenBehaviorBase is Test {
     function test_PostInit_CorrectTotalSupply() public view {
         assertEq(
             IERC20(address(token)).totalSupply(),
-            token.MAX_TOTAL_SUPPLY(),
+            token.maxTotalSupply(),
             "totalSupply should equal MAX_TOTAL_SUPPLY"
         );
     }
@@ -131,7 +131,9 @@ abstract contract LiquidTokenBehaviorBase is Test {
             "ipfs://dup",
             "Dup",
             "DUP",
-            1e15
+            1e15,
+            1_000_000e18,
+            100_000e18
         );
     }
 
@@ -318,7 +320,7 @@ abstract contract LiquidTokenBehaviorBase is Test {
         assertTrue(sqrtPriceX96 > 0, "sqrtPriceX96 should be > 0");
         assertEq(
             currentSupply,
-            token.MAX_TOTAL_SUPPLY(),
+            token.maxTotalSupply(),
             "supply should equal MAX"
         );
     }
@@ -345,6 +347,8 @@ interface ILiquidInitializable {
         string memory _tokenUri,
         string memory _name,
         string memory _symbol,
-        uint256 _minRequiredRareLiquidity
+        uint256 _minRequiredRareLiquidity,
+        uint256 _maxTotalSupply,
+        uint256 _creatorLaunchReward
     ) external;
 }

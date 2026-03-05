@@ -89,7 +89,7 @@ contract LiquidLensDemoV1 is ERC721, Ownable {
 
         // Get static configuration
         uint256 maxTotalSupply = LiquidInstant(LIQUID_EDITION)
-            .MAX_TOTAL_SUPPLY();
+            .maxTotalSupply();
 
         // Calculate derived metrics for metadata
         DerivedMetrics memory metrics = _calculateDerivedMetrics(

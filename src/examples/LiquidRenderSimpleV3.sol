@@ -61,7 +61,7 @@ contract LiquidRenderSimpleV2 is IRender {
             s.liquidity,
             s.currentSupply
         ) = ILiquid(LIQUID_EDITION).getMarketState();
-        s.maxTotalSupply = LiquidInstant(LIQUID_EDITION).MAX_TOTAL_SUPPLY();
+        s.maxTotalSupply = LiquidInstant(LIQUID_EDITION).maxTotalSupply();
     }
 
     function _createMasterSeed(
