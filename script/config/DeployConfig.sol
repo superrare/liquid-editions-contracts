@@ -113,7 +113,7 @@ library DeployConfig {
                 creatorLaunchRewardWei: 100_000e18 // 100K tokens sent to creator at launch (10%)
             }),
             fees: FeeConfig({
-                totalFeeBPS: 500 // 4% gross fees
+                totalFeeBPS: 500 // 5% gross fees
             }),
             auctioneerRoutes: AuctioneerRoutesConfig({
                 ethToRare: AuctionRouteConfig({

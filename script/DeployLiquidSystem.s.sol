@@ -281,10 +281,11 @@ contract DeployLiquidSystem is Script {
             if (!deployLegacyFeeDistributor) {
                 require(
                     networkConfig.uniswapV4PoolManager != address(0) &&
-                        networkConfig.rareToken != address(0),
-                    "DEPLOY_FEE_DISTRIBUTOR requires V4 config when not legacy mode"
-                );
+                networkConfig.rareToken != address(0),
+                "DEPLOY_FEE_DISTRIBUTOR requires V4 config when not legacy mode"
+            );
             }
+            uint16 totalFeeBPS = deployConfig.fees.totalFeeBPS;
             sharedFeeDistributor = new FeeDistributor(
                 deployer,
                 deployLegacyFeeDistributor
@@ -293,7 +294,7 @@ contract DeployLiquidSystem is Script {
                 deployLegacyFeeDistributor ? address(0) : networkConfig.rareToken, // rareToken
                 protocolFeeRecipient,
                 5000, // 50% beneficiary share (legacy default)
-                400 // 4% total fee
+                totalFeeBPS
             );
             feeDistributorAddress = address(sharedFeeDistributor);
             console.log("FeeDistributor:");
@@ -442,13 +443,14 @@ contract DeployLiquidSystem is Script {
             console.log(
                 "=== Step 2b: Deploying FeeDistributor for LiquidGuard ==="
             );
+            uint16 totalFeeBPS = deployConfig.fees.totalFeeBPS;
             FeeDistributor liquidGuardFeeDistributor = new FeeDistributor(
                 deployer,
                 networkConfig.uniswapV4PoolManager,
                 networkConfig.rareToken,
                 protocolFeeRecipient,
                 5000, // 50% beneficiary share by default
-                400 // 4% total fee
+                totalFeeBPS
             );
             feeDistributorAddress = address(liquidGuardFeeDistributor);
             sharedFeeDistributor = liquidGuardFeeDistributor;
