@@ -38,15 +38,29 @@ contract LiquidMainnetMultiCurveBehaviorTest is MainnetBehaviorBase {
     // MULTICURVE CONFIG (tick-based)
     // ============================================
 
-    /// @dev Single-segment curve configuration:
-    ///      - Range: 0 to ~100,000 ticks
+    /// @dev Preset multicurve configuration matching DeployConfig.getDefaultMultiCurveConfig():
+    ///      - Trip wire:     ticks [-27000,      0], 2 positions, 10% shares
+    ///      - Distribution:  ticks [     0,  28440], 3 positions, 40% shares
+    ///      - Steady state:  ticks [ 28440,  60000], 5 positions, 50% shares
     function _buildCurves() internal pure returns (Curve[] memory curves) {
-        curves = new Curve[](1);
+        curves = new Curve[](3);
         curves[0] = Curve({
+            tickLower: -27000,
+            tickUpper: 0,
+            numPositions: 2,
+            shares: 0.1e18
+        });
+        curves[1] = Curve({
             tickLower: 0,
-            tickUpper: 96000,
+            tickUpper: 28440,
+            numPositions: 3,
+            shares: 0.4e18
+        });
+        curves[2] = Curve({
+            tickLower: 28440,
+            tickUpper: 60000,
             numPositions: 5,
-            shares: 1e18
+            shares: 0.50e18
         });
     }
 

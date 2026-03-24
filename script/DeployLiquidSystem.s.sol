@@ -47,7 +47,9 @@ import {IHooks} from "v4-core/interfaces/IHooks.sol";
  * - DEPLOY_AUCTIONEER: Set true to deploy LiquidAuctioneer (default: false)
  * - DEPLOY_SWAP_GUARD: Set true to deploy LiquidSwapGuard (default: false)
  * - DEPLOY_INIT_GUARD: Set true to deploy LiquidInitGuard (default: false)
- * - DEPLOY_LIQUID_GUARD: Set true to deploy LiquidGuard + FeeDistributor (default: false)
+ * - DEPLOY_LIQUID_GUARD: Set true to deploy LiquidGuard (default: false)
+ *                        Requires DEPLOY_FEE_DISTRIBUTOR=true or an existing FeeDistributor
+ *                        in NetworkConfig / FEE_DISTRIBUTOR env. Does NOT self-deploy a distributor.
  * - DEPLOY_MIGRATION_EXECUTOR: Set true to deploy LiquidMigrationExecutor (default: false)
  * - FEE_DISTRIBUTOR: Optional override address for existing FeeDistributor module
  * - LIQUID_REGISTRY: Optional override address for existing LiquidRegistry module
@@ -155,7 +157,6 @@ contract DeployLiquidSystem is Script {
             "FEE_DISTRIBUTOR",
             networkConfig.liquid.feeDistributor
         );
-        address liquidGuardFeeDistributorAddress = address(0);
         address liquidRegistryAddress = _resolveModuleAddress(
             "LIQUID_REGISTRY",
             networkConfig.liquid.liquidRegistry
@@ -216,11 +217,6 @@ contract DeployLiquidSystem is Script {
                 "DEPLOY_FEE_DISTRIBUTOR=true requires protocolFeeRecipient in NetworkConfig"
             );
         }
-        if (deployLiquidGuard && protocolFeeRecipient == address(0)) {
-            revert(
-                "DEPLOY_LIQUID_GUARD=true requires protocolFeeRecipient in NetworkConfig"
-            );
-        }
         if (deployFactory) {
             require(
                 networkConfig.weth != address(0),
@@ -270,6 +266,26 @@ contract DeployLiquidSystem is Script {
             revert(
                 "DEPLOY_ROUTER=false and LIQUID_ROUTER=0x0 but DEPLOY_SWAP_GUARD=true"
             );
+        }
+        // Warn when a newly deployed FeeDistributor won't be auto-wired to an existing LiquidGuard.
+        // reconcileLiquidGuardFeeDistributor in Step 6i is gated on useLiquidGuard || deployLiquidGuard,
+        // so if both are false the existing guard keeps its old distributor pointer.
+        if (
+            deployFeeDistributor &&
+            networkConfig.liquid.liquidGuard != address(0) &&
+            !deployConfig.factory.useLiquidGuard &&
+            !deployLiquidGuard
+        ) {
+            console.log(
+                "Warning: DEPLOY_FEE_DISTRIBUTOR=true but the existing LiquidGuard will NOT be"
+            );
+            console.log(
+                "         auto-wired to the new FeeDistributor (useLiquidGuard=false and"
+            );
+            console.log(
+                "         DEPLOY_LIQUID_GUARD=false). Wire manually or re-run with DEPLOY_LIQUID_GUARD=true."
+            );
+            console.log("");
         }
 
         vm.startBroadcast(deployerPrivateKey);
@@ -439,33 +455,10 @@ contract DeployLiquidSystem is Script {
                 DeployLiquidGuard.CREATE2_DEPLOYER,
                 liquidGuardSaltStartFrom
             );
-            // Deploy new FeeDistributor wired to LiquidGuard
-            console.log(
-                "=== Step 2b: Deploying FeeDistributor for LiquidGuard ==="
-            );
-            uint16 totalFeeBPS = deployConfig.fees.totalFeeBPS;
-            FeeDistributor liquidGuardFeeDistributor = new FeeDistributor(
-                deployer,
-                networkConfig.uniswapV4PoolManager,
-                networkConfig.rareToken,
-                protocolFeeRecipient,
-                5000, // 50% beneficiary share by default
-                totalFeeBPS
-            );
-            feeDistributorAddress = address(liquidGuardFeeDistributor);
-            sharedFeeDistributor = liquidGuardFeeDistributor;
-            liquidGuardFeeDistributorAddress = feeDistributorAddress;
-            console.log("FeeDistributor (LiquidGuard):");
-            console.logAddress(feeDistributorAddress);
-            // Wire them together
-            LiquidGuard(result.liquidGuard).setFeeDistributor(
-                feeDistributorAddress
-            );
-            liquidGuardFeeDistributor.setHookApproval(result.liquidGuard, true);
-            _tryConfigureRareEthPoolKey(
-                liquidGuardFeeDistributor,
-                networkConfig
-            );
+            console.log("LiquidGuard:");
+            console.logAddress(result.liquidGuard);
+            // FeeDistributor wiring is handled by reconcileLiquidGuardFeeDistributor in Step 6i,
+            // using sharedFeeDistributor resolved in Step 0 (DEPLOY_FEE_DISTRIBUTOR=true required).
             console.log("");
         } else {
             result.liquidGuard = networkConfig.liquid.liquidGuard;
