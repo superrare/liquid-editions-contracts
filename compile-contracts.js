@@ -13,9 +13,10 @@ const path = require('path');
  *
  * Output files:
  *   - compiled-contracts.txt         Main Liquid Edition contracts (src/)
- *   - compiled-contracts.txt         Includes core script configs:
- *                                      - script/config/NetworkConfig.sol
+ *   - compiled-script-config-and-deploy.txt  Script config + deployment and submodules:
+ *                                      - script/config/NetworkConfig.sol, DeployConfig.sol
  *                                      - script/DeployLiquidSystem.s.sol
+ *                                      - script/deployers/* (all deployers used by DeployLiquidSystem)
  *   - compiled-tests.txt             Test files (test/)
  *   - compiled-deps-uniswap-v4-core.txt     Key Uniswap V4 core contracts
  *   - compiled-deps-uniswap-v4-periphery.txt Key Uniswap V4 periphery contracts
@@ -26,9 +27,27 @@ const path = require('path');
 const ROOT = __dirname;
 const SRC_DIR = path.join(ROOT, 'src');
 const TEST_DIR = path.join(ROOT, 'test');
-const NETWORK_CONFIG_PATH = path.join(ROOT, 'script', 'config', 'NetworkConfig.sol');
-const DEPLOY_CONFIG_PATH = path.join(ROOT, 'script', 'DeployLiquidSystem.s.sol');
+const SCRIPT_DIR = path.join(ROOT, 'script');
 const LIB_DIR = path.join(ROOT, 'lib');
+
+// Script config + deployment and all deployer submodules (order: config, main script, deployers)
+const SCRIPT_CONFIG_AND_DEPLOY_FILES = [
+    path.join(SCRIPT_DIR, 'config', 'NetworkConfig.sol'),
+    path.join(SCRIPT_DIR, 'config', 'DeployConfig.sol'),
+    path.join(SCRIPT_DIR, 'DeployLiquidSystem.s.sol'),
+    path.join(SCRIPT_DIR, 'deployers', 'DeployRAREBurner.s.sol'),
+    path.join(SCRIPT_DIR, 'deployers', 'DeployLiquidFactory.s.sol'),
+    path.join(SCRIPT_DIR, 'deployers', 'DeployLiquid.s.sol'),
+    path.join(SCRIPT_DIR, 'deployers', 'DeployLiquidMultiCurve.s.sol'),
+    path.join(SCRIPT_DIR, 'deployers', 'DeployLiquidGraduated.s.sol'),
+    path.join(SCRIPT_DIR, 'deployers', 'DeployLiquidRouter.s.sol'),
+    path.join(SCRIPT_DIR, 'deployers', 'DeployLiquidAuctioneer.s.sol'),
+    path.join(SCRIPT_DIR, 'deployers', 'DeployLiquidSwapGuard.s.sol'),
+    path.join(SCRIPT_DIR, 'deployers', 'DeployLiquidInitGuard.s.sol'),
+    path.join(SCRIPT_DIR, 'deployers', 'DeployLiquidGuard.s.sol'),
+    path.join(SCRIPT_DIR, 'deployers', 'DeployLiquidMigrationExecutor.s.sol'),
+    path.join(SCRIPT_DIR, 'deployers', 'DeployLiquidSystemReconcile.s.sol'),
+];
 
 // Files and directories to exclude from src/ compilation
 const SRC_EXCLUDES = [
@@ -232,19 +251,23 @@ function compileContracts() {
             outputs.push(contractsFile);
         }
 
-        const scriptConfigFiles = [NETWORK_CONFIG_PATH, DEPLOY_CONFIG_PATH].filter((f) => fs.existsSync(f));
-        if (scriptConfigFiles.length > 0) {
-            console.log(`\n🔍 Liquid Edition Script Configurations (${scriptConfigFiles.length} files)`);
-            compileFileList(scriptConfigFiles, contractsFile, 'Liquid Edition Script Configurations', { append: true });
+        // 2. Script config + deployment and deployer submodules (own file)
+        const scriptDeployFile = path.join(ROOT, `${outputPrefix}-script-config-and-deploy.txt`);
+        const scriptDeployFiles = SCRIPT_CONFIG_AND_DEPLOY_FILES.filter((f) => fs.existsSync(f));
+        if (scriptDeployFiles.length > 0) {
+            console.log(`\n🔍 Script Config & Deployment (${scriptDeployFiles.length} files)`);
+            compileFileList(scriptDeployFiles, scriptDeployFile, 'Script Config & Deployment');
+            console.log(`   📄 Output: ${path.relative(ROOT, scriptDeployFile)} (${(fs.statSync(scriptDeployFile).size / 1024).toFixed(2)} KB)`);
+            outputs.push(scriptDeployFile);
         }
 
-        // 2. Tests (test/)
+        // 3. Tests (test/)
         const testsFile = path.join(ROOT, `${outputPrefix}-tests.txt`);
         if (compileDirectory(TEST_DIR, testsFile, 'Liquid Edition Tests')) {
             outputs.push(testsFile);
         }
 
-        // 3. Dependency sets
+        // 4. Dependency sets
         for (const key of Object.keys(DEPENDENCY_SETS)) {
             const depFile = path.join(ROOT, `${outputPrefix}-deps-${key}.txt`);
             if (compileDependencySet(key, depFile)) {
@@ -277,4 +300,5 @@ module.exports = {
     compileDependencySet,
     findSolidityFiles,
     DEPENDENCY_SETS,
+    SCRIPT_CONFIG_AND_DEPLOY_FILES,
 };
