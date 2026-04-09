@@ -68,8 +68,8 @@ library NetworkConfig {
                         auctioneer: 0x656b073247d2583994a88300B01Af82dD7d28EFA,
                         swapGuard: address(0), // not yet deployed
                         initGuard: address(0),
-                        liquidGuard: 0x7dD3F8fe4AdD16c0d297D5DC1813fe4a5f4020cc,
-                        feeDistributor: 0xbDcd7C7E0338F2E2ddA34A69baC6C589f87D0cb4,
+                        liquidGuard: 0x09dc2fEbD8B5c6c593f4e97F524935e7e3fD20cC,
+                        feeDistributor: 0x14F74a002C4A5e297858ab53F4ffB97233bcB0De,
                         liquidRegistry: 0x4066052d6AAC25EcFB027fD0C1aD54A597Ce3A31,
                         migrationExecutor: 0xfaDCCe3A08435B06d88AcF736dbE0bE802556306
                     })
@@ -152,8 +152,8 @@ library NetworkConfig {
                         auctioneer: 0xf0dC12B5A36498C30dE00708253258F7509f1130,
                         swapGuard: address(0),
                         initGuard: address(0),
-                        liquidGuard: 0xB6B6b59d2c0dDe9F3f36A7f58F40Ea5fb2c460CC,
-                        feeDistributor: 0x9986f60b81385c82da06Dd5bB3a42984c5b95062,
+                        liquidGuard: 0x14fD361BE75deC8a42eEd08940CCeb3e65D3E0Cc,
+                        feeDistributor: 0x811325f663194366B7CFcE1cB4e6AD5d25E4BC62,
                         liquidRegistry: 0x979C2FB02B8cF352eBeD15872B76b8bE78B64Ebc,
                         migrationExecutor: 0x4bfE60db98493B146CdfCEFd20f0AAE697C7c80A
                     })

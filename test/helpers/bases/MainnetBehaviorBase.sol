@@ -61,10 +61,6 @@ abstract contract MainnetBehaviorBase is Test {
     address    internal tokenCreator;
     address[5] internal buyers;
 
-    // RARE/ETH price cached from the live Mainnet V4 pool
-    uint256 internal _rarePerEth; // wei RARE per 1e18 ETH
-    uint256 internal _ethPerRare; // wei ETH  per 1e18 RARE
-
     // Whether RARE is currency0 in the LIQUID/RARE pool (Uniswap sorts by address).
     bool internal _rareIsCurrency0;
 
@@ -93,8 +89,7 @@ abstract contract MainnetBehaviorBase is Test {
 
     /**
      * @notice Core setup shared by all Mainnet behavior tests.
-     *         Selects the mainnet fork, binds deployed contracts, and caches
-     *         the current RARE/ETH price from the live pool.
+     *         Selects the mainnet fork and binds deployed contracts.
      */
     function _setupMainnetBehavior() internal {
         vm.createSelectFork("mainnet");
@@ -102,8 +97,6 @@ abstract contract MainnetBehaviorBase is Test {
         config  = NetworkConfig.getConfig(block.chainid); // 1
         factory = LiquidFactory(config.liquid.factory);
         router  = LiquidRouter(payable(config.liquid.router));
-
-        _cacheRareEthPrice();
     }
 
     // ============================================
@@ -111,15 +104,19 @@ abstract contract MainnetBehaviorBase is Test {
     // ============================================
 
     /**
-     * @dev Reads the RARE/ETH V4 pool sqrtPriceX96 and caches _rarePerEth / _ethPerRare.
+     * @dev Reads the current live RARE/ETH V4 pool price.
      *      ETH = address(0) is always numerically smallest, so for any ETH/RARE pool:
      *        currency0 = ETH, currency1 = RARE
      *        sqrtPriceX96 = sqrt(RARE/ETH) * 2^96
      */
-    function _cacheRareEthPrice() internal {
+    function _getRareEthPrice()
+        internal
+        view
+        returns (uint256 rarePerEth, uint256 ethPerRare)
+    {
         IPoolManager pm = IPoolManager(config.uniswapV4PoolManager);
         (uint160 sqrtPriceX96, , , ) = pm.getSlot0(PoolId.wrap(config.rareEthPoolId));
-        if (sqrtPriceX96 == 0) return;
+        if (sqrtPriceX96 == 0) return (0, 0);
 
         uint256 sqrtQ48  = uint256(sqrtPriceX96) >> 48;
         uint256 priceQ96 = (sqrtQ48 * sqrtQ48 * 1e18) >> 96; // currency1 per currency0
@@ -127,28 +124,30 @@ abstract contract MainnetBehaviorBase is Test {
         bool rareIsCurrency1 = address(0) < config.rareToken; // ETH=0x0 is always smaller
 
         if (rareIsCurrency1) {
-            _rarePerEth = priceQ96;
-            _ethPerRare = _rarePerEth > 0 ? 1e36 / _rarePerEth : 0;
+            rarePerEth = priceQ96;
+            ethPerRare = rarePerEth > 0 ? 1e36 / rarePerEth : 0;
         } else {
-            _ethPerRare = priceQ96;
-            _rarePerEth = _ethPerRare > 0 ? 1e36 / _ethPerRare : 0;
+            ethPerRare = priceQ96;
+            rarePerEth = ethPerRare > 0 ? 1e36 / ethPerRare : 0;
         }
     }
 
     /// @dev Converts a RARE-denominated token price to its ETH equivalent.
     function _toEthPrice(uint256 rarePerToken) internal view returns (uint256) {
-        if (_ethPerRare == 0) return 0;
-        return (rarePerToken * _ethPerRare) / 1e18;
+        (, uint256 ethPerRare) = _getRareEthPrice();
+        if (ethPerRare == 0) return 0;
+        return (rarePerToken * ethPerRare) / 1e18;
     }
 
     function _printRareEthPrice() internal view {
-        if (_rarePerEth == 0) {
+        (uint256 rarePerEth, uint256 ethPerRare) = _getRareEthPrice();
+        if (rarePerEth == 0) {
             console.log("--- RARE/ETH PRICE: pool not initialized ---");
             return;
         }
         console.log("--- RARE/ETH PRICE (Mainnet V4 pool) ---");
-        console.log(string.concat("  1 ETH  = ", _fmt(_rarePerEth), " RARE"));
-        console.log(string.concat("  1 RARE = ", _fmtPrice(_ethPerRare), " ETH"));
+        console.log(string.concat("  1 ETH  = ", _fmt(rarePerEth), " RARE"));
+        console.log(string.concat("  1 RARE = ", _fmtPrice(ethPerRare), " ETH"));
         console.log("");
     }
 

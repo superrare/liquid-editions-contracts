@@ -39,10 +39,7 @@ contract DeployLiquidLensDemoV2 is Script {
         address liquidEditionAddress = vm.envAddress("LIQUID_EDITION_ADDRESS");
 
         // Validate Liquid Edition address
-        require(
-            liquidEditionAddress != address(0),
-            "LIQUID_EDITION_ADDRESS must be set"
-        );
+        require(liquidEditionAddress != address(0), "LIQUID_EDITION_ADDRESS must be set");
 
         // Get optional environment variables with defaults
         string memory collectionName;
@@ -53,12 +50,11 @@ contract DeployLiquidLensDemoV2 is Script {
         }
 
         string memory collectionDescription;
-        try vm.envString("COLLECTION_DESCRIPTION") returns (
-            string memory desc
-        ) {
+        try vm.envString("COLLECTION_DESCRIPTION") returns (string memory desc) {
             collectionDescription = desc;
         } catch {
-            collectionDescription = "Plotter art-inspired generative collection visualizing Liquid Edition market dynamics";
+            collectionDescription =
+            "Plotter art-inspired generative collection visualizing Liquid Edition market dynamics";
         }
 
         string memory nftName;
@@ -107,9 +103,7 @@ contract DeployLiquidLensDemoV2 is Script {
             console.log("Liquid Edition creator:");
             console.logAddress(tokenCreator);
         } catch {
-            revert(
-                "Invalid Liquid Edition address - contract does not implement ILiquid interface"
-            );
+            revert("Invalid Liquid Edition address - contract does not implement ILiquid interface");
         }
 
         // Start broadcasting transactions
@@ -117,32 +111,38 @@ contract DeployLiquidLensDemoV2 is Script {
 
         // Deploy the LiquidLensDemoV2 contract
         console.log("Deploying LiquidLensDemoV2 contract...");
-        LiquidLensDemoV2 lens = new LiquidLensDemoV2(
-            liquidEditionAddress,
-            nftName,
-            nftSymbol,
-            collectionName,
-            collectionDescription
-        );
+        LiquidLensDemoV2 lens =
+            new LiquidLensDemoV2(liquidEditionAddress, nftName, nftSymbol, collectionName, collectionDescription);
 
         console.log("LiquidLensDemoV2 deployed at:");
         console.logAddress(address(lens));
         console.log("");
 
-        // Mint all tokens (MAX_SUPPLY = 10)
+        address lensOwner = lens.owner();
+        console.log("Render owner:");
+        console.logAddress(lensOwner);
+        console.log("");
+
         uint256 maxSupply = lens.MAX_SUPPLY();
-        console.log("Minting", maxSupply, "tokens...");
-        console.log("");
+        if (deployerAddress == lensOwner) {
+            console.log("Minting", maxSupply, "tokens...");
+            console.log("");
 
-        for (uint256 i = 0; i < maxSupply; i++) {
-            lens.mint(mintTo);
-            console.log("Minted token #", i + 1, "to:");
-            console.logAddress(mintTo);
+            for (uint256 i = 0; i < maxSupply; i++) {
+                lens.mint(mintTo);
+                console.log("Minted token #", i + 1, "to:");
+                console.logAddress(mintTo);
+            }
+
+            console.log("");
+            console.log("All tokens minted successfully!");
+            console.log("");
+        } else {
+            console.log("Skipping minting");
+            console.log("(Deployer is not render owner)");
+            console.log("Render owner can mint manually using lens.mint(address)");
+            console.log("");
         }
-
-        console.log("");
-        console.log("All tokens minted successfully!");
-        console.log("");
 
         // Register render contract with Liquid Edition (if deployer is token creator)
         if (deployerAddress == tokenCreator) {
@@ -150,42 +150,23 @@ contract DeployLiquidLensDemoV2 is Script {
             console.log("(Deployer is token creator)");
             try liquidEdition.setRenderContract(address(lens)) {
                 console.log("Render contract successfully registered!");
-                console.log(
-                    "Liquid Edition tokenURI() will now use the ERC721 render contract"
-                );
+                console.log("Liquid Edition tokenURI() will now use the ERC721 render contract");
             } catch Error(string memory reason) {
                 console.log("Failed to register render contract:");
                 console.log(reason);
                 console.log("You can register manually later using:");
-                console.log(
-                    "  cast send",
-                    liquidEditionAddress,
-                    "'setRenderContract(address)'",
-                    address(lens)
-                );
+                console.log("  cast send", liquidEditionAddress, "'setRenderContract(address)'", address(lens));
             } catch {
-                console.log(
-                    "Failed to register render contract (unknown error)"
-                );
+                console.log("Failed to register render contract (unknown error)");
                 console.log("You can register manually later using:");
-                console.log(
-                    "  cast send",
-                    liquidEditionAddress,
-                    "'setRenderContract(address)'",
-                    address(lens)
-                );
+                console.log("  cast send", liquidEditionAddress, "'setRenderContract(address)'", address(lens));
             }
             console.log("");
         } else {
             console.log("Skipping render contract registration");
             console.log("(Deployer is not token creator)");
             console.log("Token creator can register manually using:");
-            console.log(
-                "  cast send",
-                liquidEditionAddress,
-                "'setRenderContract(address)'",
-                address(lens)
-            );
+            console.log("  cast send", liquidEditionAddress, "'setRenderContract(address)'", address(lens));
             console.log("Token creator address:");
             console.logAddress(tokenCreator);
             console.log("");
@@ -218,32 +199,20 @@ contract DeployLiquidLensDemoV2 is Script {
         console.log("1. Verify the contract on Etherscan");
         console.log("2. View token metadata:");
         console.log("   - ERC721 Token #0 (ERC20 passthrough): tokenURI(0)");
-        console.log(
-            "   - ERC721 Token #1-#10: tokenURI(1) through tokenURI(10)"
-        );
+        console.log("   - ERC721 Token #1-#10: tokenURI(1) through tokenURI(10)");
         if (deployerAddress == tokenCreator) {
-            console.log(
-                "3. Render contract registered - Liquid Edition tokenURI() will use ERC721 render contract"
-            );
+            console.log("3. Render contract registered - Liquid Edition tokenURI() will use ERC721 render contract");
         } else {
-            console.log(
-                "3. Register render contract with Liquid Edition (if desired) so ERC20 tokenURI() uses ERC721"
-            );
+            console.log("3. Register render contract with Liquid Edition (if desired) so ERC20 tokenURI() uses ERC721");
         }
-        console.log(
-            "4. The artwork will dynamically update based on Liquid Edition market state"
-        );
-        console.log(
-            "5. Market state changes (swaps, transfers, burns) will trigger metadata refresh"
-        );
+        console.log("4. The artwork will dynamically update based on Liquid Edition market state");
+        console.log("5. Market state changes (swaps, transfers, burns) will trigger metadata refresh");
         console.log("");
         console.log("Example: View ERC721 token #1 metadata");
         console.log("  cast call", address(lens), "'tokenURI(uint256)' 1");
         if (deployerAddress == tokenCreator) {
             console.log("");
-            console.log(
-                "Example: View ERC20 metadata (uses ERC721 render contract)"
-            );
+            console.log("Example: View ERC20 metadata (uses ERC721 render contract)");
             console.log("  cast call", liquidEditionAddress, "'tokenURI()'");
         }
         console.log("");

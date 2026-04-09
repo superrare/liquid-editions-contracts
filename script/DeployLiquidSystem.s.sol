@@ -146,9 +146,13 @@ contract DeployLiquidSystem is Script {
         bool deploySwapGuard = vm.envOr("DEPLOY_SWAP_GUARD", false);
         bool deployInitGuard = vm.envOr("DEPLOY_INIT_GUARD", false);
         bool deployLiquidGuard = vm.envOr("DEPLOY_LIQUID_GUARD", false);
-        bool deployMigrationExecutor = vm.envOr("DEPLOY_MIGRATION_EXECUTOR", false);
-        bool deployLegacyFeeDistributor = !deployConfig.factory.useLiquidGuard &&
-            !deployLiquidGuard;
+        bool deployMigrationExecutor = vm.envOr(
+            "DEPLOY_MIGRATION_EXECUTOR",
+            false
+        );
+        bool deployLegacyFeeDistributor = !deployConfig
+            .factory
+            .useLiquidGuard && !deployLiquidGuard;
 
         address deployer = vm.addr(deployerPrivateKey);
         FeeDistributor sharedFeeDistributor;
@@ -262,7 +266,11 @@ contract DeployLiquidSystem is Script {
                 "DEPLOY_LIQUID_GUARD=true requires RARE token in NetworkConfig"
             );
         }
-        if (deploySwapGuard && !deployRouter && networkConfig.liquid.router == address(0)) {
+        if (
+            deploySwapGuard &&
+            !deployRouter &&
+            networkConfig.liquid.router == address(0)
+        ) {
             revert(
                 "DEPLOY_ROUTER=false and LIQUID_ROUTER=0x0 but DEPLOY_SWAP_GUARD=true"
             );
@@ -297,9 +305,9 @@ contract DeployLiquidSystem is Script {
             if (!deployLegacyFeeDistributor) {
                 require(
                     networkConfig.uniswapV4PoolManager != address(0) &&
-                networkConfig.rareToken != address(0),
-                "DEPLOY_FEE_DISTRIBUTOR requires V4 config when not legacy mode"
-            );
+                        networkConfig.rareToken != address(0),
+                    "DEPLOY_FEE_DISTRIBUTOR requires V4 config when not legacy mode"
+                );
             }
             uint16 totalFeeBPS = deployConfig.fees.totalFeeBPS;
             sharedFeeDistributor = new FeeDistributor(
@@ -307,7 +315,9 @@ contract DeployLiquidSystem is Script {
                 deployLegacyFeeDistributor
                     ? address(0)
                     : networkConfig.uniswapV4PoolManager, // poolManager
-                deployLegacyFeeDistributor ? address(0) : networkConfig.rareToken, // rareToken
+                deployLegacyFeeDistributor
+                    ? address(0)
+                    : networkConfig.rareToken, // rareToken
                 protocolFeeRecipient,
                 5000, // 50% beneficiary share (legacy default)
                 totalFeeBPS
@@ -633,29 +643,38 @@ contract DeployLiquidSystem is Script {
             );
 
             result.migrationExecutor = DeployLiquidMigrationExecutor.deploy(
-                deployer,              // owner (update post-deploy to multisig)
-                protocolFeeRecipient,  // protocolVault
+                deployer, // owner (update post-deploy to multisig)
+                protocolFeeRecipient, // protocolVault
                 liquidRegistryAddress
             );
 
             // Wire factory to executor
-            LiquidFactory(result.factory).setMigrationExecutor(result.migrationExecutor);
+            LiquidFactory(result.factory).setMigrationExecutor(
+                result.migrationExecutor
+            );
             console.log("  factory.setMigrationExecutor(migrationExecutor)");
 
             // Approve current pool hooks for migration targets
-            LiquidMigrationExecutor executorContract = LiquidMigrationExecutor(result.migrationExecutor);
+            LiquidMigrationExecutor executorContract = LiquidMigrationExecutor(
+                result.migrationExecutor
+            );
             if (effectivePoolHooks != address(0)) {
                 executorContract.approveHook(effectivePoolHooks, true);
                 console.log("  approveHook(effectivePoolHooks)");
             }
-            executorContract.setAllowedTickSpacing(deployConfig.factory.poolTickSpacing, true);
+            executorContract.setAllowedTickSpacing(
+                deployConfig.factory.poolTickSpacing,
+                true
+            );
             console.log("  setAllowedTickSpacing(poolTickSpacing)");
             executorContract.setAllowedFee(0, true);
             console.log("  setAllowedFee(0)");
         } else {
             result.migrationExecutor = networkConfig.liquid.migrationExecutor;
             if (result.migrationExecutor != address(0)) {
-                console.log("=== Step 5b: Using existing LiquidMigrationExecutor ===");
+                console.log(
+                    "=== Step 5b: Using existing LiquidMigrationExecutor ==="
+                );
                 console.log("LiquidMigrationExecutor address:");
                 console.logAddress(result.migrationExecutor);
             }
@@ -706,7 +725,9 @@ contract DeployLiquidSystem is Script {
             result.factory != address(0) &&
             result.liquidGuard != address(0)
         ) {
-            console.log("  Updating existing factory poolHooks to liquidGuard...");
+            console.log(
+                "  Updating existing factory poolHooks to liquidGuard..."
+            );
             LiquidFactory(result.factory).setPoolHooks(result.liquidGuard);
         }
         if (
@@ -716,7 +737,9 @@ contract DeployLiquidSystem is Script {
             result.factory != address(0) &&
             result.initGuard != address(0)
         ) {
-            console.log("  Updating existing factory poolHooks to initGuard...");
+            console.log(
+                "  Updating existing factory poolHooks to initGuard..."
+            );
             LiquidFactory(result.factory).setPoolHooks(result.initGuard);
         }
 
@@ -820,11 +843,12 @@ contract DeployLiquidSystem is Script {
             address(sharedFeeDistributor) != address(0) &&
             address(sharedLiquidRegistry) != address(0)
         ) {
-            DeployLiquidSystemReconcile.reconcileFeeDistributorBeneficiaryRegistry(
-                deployer,
-                sharedFeeDistributor,
-                sharedLiquidRegistry
-            );
+            DeployLiquidSystemReconcile
+                .reconcileFeeDistributorBeneficiaryRegistry(
+                    deployer,
+                    sharedFeeDistributor,
+                    sharedLiquidRegistry
+                );
         }
 
         if (
@@ -965,7 +989,9 @@ contract DeployLiquidSystem is Script {
         if (result.migrationExecutor != address(0)) {
             console.log("LiquidMigrationExecutor:");
             console.logAddress(result.migrationExecutor);
-            console.log(deployMigrationExecutor ? "  (deployed)" : "  (existing)");
+            console.log(
+                deployMigrationExecutor ? "  (deployed)" : "  (existing)"
+            );
         }
         console.log("");
 
@@ -1013,11 +1039,6 @@ contract DeployLiquidSystem is Script {
                 console.logAddress(result.liquidGuard);
                 console.log(",");
             }
-            if (deployLiquidGuard && liquidGuardFeeDistributorAddress != address(0)) {
-                console.log("feeDistributor (LiquidGuard):");
-                console.logAddress(liquidGuardFeeDistributorAddress);
-                console.log(",");
-            }
             if (deployFeeDistributor) {
                 console.log("feeDistributor:");
                 console.logAddress(feeDistributorAddress);
@@ -1048,7 +1069,10 @@ contract DeployLiquidSystem is Script {
                 console.logAddress(result.guard);
                 console.log(",");
             }
-            if (deployMigrationExecutor && result.migrationExecutor != address(0)) {
+            if (
+                deployMigrationExecutor &&
+                result.migrationExecutor != address(0)
+            ) {
                 console.log("migrationExecutor:");
                 console.logAddress(result.migrationExecutor);
                 console.log(",");
@@ -1141,7 +1165,10 @@ contract DeployLiquidSystem is Script {
                     uint24 fee,
                     int24 tickSpacing,
                     IHooks hooks
-                ) = abi.decode(data, (Currency, Currency, uint24, int24, IHooks));
+                ) = abi.decode(
+                        data,
+                        (Currency, Currency, uint24, int24, IHooks)
+                    );
                 PoolKey memory rareEthKey = PoolKey({
                     currency0: c0,
                     currency1: c1,

@@ -52,42 +52,50 @@ contract MockLiquid is ERC20, ILiquid {
             uint256 currentSupply
         )
     {
-        return (
-            mockRarePerToken,
-            mockTokenPerRare,
-            mockSqrtPriceX96,
-            mockCurrentTick,
-            mockLiquidity,
-            mockCurrentSupply
-        );
+        return (mockRarePerToken, mockTokenPerRare, mockSqrtPriceX96, mockCurrentTick, mockLiquidity, mockCurrentSupply);
     }
 
-    function getCurrentPrice()
-        external
-        view
-        override
-        returns (uint256 rarePerToken, uint256 tokenPerRare)
-    {
+    function getCurrentPrice() external view override returns (uint256 rarePerToken, uint256 tokenPerRare) {
         return (mockRarePerToken, mockTokenPerRare);
     }
 
     function quoteBuy(
         uint256 /* rareIn */
-    ) external pure override returns (uint256, uint160) {
+    )
+        external
+        pure
+        override
+        returns (uint256, uint160)
+    {
         revert("Not implemented in mock");
     }
 
     function quoteSell(
         uint256 /* liquidIn */
-    ) external pure override returns (uint256, uint160) {
+    )
+        external
+        pure
+        override
+        returns (uint256, uint160)
+    {
         revert("Not implemented in mock");
     }
 
-    function burn(uint256 /* amount */) external pure override {
+    function burn(
+        uint256 /* amount */
+    )
+        external
+        pure
+        override
+    {
         revert("Not implemented in mock");
     }
 
-    function migrateLiquidity(PoolKey calldata, uint160, Position[] calldata, address, uint256, uint256) external pure override {
+    function migrateLiquidity(PoolKey calldata, uint160, Position[] calldata, address, uint256, uint256)
+        external
+        pure
+        override
+    {
         revert("Not implemented in mock");
     }
 
@@ -147,12 +155,12 @@ contract MockLiquid is ERC20, ILiquid {
 contract LiquidLensDemoTest is Test {
     LiquidLensDemo public lens;
     MockLiquid public mockLiquid;
-    address public owner = makeAddr("owner");
+    address public deployer = makeAddr("deployer");
     address public artist = makeAddr("artist");
     address public collector = makeAddr("collector");
 
     function setUp() public {
-        vm.startPrank(owner);
+        vm.startPrank(deployer);
 
         // Deploy mock Liquid Edition
         mockLiquid = new MockLiquid(artist);
@@ -171,12 +179,13 @@ contract LiquidLensDemoTest is Test {
 
     function test_Deployment() public view {
         assertEq(address(lens.LIQUID_EDITION()), address(mockLiquid));
+        assertEq(lens.owner(), artist);
         assertEq(lens.nextTokenId(), 1);
         assertEq(lens.MAX_SUPPLY(), 10);
     }
 
     function test_Mint() public {
-        vm.startPrank(owner);
+        vm.startPrank(artist);
 
         // Mint first token
         lens.mint(collector);
@@ -192,7 +201,7 @@ contract LiquidLensDemoTest is Test {
     }
 
     function test_MintMaxSupply() public {
-        vm.startPrank(owner);
+        vm.startPrank(artist);
 
         // Mint all 10 tokens
         for (uint256 i = 0; i < 10; i++) {
@@ -209,7 +218,7 @@ contract LiquidLensDemoTest is Test {
     }
 
     function test_MintOnlyOwner() public {
-        vm.startPrank(collector);
+        vm.startPrank(deployer);
 
         vm.expectRevert();
         lens.mint(collector);
@@ -229,7 +238,7 @@ contract LiquidLensDemoTest is Test {
     }
 
     function test_TokenURI_ERC721() public {
-        vm.startPrank(owner);
+        vm.startPrank(artist);
         lens.mint(collector);
         vm.stopPrank();
 
@@ -253,7 +262,7 @@ contract LiquidLensDemoTest is Test {
     }
 
     function test_TokenURI_DynamicState() public {
-        vm.startPrank(owner);
+        vm.startPrank(artist);
         lens.mint(collector);
         vm.stopPrank();
 
@@ -275,7 +284,7 @@ contract LiquidLensDemoTest is Test {
     }
 
     function test_TokenURI_AllTokens() public {
-        vm.startPrank(owner);
+        vm.startPrank(artist);
 
         // Mint all tokens
         for (uint256 i = 0; i < 10; i++) {
@@ -303,7 +312,7 @@ contract LiquidLensDemoTest is Test {
     }
 
     function test_SVG_ContainsExpectedElements() public {
-        vm.startPrank(owner);
+        vm.startPrank(artist);
         lens.mint(collector);
         vm.stopPrank();
 
@@ -328,10 +337,7 @@ contract LiquidLensDemoTest is Test {
     }
 
     // Helper functions
-    function _contains(
-        string memory str,
-        string memory substr
-    ) internal pure returns (bool) {
+    function _contains(string memory str, string memory substr) internal pure returns (bool) {
         bytes memory strBytes = bytes(str);
         bytes memory substrBytes = bytes(substr);
 
@@ -350,17 +356,11 @@ contract LiquidLensDemoTest is Test {
         return false;
     }
 
-    function _equal(
-        string memory a,
-        string memory b
-    ) internal pure returns (bool) {
+    function _equal(string memory a, string memory b) internal pure returns (bool) {
         return keccak256(bytes(a)) == keccak256(bytes(b));
     }
 
-    function _indexOf(
-        bytes memory data,
-        string memory search
-    ) internal pure returns (uint256) {
+    function _indexOf(bytes memory data, string memory search) internal pure returns (uint256) {
         bytes memory searchBytes = bytes(search);
 
         for (uint256 i = 0; i <= data.length - searchBytes.length; i++) {

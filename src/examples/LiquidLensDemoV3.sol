@@ -7,6 +7,7 @@ import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {LiquidInstant} from "liquid-editions/LiquidInstant.sol";
+import {LiquidRenderOwnerResolver} from "liquid-editions/examples/LiquidRenderOwnerResolver.sol";
 
 /// @title LiquidLensDemoV3
 /// @notice Plotter art-inspired generative NFTs with hash-avalanche sensitivity.
@@ -22,7 +23,6 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
     string public collectionDescription;
 
     error MaxSupplyExceeded();
-    error InvalidLiquidEdition();
 
     struct MarketSnapshot {
         uint256 rarePerToken;
@@ -39,8 +39,7 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
         string memory _symbol,
         string memory _collectionName,
         string memory _collectionDescription
-    ) ERC721(_name, _symbol) Ownable(msg.sender) {
-        if (_liquidEdition == address(0)) revert InvalidLiquidEdition();
+    ) ERC721(_name, _symbol) Ownable(LiquidRenderOwnerResolver.resolve(_liquidEdition)) {
         LIQUID_EDITION = _liquidEdition;
         collectionName = _collectionName;
         collectionDescription = _collectionDescription;
@@ -52,9 +51,7 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
         nextTokenId++;
     }
 
-    function tokenURI(
-        uint256 tokenId
-    ) public view override returns (string memory) {
+    function tokenURI(uint256 tokenId) public view override returns (string memory) {
         if (tokenId > 0) {
             if (tokenId >= nextTokenId) revert ERC721NonexistentToken(tokenId);
             _requireOwned(tokenId);
@@ -71,44 +68,32 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
     }
 
     function _readMarketSnapshot() internal view returns (MarketSnapshot memory s) {
-        (
-            s.rarePerToken,
-            ,
-            s.sqrtPriceX96,
-            s.currentTick,
-            s.liquidity,
-            s.currentSupply
-        ) = ILiquid(LIQUID_EDITION).getMarketState();
+        (s.rarePerToken,, s.sqrtPriceX96, s.currentTick, s.liquidity, s.currentSupply) =
+            ILiquid(LIQUID_EDITION).getMarketState();
         s.maxTotalSupply = LiquidInstant(LIQUID_EDITION).maxTotalSupply();
     }
 
-    function _createMasterSeed(
-        uint256 tokenId,
-        MarketSnapshot memory s
-    ) internal pure returns (uint256) {
-        return
-            uint256(
-                keccak256(
-                    abi.encodePacked(
-                        tokenId,
-                        s.rarePerToken,
-                        s.sqrtPriceX96,
-                        s.currentTick,
-                        s.liquidity,
-                        s.currentSupply,
-                        s.maxTotalSupply
-                    )
+    function _createMasterSeed(uint256 tokenId, MarketSnapshot memory s) internal pure returns (uint256) {
+        return uint256(
+            keccak256(
+                abi.encodePacked(
+                    tokenId,
+                    s.rarePerToken,
+                    s.sqrtPriceX96,
+                    s.currentTick,
+                    s.liquidity,
+                    s.currentSupply,
+                    s.maxTotalSupply
                 )
-            );
+            )
+        );
     }
 
     // ============================================================
     //                     PALETTE SYSTEM
     // ============================================================
 
-    function _getPalette(
-        uint256 seed
-    ) internal pure returns (string[4] memory colors, string memory name) {
+    function _getPalette(uint256 seed) internal pure returns (string[4] memory colors, string memory name) {
         uint256 paletteId = seed % 8;
         if (paletteId == 0) {
             colors = ["f5f0e6", "2d1b0e", "6b4423", "8b6914"];
@@ -145,12 +130,8 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
         while (angle < 0) angle += 360;
         angle = angle % 360;
 
-        int256[13] memory angles = [
-            int256(0), 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360
-        ];
-        int256[13] memory values = [
-            int256(0), 500, 866, 1000, 866, 500, 0, -500, -866, -1000, -866, -500, 0
-        ];
+        int256[13] memory angles = [int256(0), 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360];
+        int256[13] memory values = [int256(0), 500, 866, 1000, 866, 500, 0, -500, -866, -1000, -866, -500, 0];
 
         for (uint256 i = 0; i < 12; i++) {
             if (angle >= angles[i] && angle < angles[i + 1]) {
@@ -175,18 +156,17 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
     //                     MAIN SVG COMPOSER
     // ============================================================
 
-    function _generateSVG(
-        uint256 masterSeed,
-        MarketSnapshot memory s
-    ) internal pure returns (string memory) {
+    function _generateSVG(uint256 masterSeed, MarketSnapshot memory s) internal pure returns (string memory) {
         // Palette is hash-derived: different masterSeed = different palette
         uint256 paletteSeed = uint256(keccak256(abi.encodePacked(masterSeed, "pal")));
-        (string[4] memory pal, ) = _getPalette(paletteSeed);
+        (string[4] memory pal,) = _getPalette(paletteSeed);
 
         string memory svg = string(
             abi.encodePacked(
                 '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">',
-                '<rect width="400" height="400" fill="#', pal[0], '"/>'
+                '<rect width="400" height="400" fill="#',
+                pal[0],
+                '"/>'
             )
         );
 
@@ -209,12 +189,13 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
         svg = string(
             abi.encodePacked(
                 svg,
-                '<g stroke="#', pal[1],
+                '<g stroke="#',
+                pal[1],
                 '" stroke-width="0.5" fill="none" opacity="0.6">',
                 '<circle cx="200" cy="200" r="4"/>',
                 '<line x1="196" y1="200" x2="204" y2="200"/>',
                 '<line x1="200" y1="196" x2="200" y2="204"/>',
-                '</g></svg>'
+                "</g></svg>"
             )
         );
 
@@ -225,16 +206,8 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
     //                  HASH-AVALANCHE HATCH GRID
     // ============================================================
 
-    function _hatchGrid(
-        uint256 masterSeed,
-        string memory inkColor
-    ) internal pure returns (string memory) {
-        string memory out = string(
-            abi.encodePacked(
-                '<g stroke="#', inkColor,
-                '" stroke-width="0.4" opacity="0.25">'
-            )
-        );
+    function _hatchGrid(uint256 masterSeed, string memory inkColor) internal pure returns (string memory) {
+        string memory out = string(abi.encodePacked('<g stroke="#', inkColor, '" stroke-width="0.4" opacity="0.25">'));
 
         uint256 cellSize = 50;
         for (uint256 i = 0; i < 64; i++) {
@@ -262,10 +235,15 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
                 out = string(
                     abi.encodePacked(
                         out,
-                        '<line x1="', _intToString(x1),
-                        '" y1="', _intToString(y1),
-                        '" x2="', _intToString(x2),
-                        '" y2="', _intToString(y2), '"/>'
+                        '<line x1="',
+                        _intToString(x1),
+                        '" y1="',
+                        _intToString(y1),
+                        '" x2="',
+                        _intToString(x2),
+                        '" y2="',
+                        _intToString(y2),
+                        '"/>'
                     )
                 );
             }
@@ -278,20 +256,15 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
     //                     CONTOUR FIELD
     // ============================================================
 
-    function _contourField(
-        uint256 masterSeed,
-        MarketSnapshot memory s,
-        string memory inkColor
-    ) internal pure returns (string memory) {
+    function _contourField(uint256 masterSeed, MarketSnapshot memory s, string memory inkColor)
+        internal
+        pure
+        returns (string memory)
+    {
         uint256 numRings = 4 + ((uint256(s.liquidity) % 1000000000) * 4) / 1000000000;
         if (numRings > 8) numRings = 8;
 
-        string memory out = string(
-            abi.encodePacked(
-                '<g stroke="#', inkColor,
-                '" stroke-width="0.6" fill="none">'
-            )
-        );
+        string memory out = string(abi.encodePacked('<g stroke="#', inkColor, '" stroke-width="0.6" fill="none">'));
 
         for (uint256 ring = 0; ring < numRings; ring++) {
             uint256 ringWord = uint256(keccak256(abi.encodePacked(masterSeed, "contour", ring)));
@@ -321,12 +294,7 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
                 }
             }
 
-            out = string(
-                abi.encodePacked(
-                    out,
-                    '<path d="', path, ' Z" opacity="0.', _uintToString(opacity), '"/>'
-                )
-            );
+            out = string(abi.encodePacked(out, '<path d="', path, ' Z" opacity="0.', _uintToString(opacity), '"/>'));
         }
 
         return string(abi.encodePacked(out, "</g>"));
@@ -336,11 +304,11 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
     //                     FLOW CURVES
     // ============================================================
 
-    function _flowCurves(
-        uint256 masterSeed,
-        string memory primaryInk,
-        string memory accentInk
-    ) internal pure returns (string memory) {
+    function _flowCurves(uint256 masterSeed, string memory primaryInk, string memory accentInk)
+        internal
+        pure
+        returns (string memory)
+    {
         string memory out = "";
 
         for (uint256 i = 0; i < 20; i++) {
@@ -353,17 +321,13 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
             int256 y = int256((curveWord >> 32) % 400);
             int256 baseAngle = int256((curveWord >> 48) % 360);
 
-            string memory path = string(
-                abi.encodePacked("M", _intToString(x), ",", _intToString(y))
-            );
+            string memory path = string(abi.encodePacked("M", _intToString(x), ",", _intToString(y)));
 
             uint256 segments = 8 + ((curveWord >> 64) % 7);
             for (uint256 j = 0; j < segments; j++) {
                 uint256 stepWord = uint256(keccak256(abi.encodePacked(curveWord, j)));
-                int256 localAngle = baseAngle +
-                    (_sin((x * 360) / 400) * 50) / 1000 +
-                    (_cos((y * 360) / 400) * 50) / 1000 +
-                    int256(stepWord % 20) - 10;
+                int256 localAngle = baseAngle + (_sin((x * 360) / 400) * 50) / 1000 + (_cos((y * 360) / 400) * 50)
+                    / 1000 + int256(stepWord % 20) - 10;
 
                 int256 stepSize = 6 + int256(stepWord % 10);
                 x = _clamp(x + (_cos(localAngle) * stepSize) / 1000, 5, 395);
@@ -375,10 +339,13 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
             out = string(
                 abi.encodePacked(
                     out,
-                    '<path d="', path,
-                    '" stroke="#', ink,
+                    '<path d="',
+                    path,
+                    '" stroke="#',
+                    ink,
                     '" stroke-width="1.05" fill="none" stroke-linecap="round" opacity="0.',
-                    _uintToString(opacity), '"/>'
+                    _uintToString(opacity),
+                    '"/>'
                 )
             );
         }
@@ -390,13 +357,8 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
     //                     STIPPLE CLOUD
     // ============================================================
 
-    function _stippleCloud(
-        uint256 masterSeed,
-        string memory inkColor
-    ) internal pure returns (string memory) {
-        string memory out = string(
-            abi.encodePacked('<g fill="none" stroke="#', inkColor, '" stroke-width="0.9">')
-        );
+    function _stippleCloud(uint256 masterSeed, string memory inkColor) internal pure returns (string memory) {
+        string memory out = string(abi.encodePacked('<g fill="none" stroke="#', inkColor, '" stroke-width="0.9">'));
 
         for (uint256 i = 0; i < 80; i++) {
             uint256 w = uint256(keccak256(abi.encodePacked(masterSeed, "dot", i)));
@@ -414,10 +376,15 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
                 out = string(
                     abi.encodePacked(
                         out,
-                        '<circle cx="', _uintToString(x),
-                        '" cy="', _uintToString(y),
-                        '" r="', _uintToString(r),
-                        '" opacity="0.', _uintToString(opacity), '"/>'
+                        '<circle cx="',
+                        _uintToString(x),
+                        '" cy="',
+                        _uintToString(y),
+                        '" r="',
+                        _uintToString(r),
+                        '" opacity="0.',
+                        _uintToString(opacity),
+                        '"/>'
                     )
                 );
             }
@@ -430,31 +397,21 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
     //                     RADIAL TICKS
     // ============================================================
 
-    function _radialTicks(
-        uint256 masterSeed,
-        MarketSnapshot memory s,
-        string memory ink1,
-        string memory ink2
-    ) internal pure returns (string memory) {
+    function _radialTicks(uint256 masterSeed, MarketSnapshot memory s, string memory ink1, string memory ink2)
+        internal
+        pure
+        returns (string memory)
+    {
         string memory group = '<g transform="translate(200 200)">';
-        uint256[4] memory values = [
-            s.rarePerToken,
-            uint256(s.sqrtPriceX96),
-            uint256(s.liquidity),
-            s.currentSupply
-        ];
+        uint256[4] memory values = [s.rarePerToken, uint256(s.sqrtPriceX96), uint256(s.liquidity), s.currentSupply];
 
         for (uint256 ring = 0; ring < 4; ring++) {
-            uint256 ringWord = uint256(
-                keccak256(abi.encodePacked(masterSeed, "ring", ring, values[ring]))
-            );
+            uint256 ringWord = uint256(keccak256(abi.encodePacked(masterSeed, "ring", ring, values[ring])));
             uint256 r = 35 + (ring * 22);
             string memory ink = (ring % 2 == 0) ? ink1 : ink2;
 
             for (uint256 t = 0; t < 24; t++) {
-                uint256 tickWord = uint256(
-                    keccak256(abi.encodePacked(ringWord, t, s.currentTick))
-                );
+                uint256 tickWord = uint256(keccak256(abi.encodePacked(ringWord, t, s.currentTick)));
                 if ((tickWord & 1) == 0) continue;
                 uint256 angle = t * 15;
                 uint256 len = 3 + ((tickWord >> 8) % 10);
@@ -462,12 +419,17 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
                 group = string(
                     abi.encodePacked(
                         group,
-                        '<line x1="', _uintToString(r),
-                        '" y1="0" x2="', _uintToString(r + len),
-                        '" y2="0" stroke="#', ink,
+                        '<line x1="',
+                        _uintToString(r),
+                        '" y1="0" x2="',
+                        _uintToString(r + len),
+                        '" y2="0" stroke="#',
+                        ink,
                         '" stroke-width="1.1" transform="rotate(',
                         _uintToString(angle),
-                        ')" opacity="0.', _uintToString(opacity), '"/>'
+                        ')" opacity="0.',
+                        _uintToString(opacity),
+                        '"/>'
                     )
                 );
             }
@@ -480,34 +442,32 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
     //                     METADATA
     // ============================================================
 
-    function _generateMetadataJSON(
-        uint256 tokenId,
-        uint256 masterSeed,
-        MarketSnapshot memory s,
-        string memory svg
-    ) internal pure returns (string memory) {
+    function _generateMetadataJSON(uint256 tokenId, uint256 masterSeed, MarketSnapshot memory s, string memory svg)
+        internal
+        pure
+        returns (string memory)
+    {
         uint256 paletteSeed = uint256(keccak256(abi.encodePacked(masterSeed, "pal")));
         (, string memory paletteName) = _getPalette(paletteSeed);
 
-        return
-            string(
-                abi.encodePacked(
-                    '{"name":"',
-                    _tokenName(tokenId),
-                    '","description":"Plotter-inspired generative art with hash-avalanche sensitivity. Tiny market-state changes trigger major visual shifts.","image":"',
-                    _buildImageURI(svg),
-                    '","attributes":[',
-                    '{"trait_type":"Palette","value":"', paletteName, '"},',
-                    '{"trait_type":"Style","value":"Reactive Plotter Art"},',
-                    _buildMarketAttributes(s),
-                    "]}"
-                )
-            );
+        return string(
+            abi.encodePacked(
+                '{"name":"',
+                _tokenName(tokenId),
+                '","description":"Plotter-inspired generative art with hash-avalanche sensitivity. Tiny market-state changes trigger major visual shifts.","image":"',
+                _buildImageURI(svg),
+                '","attributes":[',
+                '{"trait_type":"Palette","value":"',
+                paletteName,
+                '"},',
+                '{"trait_type":"Style","value":"Reactive Plotter Art"},',
+                _buildMarketAttributes(s),
+                "]}"
+            )
+        );
     }
 
-    function _buildMarketAttributes(
-        MarketSnapshot memory s
-    ) internal pure returns (string memory) {
+    function _buildMarketAttributes(MarketSnapshot memory s) internal pure returns (string memory) {
         return string(
             abi.encodePacked(
                 '{"trait_type":"Price (RARE)","value":"',
@@ -528,26 +488,15 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
         return string(abi.encodePacked("Liquid Topology V3 #", _uintToString(tokenId)));
     }
 
-    function _buildImageURI(
-        string memory svg
-    ) internal pure returns (string memory) {
-        return
-            string(
-                abi.encodePacked(
-                    "data:image/svg+xml;base64,",
-                    _base64Encode(bytes(svg))
-                )
-            );
+    function _buildImageURI(string memory svg) internal pure returns (string memory) {
+        return string(abi.encodePacked("data:image/svg+xml;base64,", _base64Encode(bytes(svg))));
     }
 
     // ============================================================
     //                     UTILITY FUNCTIONS
     // ============================================================
 
-    function _formatDecimal(
-        uint256 value,
-        uint256 decimals
-    ) internal pure returns (string memory) {
+    function _formatDecimal(uint256 value, uint256 decimals) internal pure returns (string memory) {
         if (value == 0) return "0";
         if (decimals == 0) return _uintToString(value / 1e18);
 
@@ -564,9 +513,7 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
         return string(abi.encodePacked(_uintToString(wholePart), ".", fractionalStr));
     }
 
-    function _uintToString(
-        uint256 value
-    ) internal pure returns (string memory) {
+    function _uintToString(uint256 value) internal pure returns (string memory) {
         if (value == 0) return "0";
         uint256 temp = value;
         uint256 digits;
@@ -592,11 +539,8 @@ contract LiquidLensDemoV3 is ERC721, Ownable {
     //                     BASE64 ENCODING
     // ============================================================
 
-    function _base64Encode(
-        bytes memory data
-    ) internal pure returns (string memory) {
-        bytes
-            memory table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    function _base64Encode(bytes memory data) internal pure returns (string memory) {
+        bytes memory table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         uint256 encodedLen = 4 * ((data.length + 2) / 3);
         bytes memory result = new bytes(encodedLen + 32);
 

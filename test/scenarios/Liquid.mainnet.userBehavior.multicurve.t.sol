@@ -5,64 +5,40 @@ import "forge-std/console.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ILiquid} from "liquid-editions/interfaces/ILiquid.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
-import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
+import {Currency} from "v4-core/types/Currency.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 import {MainnetBehaviorBase} from "liquid-editions-test/helpers/bases/MainnetBehaviorBase.sol";
-import {PoolCalibrator} from "liquid-editions-test/helpers/PoolCalibrator.sol";
 
 /**
- * @title Liquid Mainnet MultiCurve User Behavior Simulation
+ * @title Liquid Mainnet MultiCurve User Behavior Simulation (Reusable Base)
  * @notice Fork test against the deployed Eth Mainnet system.
- *         Creates a fresh LiquidMultiCurve token then simulates
- *         a realistic sequence of ETH buys and sells, logging per-trade:
- *           - ETH in / tokens out
- *           - RARE routed into the pool
- *           - Token price in RARE
- *           - Fees paid to beneficiary and protocol (from FeeDistributor events)
+ *         Concrete demand profile wrappers override:
+ *           - curve definition
+ *           - buy size
+ *           - number of buys
  *
  * @dev Requires MAINNET_RPC_URL in .env.
- *      Run with: make test-mainnet-behavior-multicurve
- *      Or:  forge test test/scenarios/Liquid.mainnet.userBehavior.multicurve.t.sol -vv
  */
-contract LiquidMainnetMultiCurveBehaviorTest is MainnetBehaviorBase {
-    // ============================================
-    // BUY SCENARIO CONFIG
-    // ============================================
-    uint256 internal constant BUY_AMOUNT_ETH = 0.1e18;
-    uint256 internal constant NUM_BUYS = 200;
+abstract contract LiquidMainnetMultiCurveBehaviorBaseTest is MainnetBehaviorBase {
+    using PoolIdLibrary for PoolKey;
+
+    bytes32 internal constant SWAP_TOPIC =
+        keccak256("Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)");
 
     // ============================================
-    // MULTICURVE CONFIG (tick-based)
+    // PROFILE CONFIG (overridden by wrappers)
     // ============================================
 
-    /// @dev Preset multicurve configuration matching DeployConfig.getDefaultMultiCurveConfig():
-    ///      - Trip wire:     ticks [-27000,      0], 2 positions, 10% shares
-    ///      - Distribution:  ticks [     0,  28440], 3 positions, 40% shares
-    ///      - Steady state:  ticks [ 28440,  60000], 5 positions, 50% shares
-    function _buildCurves() internal pure returns (Curve[] memory curves) {
-        curves = new Curve[](3);
-        curves[0] = Curve({
-            tickLower: -27000,
-            tickUpper: 0,
-            numPositions: 2,
-            shares: 0.1e18
-        });
-        curves[1] = Curve({
-            tickLower: 0,
-            tickUpper: 28440,
-            numPositions: 3,
-            shares: 0.4e18
-        });
-        curves[2] = Curve({
-            tickLower: 28440,
-            tickUpper: 60000,
-            numPositions: 5,
-            shares: 0.50e18
-        });
-    }
+    function _profileName() internal pure virtual returns (string memory);
+
+    function _buyAmountEth() internal pure virtual returns (uint256);
+
+    function _numBuys() internal pure virtual returns (uint256);
+
+    function _buildCurves() internal pure virtual returns (Curve[] memory curves);
 
     // ============================================
     // FORMATTING HELPERS
@@ -166,6 +142,36 @@ contract LiquidMainnetMultiCurveBehaviorTest is MainnetBehaviorBase {
         return "seg=done (above curve)";
     }
 
+    /// @dev Parses logs and returns the RARE output amount from the ETH->RARE hop.
+    ///      This captures actual routed RARE and avoids using token contract balances.
+    function _parseRareRoutedFromEthRareSwap(
+        Vm.Log[] memory logs
+    ) internal view returns (uint256 rareRouted) {
+        PoolKey memory ethRareKey = PoolKey({
+            currency0: Currency.wrap(address(0)),
+            currency1: Currency.wrap(config.rareToken),
+            fee: ETH_RARE_POOL_FEE,
+            tickSpacing: ETH_RARE_POOL_TICK_SPACING,
+            hooks: IHooks(address(0))
+        });
+        PoolId ethRarePoolId = ethRareKey.toId();
+        for (uint256 i; i < logs.length; i++) {
+            // Restrict to PoolManager Swap logs for the ETH/RARE pool.
+            if (logs[i].emitter != config.uniswapV4PoolManager) continue;
+            if (logs[i].topics.length < 2) continue;
+            if (logs[i].topics[1] != PoolId.unwrap(ethRarePoolId)) continue;
+            if (logs[i].topics[0] != SWAP_TOPIC) continue;
+
+            (int128 amount0, int128 amount1, , , , ) =
+                abi.decode(logs[i].data, (int128, int128, uint160, uint128, int24, uint24));
+
+            // ETH->RARE exact-in on this pool means: amount0 > 0 (pool receives ETH), amount1 < 0 (pool sends RARE).
+            if (amount0 > 0 && amount1 < 0) {
+                rareRouted += uint256(-int256(amount1));
+            }
+        }
+    }
+
     /**
      * @dev Executes a buy, updates totals, and logs everything — including curve
      *      progress — on a single line.
@@ -178,8 +184,6 @@ contract LiquidMainnetMultiCurveBehaviorTest is MainnetBehaviorBase {
     ) internal {
         (uint256 rarePriceBefore, , , , , ) = token.getMarketState();
         uint256 ethPxBefore = _toEthPrice(rarePriceBefore);
-        uint256 rareBefore = IERC20(config.rareToken).balanceOf(address(token));
-
         vm.recordLogs();
         vm.prank(buyer);
         (bytes memory commands, bytes[] memory inputs) = _encodeBuyRoute(
@@ -197,10 +201,7 @@ contract LiquidMainnetMultiCurveBehaviorTest is MainnetBehaviorBase {
         );
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
-        uint256 rareAfter = IERC20(config.rareToken).balanceOf(address(token));
-        uint256 rareConsumed = rareAfter > rareBefore
-            ? rareAfter - rareBefore
-            : 0;
+        uint256 rareConsumed = _parseRareRoutedFromEthRareSwap(logs);
 
         (uint256 rarePriceAfter, , , int24 tickAfter, , ) = token
             .getMarketState();
@@ -297,22 +298,6 @@ contract LiquidMainnetMultiCurveBehaviorTest is MainnetBehaviorBase {
     function setUp() public {
         _setupMainnetBehavior();
 
-        // Deepen the RARE/ETH pool so the ETH→RARE leg has realistic slippage
-        PoolCalibrator calibrator = new PoolCalibrator();
-        vm.deal(address(calibrator), 100000 ether);
-        deal(config.rareToken, address(calibrator), 500_000_000 ether);
-        calibrator.calibrate(
-            IPoolManager(config.uniswapV4PoolManager),
-            PoolKey({
-                currency0: CurrencyLibrary.ADDRESS_ZERO,
-                currency1: Currency.wrap(config.rareToken),
-                fee: ETH_RARE_POOL_FEE,
-                tickSpacing: ETH_RARE_POOL_TICK_SPACING,
-                hooks: IHooks(address(0))
-            }),
-            config.rareToken
-        );
-
         tokenCreator = makeAddr("tokenCreator");
         vm.deal(tokenCreator, 10000 ether);
         deal(config.rareToken, tokenCreator, initialRareLiquidity);
@@ -350,14 +335,27 @@ contract LiquidMainnetMultiCurveBehaviorTest is MainnetBehaviorBase {
     // ============================================
 
     function testMultiCurveUserBehaviorModel() public {
+        uint256 buyAmountEth = _buyAmountEth();
+        uint256 numBuys = _numBuys();
+
         console.log("");
         console.log("========================================");
         console.log("  LIQUID MAINNET MULTICURVE BEHAVIOR");
         console.log("========================================");
+        console.log("Profile:", _profileName());
         console.log("Token:", address(token));
         console.log("Factory:", address(factory));
         console.log("Router:", address(router));
         console.log("FeeDistributor:", config.liquid.feeDistributor);
+        console.log(
+            string.concat(
+                "Buy config: ",
+                _fmtPrice(buyAmountEth),
+                " ETH x ",
+                vm.toString(numBuys),
+                " buys"
+            )
+        );
         console.log(
             string.concat(
                 "Initial RARE liquidity: ",
@@ -396,10 +394,12 @@ contract LiquidMainnetMultiCurveBehaviorTest is MainnetBehaviorBase {
 
         ScenarioTotals memory totals;
         int24 initialTick;
+        uint256 initialRarePx;
         uint256 initialEthPx;
         {
             (uint256 rarePrice, , , int24 tick, , ) = token.getMarketState();
             initialTick = tick;
+            initialRarePx = rarePrice;
             initialEthPx = _toEthPrice(rarePrice);
             totals.minTickReached = tick;
             totals.maxTickReached = tick;
@@ -416,17 +416,18 @@ contract LiquidMainnetMultiCurveBehaviorTest is MainnetBehaviorBase {
 
         // ---- BUY SEQUENCE ----
         console.log("--- BUY SEQUENCE ---");
-        for (uint256 i; i < NUM_BUYS; i++) {
+        for (uint256 i; i < numBuys; i++) {
             uint256 buyerIdx = i % 5;
             _doTrackedBuyWithProgress(
                 totals,
                 buyers[buyerIdx],
-                BUY_AMOUNT_ETH,
+                buyAmountEth,
                 string.concat("buyer", vm.toString(buyerIdx))
             );
         }
 
         _printMarketState("AFTER ALL BUYS");
+        _printRareEthPrice();
 
         // ---- SELL SEQUENCE ----
         console.log("--- SELL SEQUENCE ---");
@@ -448,16 +449,13 @@ contract LiquidMainnetMultiCurveBehaviorTest is MainnetBehaviorBase {
         _printMarketState("FINAL STATE");
 
         // ---- SUMMARY ----
+        uint256 poolLaunchSupply = factory.maxTotalSupply() -
+            factory.creatorLaunchReward();
+
         console.log("========================================");
         console.log("  SUMMARY");
         console.log("========================================");
-        console.log(
-            string.concat(
-                "Total ETH spent on buys   : ",
-                _fmtPrice(totals.totalEthIn),
-                " ETH"
-            )
-        );
+        console.log("--- RARE TOKEN SUMMARY ---");
         console.log(
             string.concat(
                 "Total RARE routed in      : ",
@@ -465,11 +463,30 @@ contract LiquidMainnetMultiCurveBehaviorTest is MainnetBehaviorBase {
                 " RARE"
             )
         );
+        uint256 rarePerEth = totals.totalEthIn == 0
+            ? 0
+            : (totals.totalRareIn * 1e18) / totals.totalEthIn;
         console.log(
             string.concat(
                 "  ETH->RARE efficiency    : ",
-                _fmt((totals.totalRareIn * 1e18) / totals.totalEthIn),
+                _fmt(rarePerEth),
                 " RARE/ETH"
+            )
+        );
+        console.log(
+            string.concat(
+                "Total fees paid (RARE)    : ",
+                _fmt(totals.totalFeesRare),
+                " RARE"
+            )
+        );
+        console.log("");
+        console.log("--- LIQUID TOKEN SUMMARY ---");
+        console.log(
+            string.concat(
+                "Total ETH spent on buys   : ",
+                _fmtPrice(totals.totalEthIn),
+                " ETH"
             )
         );
         console.log(
@@ -480,8 +497,14 @@ contract LiquidMainnetMultiCurveBehaviorTest is MainnetBehaviorBase {
         );
         console.log(
             string.concat(
+                "Pool launch supply        : ",
+                _fmtTokens(poolLaunchSupply)
+            )
+        );
+        console.log(
+            string.concat(
                 "  % of pool supply        : ",
-                _fmtPct(totals.totalTokensBought, 900_000e18)
+                _fmtPct(totals.totalTokensBought, poolLaunchSupply)
             )
         );
         console.log(
@@ -489,13 +512,6 @@ contract LiquidMainnetMultiCurveBehaviorTest is MainnetBehaviorBase {
                 "Total fees paid (ETH)     : ",
                 _fmtPrice(totals.totalFeesEth),
                 " ETH"
-            )
-        );
-        console.log(
-            string.concat(
-                "Total fees paid (RARE)    : ",
-                _fmt(totals.totalFeesRare),
-                " RARE"
             )
         );
         console.log(
@@ -546,34 +562,66 @@ contract LiquidMainnetMultiCurveBehaviorTest is MainnetBehaviorBase {
         {
             (uint256 finalRarePrice, , , , , ) = token.getMarketState();
             uint256 finalEthPx = _toEthPrice(finalRarePrice);
-            string memory totalPctChange;
+            string memory totalRarePctChange;
+            string memory totalEthPctChange;
+            if (initialRarePx > 0 && finalRarePrice > 0) {
+                uint256 rareAbsDelta = finalRarePrice > initialRarePx
+                    ? finalRarePrice - initialRarePx
+                    : initialRarePx - finalRarePrice;
+                totalRarePctChange = string.concat(
+                    finalRarePrice >= initialRarePx ? "+" : "-",
+                    _fmtPct(rareAbsDelta, initialRarePx)
+                );
+            } else {
+                totalRarePctChange = "n/a";
+            }
             if (initialEthPx > 0 && finalEthPx > 0) {
                 uint256 absDelta = finalEthPx > initialEthPx
                     ? finalEthPx - initialEthPx
                     : initialEthPx - finalEthPx;
-                totalPctChange = string.concat(
+                totalEthPctChange = string.concat(
                     finalEthPx >= initialEthPx ? "+" : "-",
                     _fmtPct(absDelta, initialEthPx)
                 );
             } else {
-                totalPctChange = "n/a";
+                totalEthPctChange = "n/a";
             }
             console.log(
                 string.concat(
-                    "Price start               : ",
+                    "Price start (RARE/token)  : ",
+                    _fmtPrice(initialRarePx),
+                    " RARE/token"
+                )
+            );
+            console.log(
+                string.concat(
+                    "Price end (RARE/token)    : ",
+                    _fmtPrice(finalRarePrice),
+                    " RARE/token"
+                )
+            );
+            console.log(
+                string.concat(
+                    "Total RARE price change   : ",
+                    totalRarePctChange
+                )
+            );
+            console.log(
+                string.concat(
+                    "Price start (ETH/token)   : ",
                     _fmtPrice(initialEthPx),
                     " ETH/token"
                 )
             );
             console.log(
                 string.concat(
-                    "Price end                 : ",
+                    "Price end (ETH/token)     : ",
                     _fmtPrice(finalEthPx),
                     " ETH/token"
                 )
             );
             console.log(
-                string.concat("Total price change        : ", totalPctChange)
+                string.concat("Total ETH price change    : ", totalEthPctChange)
             );
         }
         console.log("========================================");

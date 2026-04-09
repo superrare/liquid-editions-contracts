@@ -28,13 +28,13 @@ import {Position} from "doppler/types/Position.sol";
 
 import {QuoterRevert} from "@uniswap/v4-periphery/libraries/QuoterRevert.sol";
 
-/*                                    
-  _       _____  ____   _    _  _____  _____  
- | |     |_   _|/ __ \ | |  | ||_   _||  __ \ 
+/*
+  _       _____  ____   _    _  _____  _____
+ | |     |_   _|/ __ \ | |  | ||_   _||  __ \
  | |       | | | |  | || |  | |  | |  | |  | |
  | |       | | | |  | || |  | |  | |  | |  | |
  | |____  _| |_| |__| || |__| | _| |_ | |__| |
- |______||_____|\___\_\ \____/ |_____||_____/ 
+ |______||_____|\___\_\ \____/ |_____||_____/
 
 */
 
@@ -47,13 +47,7 @@ error AlreadyInitialized();
 /// @notice A liquid edition token with multi-position concentrated liquidity (anti-sniping launch).
 /// @dev Uses Doppler's Multicurve library to distribute liquidity across multiple positions instead of one.
 ///      Implements ILiquid + ILiquidBase identically to LiquidInstant for frontend compatibility.
-contract LiquidMultiCurve is
-    ILiquid,
-    ILiquidBase,
-    ERC20Upgradeable,
-    ReentrancyGuardUpgradeable,
-    IUnlockCallback
-{
+contract LiquidMultiCurve is ILiquid, ILiquidBase, ERC20Upgradeable, ReentrancyGuardUpgradeable, IUnlockCallback {
     using BalanceDeltaLibrary for BalanceDelta;
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
@@ -153,8 +147,9 @@ contract LiquidMultiCurve is
         ILiquidFactory factoryContract = ILiquidFactory(factory);
         baseToken = factoryContract.baseToken();
         poolManager = factoryContract.poolManager();
-        if (baseToken == address(0) || poolManager == address(0))
+        if (baseToken == address(0) || poolManager == address(0)) {
             revert AddressZero();
+        }
 
         // Validate token URI
         if (bytes(_tokenUri).length == 0) revert InvalidTokenURI();
@@ -196,20 +191,9 @@ contract LiquidMultiCurve is
     /// @param from Sender address
     /// @param to Recipient address
     /// @param value Amount transferred
-    function _update(
-        address from,
-        address to,
-        uint256 value
-    ) internal virtual override {
+    function _update(address from, address to, uint256 value) internal virtual override {
         super._update(from, to, value);
-        emit LiquidTransfer(
-            from,
-            to,
-            value,
-            balanceOf(from),
-            balanceOf(to),
-            totalSupply()
-        );
+        emit LiquidTransfer(from, to, value, balanceOf(from), balanceOf(to), totalSupply());
     }
 
     /// @notice Returns token metadata URI (ERC-1046 compatible)
@@ -219,13 +203,17 @@ contract LiquidMultiCurve is
             try IRender(renderContract).tokenURI() returns (string memory uri) {
                 if (bytes(uri).length > 0) return uri;
             } catch {}
-            try IRender(renderContract).tokenURI(uint256(0)) returns (
-                string memory uri
-            ) {
+            try IRender(renderContract).tokenURI(uint256(0)) returns (string memory uri) {
                 if (bytes(uri).length > 0) return uri;
             } catch {}
         }
         return initialTokenUri;
+    }
+
+    /// @notice Returns the controlling address for this Liquid token.
+    /// @dev Mirrors tokenCreator so linked render contracts can align ownership.
+    function owner() external view returns (address) {
+        return tokenCreator;
     }
 
     /// @notice Sets the render contract for dynamic metadata (token creator only)
@@ -263,28 +251,20 @@ contract LiquidMultiCurve is
 
         // Defense-in-depth: verify currencies match even though executor validates this
         if (
-            Currency.unwrap(newPoolKey.currency0) !=
-            Currency.unwrap(poolKey.currency0) ||
-            Currency.unwrap(newPoolKey.currency1) !=
-            Currency.unwrap(poolKey.currency1)
+            Currency.unwrap(newPoolKey.currency0) != Currency.unwrap(poolKey.currency0)
+                || Currency.unwrap(newPoolKey.currency1) != Currency.unwrap(poolKey.currency1)
         ) revert CurrencyMismatch();
 
         _unlockExpected = true;
-        IPoolManager(poolManager).unlock(
-            abi.encode(
-                UnlockContext({
-                    action: UnlockAction.MIGRATE_LIQUIDITY,
-                    data: abi.encode(
-                        newPoolKey,
-                        newSqrtPriceX96,
-                        newPositions,
-                        dustRecipient,
-                        maxDust0,
-                        maxDust1
-                    )
-                })
-            )
-        );
+        IPoolManager(poolManager)
+            .unlock(
+                abi.encode(
+                    UnlockContext({
+                        action: UnlockAction.MIGRATE_LIQUIDITY,
+                        data: abi.encode(newPoolKey, newSqrtPriceX96, newPositions, dustRecipient, maxDust0, maxDust1)
+                    })
+                )
+            );
         _unlockExpected = false;
     }
 
@@ -301,19 +281,9 @@ contract LiquidMultiCurve is
     function getLaunchState()
         external
         pure
-        returns (
-            ILiquidBase.LaunchType launchType,
-            bool poolLive,
-            address auction,
-            address strategyAddr
-        )
+        returns (ILiquidBase.LaunchType launchType, bool poolLive, address auction, address strategyAddr)
     {
-        return (
-            ILiquidBase.LaunchType.MULTICURVE,
-            true,
-            address(0),
-            address(0)
-        );
+        return (ILiquidBase.LaunchType.MULTICURVE, true, address(0), address(0));
     }
 
     /// @inheritdoc ILiquid
@@ -324,21 +294,13 @@ contract LiquidMultiCurve is
 
     /// @notice Returns current pool price in both directions (RARE per token, token per RARE)
     /// @dev Reads sqrtPriceX96 from pool slot0 and converts to human-readable ratios
-    function getCurrentPrice()
-        external
-        view
-        returns (uint256 rarePerToken, uint256 tokenPerRare)
-    {
+    function getCurrentPrice() external view returns (uint256 rarePerToken, uint256 tokenPerRare) {
         if (PoolId.unwrap(poolId) == bytes32(0)) revert PoolNotInitialized();
 
         IPoolManager pm = IPoolManager(poolManager);
-        (uint160 sqrtPriceX96, , , ) = pm.getSlot0(poolId);
+        (uint160 sqrtPriceX96,,,) = pm.getSlot0(poolId);
 
-        uint256 priceQ128 = FullMath.mulDiv(
-            uint256(sqrtPriceX96),
-            uint256(sqrtPriceX96),
-            1 << 64
-        );
+        uint256 priceQ128 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), 1 << 64);
         uint256 denominatorQ128 = 1 << 128;
 
         if (priceQ128 == 0) return (0, 0);
@@ -371,15 +333,11 @@ contract LiquidMultiCurve is
         if (PoolId.unwrap(poolId) == bytes32(0)) revert PoolNotInitialized();
 
         IPoolManager pm = IPoolManager(poolManager);
-        (sqrtPriceX96, currentTick, , ) = pm.getSlot0(poolId);
+        (sqrtPriceX96, currentTick,,) = pm.getSlot0(poolId);
         liquidity = pm.getLiquidity(poolId);
         currentSupply = totalSupply();
 
-        uint256 priceQ128 = FullMath.mulDiv(
-            uint256(sqrtPriceX96),
-            uint256(sqrtPriceX96),
-            1 << 64
-        );
+        uint256 priceQ128 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), 1 << 64);
         uint256 denominatorQ128 = 1 << 128;
 
         if (priceQ128 == 0) {
@@ -401,9 +359,7 @@ contract LiquidMultiCurve is
     /// @param rareIn Amount of RARE to swap
     /// @return liquidOut Expected LIQUID output
     /// @return sqrtPriceX96After Post-swap sqrt price
-    function quoteBuy(
-        uint256 rareIn
-    ) external returns (uint256 liquidOut, uint160 sqrtPriceX96After) {
+    function quoteBuy(uint256 rareIn) external returns (uint256 liquidOut, uint160 sqrtPriceX96After) {
         return _simulateQuoteBuy(rareIn);
     }
 
@@ -411,9 +367,7 @@ contract LiquidMultiCurve is
     /// @param liquidIn Amount of LIQUID tokens to swap
     /// @return rareOut Expected RARE output
     /// @return sqrtPriceX96After Post-swap sqrt price
-    function quoteSell(
-        uint256 liquidIn
-    ) external returns (uint256 rareOut, uint160 sqrtPriceX96After) {
+    function quoteSell(uint256 liquidIn) external returns (uint256 rareOut, uint160 sqrtPriceX96After) {
         return _simulateQuoteSell(liquidIn);
     }
 
@@ -421,10 +375,7 @@ contract LiquidMultiCurve is
     /// @dev Uses Doppler Multicurve library to distribute liquidity across positions for anti-sniping
     /// @param rareBalance Amount of RARE tokens for initial liquidity
     /// @param curves Curve configuration (tick ranges, shares) for position distribution
-    function _deployPool(
-        uint256 rareBalance,
-        Curve[] calldata curves
-    ) internal {
+    function _deployPool(uint256 rareBalance, Curve[] calldata curves) internal {
         // Pull pool config from factory
         ILiquidFactory factoryContract = ILiquidFactory(factory);
         int24 tickSpacing = factoryContract.poolTickSpacing();
@@ -446,11 +397,7 @@ contract LiquidMultiCurve is
 
         // Create pool key and derive pool ID
         poolKey = PoolKey({
-            currency0: currency0,
-            currency1: currency1,
-            fee: LP_FEE,
-            tickSpacing: tickSpacing,
-            hooks: IHooks(hooks)
+            currency0: currency0, currency1: currency1, fee: LP_FEE, tickSpacing: tickSpacing, hooks: IHooks(hooks)
         });
         poolId = poolKey.toId();
 
@@ -463,11 +410,8 @@ contract LiquidMultiCurve is
         // Adjust curves to tick spacing and calculate tick boundaries
         // Multicurve.adjustCurves() ensures all tick values are multiples of tickSpacing (Uniswap requirement)
         // and returns the overall lower and upper tick boundaries that encompass all curves
-        (
-            Curve[] memory adjustedCurves,
-            int24 lowerTickBoundary,
-            int24 upperTickBoundary
-        ) = Multicurve.adjustCurves(curvesMem, 0, tickSpacing, isToken0);
+        (Curve[] memory adjustedCurves, int24 lowerTickBoundary, int24 upperTickBoundary) =
+            Multicurve.adjustCurves(curvesMem, 0, tickSpacing, isToken0);
 
         // Calculate launch tick (starting price) where LIQUID tokens are "cheap"
         // The launch price depends on token ordering:
@@ -480,13 +424,8 @@ contract LiquidMultiCurve is
         uint160 sqrtPriceX96 = TickMath.getSqrtPriceAtTick(launchTick);
 
         // Calculate positions for each curve (liquidity per tick range)
-        Position[] memory positions = Multicurve.calculatePositions(
-            adjustedCurves,
-            tickSpacing,
-            poolLaunchSupply,
-            rareBalance,
-            isToken0
-        );
+        Position[] memory positions =
+            Multicurve.calculatePositions(adjustedCurves, tickSpacing, poolLaunchSupply, rareBalance, isToken0);
         if (positions.length > MAX_POSITIONS) revert TooManyPositions();
 
         // Store tick bounds for reference (used by getMarketState() and other view functions)
@@ -498,23 +437,15 @@ contract LiquidMultiCurve is
 
         // Trigger unlock callback to initialize pool and add all positions
         _unlockExpected = true;
-        IPoolManager(poolManager).unlock(
-            abi.encode(
-                UnlockContext({
-                    action: UnlockAction.INITIALIZE_POOL,
-                    data: abi.encode(sqrtPriceX96, positions)
-                })
-            )
-        );
+        IPoolManager(poolManager)
+            .unlock(
+                abi.encode(
+                    UnlockContext({action: UnlockAction.INITIALIZE_POOL, data: abi.encode(sqrtPriceX96, positions)})
+                )
+            );
         _unlockExpected = false;
 
-        emit LiquidMarketGraduated(
-            address(this),
-            address(poolManager),
-            rareBalance,
-            poolLaunchSupply,
-            0
-        );
+        emit LiquidMarketGraduated(address(this), address(poolManager), rareBalance, poolLaunchSupply, 0);
     }
 
     /// @notice Simulates buy swap via unlock callback (revert-as-return pattern)
@@ -525,20 +456,14 @@ contract LiquidMultiCurve is
     /// @param rareAmount Amount of RARE to simulate swapping
     /// @return amountOut Expected LIQUID output
     /// @return sqrtPriceAfter Post-swap sqrt price
-    function _simulateQuoteBuy(
-        uint256 rareAmount
-    ) internal returns (uint256 amountOut, uint160 sqrtPriceAfter) {
+    function _simulateQuoteBuy(uint256 rareAmount) internal returns (uint256 amountOut, uint160 sqrtPriceAfter) {
         _unlockExpected = true;
-        try
-            IPoolManager(poolManager).unlock(
-                abi.encode(
-                    UnlockContext({
-                        action: UnlockAction.QUOTE_SWAP_BUY,
-                        data: abi.encode(rareAmount)
-                    })
-                )
-            )
-        returns (bytes memory) {
+        try IPoolManager(poolManager)
+            .unlock(
+                abi.encode(UnlockContext({action: UnlockAction.QUOTE_SWAP_BUY, data: abi.encode(rareAmount)}))
+            ) returns (
+            bytes memory
+        ) {
             _unlockExpected = false;
             revert QuoteSimulationDidNotRevert();
         } catch (bytes memory reason) {
@@ -555,20 +480,14 @@ contract LiquidMultiCurve is
     /// @param tokenAmount Amount of LIQUID tokens to simulate swapping
     /// @return amountOut Expected RARE output
     /// @return sqrtPriceAfter Post-swap sqrt price
-    function _simulateQuoteSell(
-        uint256 tokenAmount
-    ) internal returns (uint256 amountOut, uint160 sqrtPriceAfter) {
+    function _simulateQuoteSell(uint256 tokenAmount) internal returns (uint256 amountOut, uint160 sqrtPriceAfter) {
         _unlockExpected = true;
-        try
-            IPoolManager(poolManager).unlock(
-                abi.encode(
-                    UnlockContext({
-                        action: UnlockAction.QUOTE_SWAP_SELL,
-                        data: abi.encode(tokenAmount)
-                    })
-                )
-            )
-        returns (bytes memory) {
+        try IPoolManager(poolManager)
+            .unlock(
+                abi.encode(UnlockContext({action: UnlockAction.QUOTE_SWAP_SELL, data: abi.encode(tokenAmount)}))
+            ) returns (
+            bytes memory
+        ) {
             _unlockExpected = false;
             revert QuoteSimulationDidNotRevert();
         } catch (bytes memory reason) {
@@ -582,9 +501,7 @@ contract LiquidMultiCurve is
     /// @param reason Revert reason bytes
     /// @return amountOut The simulated output amount
     /// @return sqrtPriceAfter Post-swap sqrt price
-    function _decodeQuoteResult(
-        bytes memory reason
-    ) internal pure returns (uint256 amountOut, uint160 sqrtPriceAfter) {
+    function _decodeQuoteResult(bytes memory reason) internal pure returns (uint256 amountOut, uint160 sqrtPriceAfter) {
         // Extract error selector (first 4 bytes)
         bytes4 selector;
         assembly ("memory-safe") {
@@ -607,9 +524,7 @@ contract LiquidMultiCurve is
     /// @dev Only callable by PoolManager during expected unlock operations
     /// @param data Encoded UnlockContext (action + data)
     /// @return Empty bytes on success
-    function unlockCallback(
-        bytes calldata data
-    ) external nonReentrant returns (bytes memory) {
+    function unlockCallback(bytes calldata data) external nonReentrant returns (bytes memory) {
         // Security: only PoolManager can call
         if (msg.sender != poolManager) revert OnlyPoolManager();
         if (!_unlockExpected) revert UnexpectedUnlock();
@@ -635,13 +550,8 @@ contract LiquidMultiCurve is
     ///      stores positions for future removal, and returns excess RARE to creator.
     /// @param data Encoded (sqrtPriceX96, positions)
     /// @return Empty bytes on success
-    function _unlockInitializePool(
-        bytes memory data
-    ) internal returns (bytes memory) {
-        (uint160 sqrtPriceX96, Position[] memory positions) = abi.decode(
-            data,
-            (uint160, Position[])
-        );
+    function _unlockInitializePool(bytes memory data) internal returns (bytes memory) {
+        (uint160 sqrtPriceX96, Position[] memory positions) = abi.decode(data, (uint160, Position[]));
 
         IPoolManager pm = IPoolManager(poolManager);
 
@@ -662,7 +572,7 @@ contract LiquidMultiCurve is
             _storedPositions.push(pos);
 
             // Add liquidity to this tick range
-            (BalanceDelta delta, ) = pm.modifyLiquidity(
+            (BalanceDelta delta,) = pm.modifyLiquidity(
                 poolKey,
                 IPoolManager.ModifyLiquidityParams({
                     tickLower: pos.tickLower,
@@ -724,9 +634,7 @@ contract LiquidMultiCurve is
     ///      5. Update poolKey, poolId, and stored positions
     /// @param data Encoded (PoolKey, uint160, Position[], address, uint256, uint256)
     /// @return Empty bytes (required by unlock callback interface)
-    function _unlockMigrateLiquidity(
-        bytes memory data
-    ) internal returns (bytes memory) {
+    function _unlockMigrateLiquidity(bytes memory data) internal returns (bytes memory) {
         (
             PoolKey memory newKey,
             uint160 newSqrtPrice,
@@ -734,10 +642,7 @@ contract LiquidMultiCurve is
             address dustRecipient,
             uint256 maxDust0,
             uint256 maxDust1
-        ) = abi.decode(
-                data,
-                (PoolKey, uint160, Position[], address, uint256, uint256)
-            );
+        ) = abi.decode(data, (PoolKey, uint160, Position[], address, uint256, uint256));
 
         IPoolManager pm = IPoolManager(poolManager);
 
@@ -750,7 +655,7 @@ contract LiquidMultiCurve is
         for (uint256 i; i < _storedPositions.length; i++) {
             Position memory pos = _storedPositions[i];
 
-            (BalanceDelta delta, ) = pm.modifyLiquidity(
+            (BalanceDelta delta,) = pm.modifyLiquidity(
                 poolKey,
                 IPoolManager.ModifyLiquidityParams({
                     tickLower: pos.tickLower,
@@ -780,7 +685,7 @@ contract LiquidMultiCurve is
 
             _storedPositions.push(pos);
 
-            (BalanceDelta delta, ) = pm.modifyLiquidity(
+            (BalanceDelta delta,) = pm.modifyLiquidity(
                 newKey,
                 IPoolManager.ModifyLiquidityParams({
                     tickLower: pos.tickLower,
@@ -800,11 +705,7 @@ contract LiquidMultiCurve is
         // Negative net = we owe tokens (settle from token's balance)
         if (netDelta0 > 0) {
             if (uint256(netDelta0) > maxDust0) {
-                revert DustExceeded(
-                    Currency.unwrap(newKey.currency0),
-                    uint256(netDelta0),
-                    maxDust0
-                );
+                revert DustExceeded(Currency.unwrap(newKey.currency0), uint256(netDelta0), maxDust0);
             }
             pm.take(newKey.currency0, dustRecipient, uint256(netDelta0));
         } else if (netDelta0 < 0) {
@@ -821,11 +722,7 @@ contract LiquidMultiCurve is
 
         if (netDelta1 > 0) {
             if (uint256(netDelta1) > maxDust1) {
-                revert DustExceeded(
-                    Currency.unwrap(newKey.currency1),
-                    uint256(netDelta1),
-                    maxDust1
-                );
+                revert DustExceeded(Currency.unwrap(newKey.currency1), uint256(netDelta1), maxDust1);
             }
             pm.take(newKey.currency1, dustRecipient, uint256(netDelta1));
         } else if (netDelta1 < 0) {
@@ -850,10 +747,12 @@ contract LiquidMultiCurve is
             int24 newTickLower = _storedPositions[0].tickLower;
             int24 newTickUpper = _storedPositions[0].tickUpper;
             for (uint256 i = 1; i < _storedPositions.length; i++) {
-                if (_storedPositions[i].tickLower < newTickLower)
+                if (_storedPositions[i].tickLower < newTickLower) {
                     newTickLower = _storedPositions[i].tickLower;
-                if (_storedPositions[i].tickUpper > newTickUpper)
+                }
+                if (_storedPositions[i].tickUpper > newTickUpper) {
                     newTickUpper = _storedPositions[i].tickUpper;
+                }
             }
             lpTickLower = newTickLower;
             lpTickUpper = newTickUpper;
@@ -870,9 +769,7 @@ contract LiquidMultiCurve is
     ///      Handles currency ordering (baseToken can be currency0 or currency1).
     /// @param data Encoded rareAmount (uint256)
     /// @return Empty bytes (never reached - always reverts with QuoteResult)
-    function _unlockQuoteSwapBuy(
-        bytes memory data
-    ) internal returns (bytes memory) {
+    function _unlockQuoteSwapBuy(bytes memory data) internal returns (bytes memory) {
         uint256 rareAmount = abi.decode(data, (uint256));
 
         IPoolManager pm = IPoolManager(poolManager);
@@ -886,9 +783,7 @@ contract LiquidMultiCurve is
             IPoolManager.SwapParams({
                 zeroForOne: zeroForOne,
                 amountSpecified: -SafeCast.toInt256(rareAmount),
-                sqrtPriceLimitX96: zeroForOne
-                    ? TickMath.MIN_SQRT_PRICE + 1
-                    : TickMath.MAX_SQRT_PRICE - 1
+                sqrtPriceLimitX96: zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
             }),
             ""
         );
@@ -906,10 +801,8 @@ contract LiquidMultiCurve is
         }
 
         // Extract LIQUID output (positive delta)
-        uint256 tokensReceived = baseTokenIsCurrency0
-            ? _toUint128Pos(delta1)
-            : _toUint128Pos(delta0);
-        (uint160 sqrtPriceAfter, , , ) = pm.getSlot0(poolKey.toId());
+        uint256 tokensReceived = baseTokenIsCurrency0 ? _toUint128Pos(delta1) : _toUint128Pos(delta0);
+        (uint160 sqrtPriceAfter,,,) = pm.getSlot0(poolKey.toId());
 
         revert QuoteResult(tokensReceived, sqrtPriceAfter);
     }
@@ -920,9 +813,7 @@ contract LiquidMultiCurve is
     ///      Handles currency ordering (baseToken can be currency0 or currency1).
     /// @param data Encoded tokenAmount (uint256)
     /// @return Empty bytes (never reached - always reverts with QuoteResult)
-    function _unlockQuoteSwapSell(
-        bytes memory data
-    ) internal returns (bytes memory) {
+    function _unlockQuoteSwapSell(bytes memory data) internal returns (bytes memory) {
         uint256 tokenAmount = abi.decode(data, (uint256));
 
         IPoolManager pm = IPoolManager(poolManager);
@@ -936,9 +827,7 @@ contract LiquidMultiCurve is
             IPoolManager.SwapParams({
                 zeroForOne: zeroForOne,
                 amountSpecified: -SafeCast.toInt256(tokenAmount),
-                sqrtPriceLimitX96: zeroForOne
-                    ? TickMath.MIN_SQRT_PRICE + 1
-                    : TickMath.MAX_SQRT_PRICE - 1
+                sqrtPriceLimitX96: zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
             }),
             ""
         );
@@ -955,10 +844,8 @@ contract LiquidMultiCurve is
         }
 
         // Extract RARE output (positive delta)
-        uint256 rareReceived = baseTokenIsCurrency0
-            ? _toUint128Pos(delta0)
-            : _toUint128Pos(delta1);
-        (uint160 sqrtPriceAfter, , , ) = pm.getSlot0(poolKey.toId());
+        uint256 rareReceived = baseTokenIsCurrency0 ? _toUint128Pos(delta0) : _toUint128Pos(delta1);
+        (uint160 sqrtPriceAfter,,,) = pm.getSlot0(poolKey.toId());
 
         // Revert with result - caller catches and decodes
         revert QuoteResult(rareReceived, sqrtPriceAfter);
@@ -982,8 +869,9 @@ contract LiquidMultiCurve is
     function _toUint128Neg(int128 x) internal pure returns (uint128) {
         if (x > 0) revert PositiveValue(x);
         int256 y = -int256(x);
-        if (uint256(y) > type(uint128).max)
+        if (uint256(y) > type(uint128).max) {
             revert AmountExceedsUint128(uint256(y));
+        }
         return uint128(uint256(y));
     }
 

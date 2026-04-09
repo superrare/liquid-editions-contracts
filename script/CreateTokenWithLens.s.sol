@@ -75,12 +75,11 @@ contract CreateTokenWithLens is Script {
         }
 
         string memory collectionDescription;
-        try vm.envString("COLLECTION_DESCRIPTION") returns (
-            string memory desc
-        ) {
+        try vm.envString("COLLECTION_DESCRIPTION") returns (string memory desc) {
             collectionDescription = desc;
         } catch {
-            collectionDescription = "Plotter art-inspired generative collection visualizing Liquid Edition market dynamics";
+            collectionDescription =
+            "Plotter art-inspired generative collection visualizing Liquid Edition market dynamics";
         }
 
         string memory nftName;
@@ -173,35 +172,24 @@ contract CreateTokenWithLens is Script {
         require(baseToken != address(0), "Base token not set in factory");
 
         // Check and approve RARE tokens if needed
-        uint256 currentAllowance = IERC20(baseToken).allowance(
-            deployerAddress,
-            factoryAddress
-        );
+        uint256 currentAllowance = IERC20(baseToken).allowance(deployerAddress, factoryAddress);
         if (currentAllowance < initialRareLiquidity) {
-            console.log(
-                "Approving factory to transfer RARE tokens from deployer..."
-            );
-            console.log(
-                "NOTE: Deployer must have RARE tokens balance >= initialRareLiquidity"
-            );
+            console.log("Approving factory to transfer RARE tokens from deployer...");
+            console.log("NOTE: Deployer must have RARE tokens balance >= initialRareLiquidity");
             IERC20(baseToken).approve(factoryAddress, type(uint256).max);
         } else {
             console.log("Approval already sufficient, skipping approval step");
         }
 
         // Check deployer has sufficient RARE balance
-        uint256 deployerRareBalance = IERC20(baseToken).balanceOf(
-            deployerAddress
-        );
+        uint256 deployerRareBalance = IERC20(baseToken).balanceOf(deployerAddress);
         console.log("Deployer RARE balance:");
         console.logUint(deployerRareBalance);
         console.log("Required RARE liquidity:");
         console.logUint(initialRareLiquidity);
 
         if (deployerRareBalance < initialRareLiquidity) {
-            revert(
-                "Insufficient RARE balance. Deployer needs at least initialRareLiquidity RARE tokens."
-            );
+            revert("Insufficient RARE balance. Deployer needs at least initialRareLiquidity RARE tokens.");
         }
 
         // Verify factory configuration
@@ -228,22 +216,13 @@ contract CreateTokenWithLens is Script {
 
         // Build default single-curve config
         Curve[] memory curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            numPositions: 1,
-            shares: 1e18
-        });
+        curves[0] =
+            Curve({tickLower: factory.lpTickLower(), tickUpper: factory.lpTickUpper(), numPositions: 1, shares: 1e18});
 
         // Create the token
         console.log("Creating Liquid token...");
         address newToken = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            tokenURI,
-            tokenName,
-            tokenSymbol,
-            initialRareLiquidity,
-            curves
+            tokenCreator, tokenURI, tokenName, tokenSymbol, initialRareLiquidity, curves
         );
 
         console.log("Token created at:");
@@ -268,9 +247,7 @@ contract CreateTokenWithLens is Script {
             console.log("Liquid Edition creator:");
             console.logAddress(actualTokenCreator);
         } catch {
-            revert(
-                "Invalid Liquid Edition address - contract does not implement ILiquid interface"
-            );
+            revert("Invalid Liquid Edition address - contract does not implement ILiquid interface");
         }
 
         // Verify deployer is token creator (required for render contract registration)
@@ -283,11 +260,7 @@ contract CreateTokenWithLens is Script {
             console.log("Render contract registration will be skipped.");
             console.log("Token creator must register manually using:");
             string memory castCmd1 = string(
-                abi.encodePacked(
-                    "  cast send ",
-                    vm.toString(newToken),
-                    " 'setRenderContract(address)' <LENS_ADDRESS>"
-                )
+                abi.encodePacked("  cast send ", vm.toString(newToken), " 'setRenderContract(address)' <LENS_ADDRESS>")
             );
             console.log(castCmd1);
             console.log("");
@@ -298,32 +271,38 @@ contract CreateTokenWithLens is Script {
 
         // Deploy the LiquidLensDemoV2 contract
         console.log("Deploying LiquidLensDemoV2 contract...");
-        LiquidLensDemoV2 lens = new LiquidLensDemoV2(
-            newToken,
-            nftName,
-            nftSymbol,
-            collectionName,
-            collectionDescription
-        );
+        LiquidLensDemoV2 lens =
+            new LiquidLensDemoV2(newToken, nftName, nftSymbol, collectionName, collectionDescription);
 
         console.log("LiquidLensDemoV2 deployed at:");
         console.logAddress(address(lens));
         console.log("");
 
-        // Mint all tokens (MAX_SUPPLY = 10)
+        address lensOwner = lens.owner();
+        console.log("Render owner:");
+        console.logAddress(lensOwner);
+        console.log("");
+
         uint256 maxSupply = lens.MAX_SUPPLY();
-        console.log("Minting", maxSupply, "tokens...");
-        console.log("");
+        if (deployerAddress == lensOwner) {
+            console.log("Minting", maxSupply, "tokens...");
+            console.log("");
 
-        for (uint256 i = 0; i < maxSupply; i++) {
-            lens.mint(mintTo);
-            console.log("Minted token #", i + 1, "to:");
-            console.logAddress(mintTo);
+            for (uint256 i = 0; i < maxSupply; i++) {
+                lens.mint(mintTo);
+                console.log("Minted token #", i + 1, "to:");
+                console.logAddress(mintTo);
+            }
+
+            console.log("");
+            console.log("All tokens minted successfully!");
+            console.log("");
+        } else {
+            console.log("Skipping minting");
+            console.log("(Deployer is not render owner)");
+            console.log("Render owner can mint manually using lens.mint(address)");
+            console.log("");
         }
-
-        console.log("");
-        console.log("All tokens minted successfully!");
-        console.log("");
 
         // ============================================
         // STEP 3: REGISTER RENDER CONTRACT
@@ -337,9 +316,7 @@ contract CreateTokenWithLens is Script {
             console.log("(Deployer is token creator)");
             try liquidEdition.setRenderContract(address(lens)) {
                 console.log("Render contract successfully registered!");
-                console.log(
-                    "Liquid Edition tokenURI() will now use the ERC721 render contract"
-                );
+                console.log("Liquid Edition tokenURI() will now use the ERC721 render contract");
             } catch Error(string memory reason) {
                 console.log("Failed to register render contract:");
                 console.log(reason);
@@ -354,9 +331,7 @@ contract CreateTokenWithLens is Script {
                 );
                 console.log(castCmd2);
             } catch {
-                console.log(
-                    "Failed to register render contract (unknown error)"
-                );
+                console.log("Failed to register render contract (unknown error)");
                 console.log("You can register manually later using:");
                 string memory castCmd2 = string(
                     abi.encodePacked(
@@ -375,10 +350,7 @@ contract CreateTokenWithLens is Script {
             console.log("Token creator can register manually using:");
             string memory castCmd3 = string(
                 abi.encodePacked(
-                    "  cast send ",
-                    vm.toString(newToken),
-                    " 'setRenderContract(address)' ",
-                    vm.toString(address(lens))
+                    "  cast send ", vm.toString(newToken), " 'setRenderContract(address)' ", vm.toString(address(lens))
                 )
             );
             console.log(castCmd3);
@@ -438,44 +410,26 @@ contract CreateTokenWithLens is Script {
         console.log(castCall1);
         string memory castCall2 = string(
             abi.encodePacked(
-                "   - ERC721 Token #1-#10: cast call ",
-                vm.toString(address(lens)),
-                " 'tokenURI(uint256)' 1-10"
+                "   - ERC721 Token #1-#10: cast call ", vm.toString(address(lens)), " 'tokenURI(uint256)' 1-10"
             )
         );
         console.log(castCall2);
         if (deployerAddress == actualTokenCreator) {
-            console.log(
-                "3. Render contract registered - Liquid Edition tokenURI() will use ERC721 render contract"
-            );
-            string memory castCall3 = string(
-                abi.encodePacked(
-                    "   - ERC20 metadata: cast call ",
-                    vm.toString(newToken),
-                    " 'tokenURI()'"
-                )
-            );
+            console.log("3. Render contract registered - Liquid Edition tokenURI() will use ERC721 render contract");
+            string memory castCall3 =
+                string(abi.encodePacked("   - ERC20 metadata: cast call ", vm.toString(newToken), " 'tokenURI()'"));
             console.log(castCall3);
         } else {
-            console.log(
-                "3. Register render contract with Liquid Edition (if desired):"
-            );
+            console.log("3. Register render contract with Liquid Edition (if desired):");
             string memory castCmd5 = string(
                 abi.encodePacked(
-                    "   cast send ",
-                    vm.toString(newToken),
-                    " 'setRenderContract(address)' ",
-                    vm.toString(address(lens))
+                    "   cast send ", vm.toString(newToken), " 'setRenderContract(address)' ", vm.toString(address(lens))
                 )
             );
             console.log(castCmd5);
         }
-        console.log(
-            "4. The artwork will dynamically update based on Liquid Edition market state"
-        );
-        console.log(
-            "5. Market state changes (swaps, transfers, burns) will trigger metadata refresh"
-        );
+        console.log("4. The artwork will dynamically update based on Liquid Edition market state");
+        console.log("5. Market state changes (swaps, transfers, burns) will trigger metadata refresh");
         console.log("");
     }
 }

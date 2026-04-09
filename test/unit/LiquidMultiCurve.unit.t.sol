@@ -40,15 +40,7 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
         poolManager = new MockV4PoolManager();
         baseToken = new MockERC20();
         address initGuardAddr = _deployInitGuardForTest(address(poolManager), admin);
-        factory = new LiquidFactory(
-            admin,
-            address(poolManager),
-            -180,
-            120000,
-            initGuardAddr,
-            60,
-            MIN_RARE
-        );
+        factory = new LiquidFactory(admin, address(poolManager), -180, 120000, initGuardAddr, 60, MIN_RARE);
         vm.prank(admin);
         LiquidGuard(initGuardAddr).setFactory(address(factory));
 
@@ -64,8 +56,7 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
     }
 
     function _defaultCurves() internal pure returns (Curve[] memory) {
-        DeployConfig.MultiCurveConfig memory cfg =
-            DeployConfig.getDefaultMultiCurveConfig();
+        DeployConfig.MultiCurveConfig memory cfg = DeployConfig.getDefaultMultiCurveConfig();
 
         Curve[] memory curves = new Curve[](3);
         curves[0] = Curve({
@@ -94,14 +85,8 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
 
         vm.startPrank(creator);
         baseToken.approve(address(factory), MIN_RARE);
-        address tokenAddr = factory.createLiquidTokenMultiCurve(
-            creator,
-            "ipfs://test",
-            "Test MultiCurve",
-            "TMC",
-            MIN_RARE,
-            curves
-        );
+        address tokenAddr =
+            factory.createLiquidTokenMultiCurve(creator, "ipfs://test", "Test MultiCurve", "TMC", MIN_RARE, curves);
         vm.stopPrank();
 
         LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
@@ -110,23 +95,28 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
         assertEq(token.initialTokenUri(), "ipfs://test");
         assertEq(token.tokenCreator(), creator);
         assertEq(token.baseToken(), address(baseToken));
-        (ILiquidBase.LaunchType launchType, , , ) = token.getLaunchState();
+        (ILiquidBase.LaunchType launchType,,,) = token.getLaunchState();
         assertTrue(launchType == ILiquidBase.LaunchType.MULTICURVE);
         assertEq(token.lpLiquidity(), 0);
+    }
+
+    function test_Owner_ReturnsCreator() public {
+        Curve[] memory curves = _defaultCurves();
+
+        vm.startPrank(creator);
+        address tokenAddr =
+            factory.createLiquidTokenMultiCurve(creator, "ipfs://test", "Test MultiCurve", "TMC", 0, curves);
+        vm.stopPrank();
+
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
+        assertEq(token.owner(), creator);
     }
 
     function test_Initialize_Success_WithZeroOptionalRare() public {
         Curve[] memory curves = _defaultCurves();
 
         vm.startPrank(creator);
-        address tokenAddr = factory.createLiquidTokenMultiCurve(
-            creator,
-            "ipfs://test",
-            "Test",
-            "TMC",
-            0,
-            curves
-        );
+        address tokenAddr = factory.createLiquidTokenMultiCurve(creator, "ipfs://test", "Test", "TMC", 0, curves);
         vm.stopPrank();
         assertTrue(tokenAddr != address(0));
         LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
@@ -139,28 +129,14 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
         vm.startPrank(creator);
         baseToken.approve(address(factory), MIN_RARE);
         vm.expectRevert();
-        factory.createLiquidTokenMultiCurve(
-            creator,
-            "ipfs://test",
-            "Test",
-            "TMC",
-            MIN_RARE,
-            curves
-        );
+        factory.createLiquidTokenMultiCurve(creator, "ipfs://test", "Test", "TMC", MIN_RARE, curves);
         vm.stopPrank();
     }
 
     function test_Initialize_Revert_ImplementationNotSet() public {
         address newInitGuardAddr = _deployInitGuardForTest(address(poolManager), admin);
-        LiquidFactory newFactory = new LiquidFactory(
-            admin,
-            address(poolManager),
-            -180,
-            120000,
-            newInitGuardAddr,
-            60,
-            MIN_RARE
-        );
+        LiquidFactory newFactory =
+            new LiquidFactory(admin, address(poolManager), -180, 120000, newInitGuardAddr, 60, MIN_RARE);
         vm.prank(admin);
         LiquidGuard(newInitGuardAddr).setFactory(address(newFactory));
         vm.startPrank(admin);
@@ -174,14 +150,7 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
         baseToken.mint(creator, MIN_RARE);
         baseToken.approve(address(newFactory), MIN_RARE);
         vm.expectRevert(ILiquidFactory.ImplementationNotSet.selector);
-        newFactory.createLiquidTokenMultiCurve(
-            creator,
-            "ipfs://test",
-            "Test",
-            "TMC",
-            MIN_RARE,
-            curves
-        );
+        newFactory.createLiquidTokenMultiCurve(creator, "ipfs://test", "Test", "TMC", MIN_RARE, curves);
         vm.stopPrank();
     }
 
@@ -189,18 +158,10 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
         Curve[] memory curves = _defaultCurves();
         vm.startPrank(creator);
         baseToken.approve(address(factory), MIN_RARE);
-        address tokenAddr = factory.createLiquidTokenMultiCurve(
-            creator,
-            "ipfs://test",
-            "Test",
-            "TMC",
-            MIN_RARE,
-            curves
-        );
+        address tokenAddr = factory.createLiquidTokenMultiCurve(creator, "ipfs://test", "Test", "TMC", MIN_RARE, curves);
         vm.stopPrank();
 
-        (ILiquidBase.LaunchType launchType, , , ) =
-            LiquidMultiCurve(payable(tokenAddr)).getLaunchState();
+        (ILiquidBase.LaunchType launchType,,,) = LiquidMultiCurve(payable(tokenAddr)).getLaunchState();
         assertTrue(launchType == ILiquidBase.LaunchType.MULTICURVE);
     }
 
@@ -208,14 +169,7 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
         Curve[] memory curves = _defaultCurves();
         vm.startPrank(creator);
         baseToken.approve(address(factory), MIN_RARE);
-        address tokenAddr = factory.createLiquidTokenMultiCurve(
-            creator,
-            "ipfs://test",
-            "Test",
-            "TMC",
-            MIN_RARE,
-            curves
-        );
+        address tokenAddr = factory.createLiquidTokenMultiCurve(creator, "ipfs://test", "Test", "TMC", MIN_RARE, curves);
         vm.stopPrank();
 
         assertEq(LiquidMultiCurve(payable(tokenAddr)).lpLiquidity(), 0);
@@ -225,14 +179,7 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
         Curve[] memory curves = _defaultCurves();
         vm.startPrank(creator);
         baseToken.approve(address(factory), MIN_RARE);
-        address tokenAddr = factory.createLiquidTokenMultiCurve(
-            creator,
-            "ipfs://test",
-            "Test",
-            "TMC",
-            MIN_RARE,
-            curves
-        );
+        address tokenAddr = factory.createLiquidTokenMultiCurve(creator, "ipfs://test", "Test", "TMC", MIN_RARE, curves);
         vm.stopPrank();
 
         LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
@@ -269,9 +216,7 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
         Curve[] memory curves = _defaultCurves();
         vm.startPrank(creator);
         baseToken.approve(address(factory), MIN_RARE);
-        address tokenAddr = factory.createLiquidTokenMultiCurve(
-            creator, "ipfs://test", "Test", "TMC", MIN_RARE, curves
-        );
+        address tokenAddr = factory.createLiquidTokenMultiCurve(creator, "ipfs://test", "Test", "TMC", MIN_RARE, curves);
         vm.stopPrank();
         return LiquidMultiCurve(payable(tokenAddr));
     }
@@ -418,9 +363,7 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
         uint256 POOL_SUPPLY = 900_000e18;
         uint256 CREATOR_REWARD = 100_000e18;
         assertEq(
-            token.totalSupply(),
-            POOL_SUPPLY + CREATOR_REWARD,
-            "total supply should equal MAX_TOTAL_SUPPLY at init"
+            token.totalSupply(), POOL_SUPPLY + CREATOR_REWARD, "total supply should equal MAX_TOTAL_SUPPLY at init"
         );
     }
 

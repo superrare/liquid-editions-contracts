@@ -10,7 +10,7 @@ export
 export FORK_URL
 
 # Test commands
-.PHONY: test test-factory test-liquid test-mainnet test-bonding test-bonding-explorer test-unit test-rare test-burner test-invariants test-mev test-sepolia-behavior test-sepolia-behavior-multicurve test-mainnet-behavior-multicurve coverage coverage-report deploy-sepolia deploy-sepolia-dry help
+.PHONY: test test-factory test-liquid test-mainnet test-bonding test-bonding-explorer test-unit test-rare test-burner test-invariants test-mev test-sepolia-behavior test-sepolia-behavior-multicurve test-mainnet-behavior-multicurve test-mainnet-behavior-multicurve-low test-mainnet-behavior-multicurve-medium test-mainnet-behavior-multicurve-large coverage coverage-report deploy-sepolia deploy-sepolia-dry help
 
 help:
 	@echo "Available commands:"
@@ -25,7 +25,10 @@ help:
 	@echo "  test-mev          - Run MEV protection tests"
 	@echo "  test-sepolia-behavior - Run Eth Sepolia instant user behavior simulation (requires ETH_SEPOLIA)"
 	@echo "  test-sepolia-behavior-multicurve - Run Eth Sepolia multicurve user behavior simulation (requires ETH_SEPOLIA)"
-	@echo "  test-mainnet-behavior-multicurve - Run Eth Mainnet multicurve user behavior simulation (requires MAINNET_RPC_URL)"
+	@echo "  test-mainnet-behavior-multicurve - Run all Eth Mainnet multicurve demand profiles (requires MAINNET_RPC_URL)"
+	@echo "  test-mainnet-behavior-multicurve-low - Run low-demand profile"
+	@echo "  test-mainnet-behavior-multicurve-medium - Run medium-demand profile"
+	@echo "  test-mainnet-behavior-multicurve-large - Run large-demand profile"
 	@echo "  test-unit         - Run mainnet unit tests"
 	@echo "  test-rare         - Run RARE burn config tests (no fork)"
 	@echo "  coverage          - Generate test coverage summary"
@@ -94,9 +97,23 @@ test-sepolia-behavior:
 test-sepolia-behavior-multicurve:
 	forge test test/scenarios/Liquid.sepolia.userBehavior.multicurve.t.sol --jobs 1 -vv
 
-# Run Eth Mainnet multicurve user behavior simulation (requires MAINNET_RPC_URL in .env)
+# Run all Eth Mainnet multicurve demand profiles (requires MAINNET_RPC_URL in .env)
 test-mainnet-behavior-multicurve:
-	forge test test/scenarios/Liquid.mainnet.userBehavior.multicurve.t.sol --jobs 1 -vv
+	$(MAKE) test-mainnet-behavior-multicurve-low
+	$(MAKE) test-mainnet-behavior-multicurve-medium
+	$(MAKE) test-mainnet-behavior-multicurve-large
+
+# Run Eth Mainnet multicurve low-demand profile (requires MAINNET_RPC_URL in .env)
+test-mainnet-behavior-multicurve-low:
+	forge test test/scenarios/Liquid.mainnet.userBehavior.multicurve.lowDemand.t.sol --jobs 1 -vv
+
+# Run Eth Mainnet multicurve medium-demand profile (requires MAINNET_RPC_URL in .env)
+test-mainnet-behavior-multicurve-medium:
+	forge test test/scenarios/Liquid.mainnet.userBehavior.multicurve.mediumDemand.t.sol --jobs 1 -vv
+
+# Run Eth Mainnet multicurve large-demand profile (requires MAINNET_RPC_URL in .env)
+test-mainnet-behavior-multicurve-large:
+	forge test test/scenarios/Liquid.mainnet.userBehavior.multicurve.largeDemand.t.sol --jobs 1 -vv
 
 # Run RARE burn tests (no fork needed)
 test-rare:

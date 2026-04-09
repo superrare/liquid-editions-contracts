@@ -110,10 +110,10 @@ library DeployConfig {
                 poolTickSpacing: 60, // Price granularity (ticks must be multiples of this). Common values: 1, 10, 60, 200
                 minRareLiquidityWei: 0, // No RARE required — bonding curve is funded by LIQUID tokens, not creator RARE
                 maxTotalSupplyWei: 1_000_000e18, // 1M tokens minted per edition
-                creatorLaunchRewardWei: 100_000e18 // 100K tokens sent to creator at launch (10%)
+                creatorLaunchRewardWei: 0 // tokens sent to creator at launch
             }),
             fees: FeeConfig({
-                totalFeeBPS: 500 // 5% gross fees
+                totalFeeBPS: 125 // 1.25% gross fees
             }),
             auctioneerRoutes: AuctioneerRoutesConfig({
                 ethToRare: AuctionRouteConfig({
