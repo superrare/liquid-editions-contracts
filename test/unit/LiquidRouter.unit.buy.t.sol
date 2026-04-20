@@ -154,6 +154,21 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
         );
     }
 
+    function testBuyRevertsOnZeroMsgValue() public {
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
+
+        vm.expectRevert(ILiquidRouter.InvalidAmount.selector);
+        vm.prank(user1);
+        liquidRouter.buy(
+            address(token),
+            user1,
+            1,
+            commands,
+            inputs,
+            block.timestamp + 1 hours
+        );
+    }
+
     function testBuyRevertsOnFeeOnTransferToken() public {
         uint256 ethAmount = 1 ether;
 
@@ -327,6 +342,22 @@ contract LiquidRouterUnitBuyTest is LiquidRouterUnitTestBase {
             address(token),
             user1,
             1, // minTokensOut
+            commands,
+            inputs,
+            block.timestamp + 1 hours
+        );
+    }
+
+    function test_Buy_RevertsWhen_UniversalRouterRetainsETH() public {
+        router.setRetainEthOnExecute(true);
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
+
+        vm.expectRevert(ILiquidRouter.UnexpectedUniversalRouterEthBalance.selector);
+        vm.prank(user1);
+        liquidRouter.buy{value: 1 ether}(
+            address(token),
+            user1,
+            1,
             commands,
             inputs,
             block.timestamp + 1 hours

@@ -17,6 +17,9 @@ contract RoutePolicyHarness {
 contract RoutePolicyUnitTest is Test {
     RoutePolicyHarness internal harness;
     uint8 internal constant ALLOW_REVERT_FLAG = 0x80;
+    uint256 internal constant CONTRACT_BALANCE =
+        0x8000000000000000000000000000000000000000000000000000000000000000;
+    uint256 internal constant OPEN_DELTA = 0;
 
     address internal constant MSG_SENDER =
         address(0x0000000000000000000000000000000000000001);
@@ -80,8 +83,8 @@ contract RoutePolicyUnitTest is Test {
     function testValidateRouteRevertsOnBlockedV4Action() public {
         bytes memory commands = hex"10"; // V4_SWAP
         bytes[] memory inputs = new bytes[](1);
-        bytes memory actions = abi.encodePacked(uint8(0x09), uint8(0x0f)); // SETTLE + TAKE_ALL
-        bytes[] memory params = new bytes[](0);
+        bytes memory actions = abi.encodePacked(uint8(0x09), uint8(0x0c), uint8(0x0f));
+        bytes[] memory params = new bytes[](3);
         inputs[0] = abi.encode(actions, params);
 
         vm.expectRevert(
@@ -93,14 +96,14 @@ contract RoutePolicyUnitTest is Test {
         harness.validate(commands, inputs, false);
     }
 
-    function testValidateRouteRevertsOnMissingV4TakeAll() public {
+    function testValidateRouteRevertsOnInvalidV4ActionSequence() public {
         bytes memory commands = hex"10"; // V4_SWAP
         bytes[] memory inputs = new bytes[](1);
         bytes memory actions = abi.encodePacked(uint8(0x0c)); // SETTLE_ALL only
-        bytes[] memory params = new bytes[](0);
+        bytes[] memory params = new bytes[](1);
         inputs[0] = abi.encode(actions, params);
 
-        vm.expectRevert(RoutePolicy.MissingV4TakeAll.selector);
+        vm.expectRevert(RoutePolicy.InvalidV4ActionSequence.selector);
         harness.validate(commands, inputs, false);
     }
 
@@ -117,6 +120,39 @@ contract RoutePolicyUnitTest is Test {
         inputs[1] = abi.encode(MSG_SENDER, uint256(1));
 
         harness.validate(commands, inputs, true);
+    }
+
+    function testValidateRouteAllowsUnwrapToRouterThenV4TokenOutput()
+        public
+        view
+    {
+        bytes memory commands = hex"100c10"; // V4_SWAP + UNWRAP_WETH + V4_SWAP
+        bytes[] memory inputs = new bytes[](3);
+        inputs[0] = _encodeSingleTakeRouter();
+        inputs[1] = abi.encode(ROUTER_ADDRESS, uint256(1));
+        inputs[2] = _encodeSettleSingleTakeAll(address(0));
+
+        harness.validate(commands, inputs, false);
+    }
+
+    function testValidateRouteAllowsUnwrapToRouterThenWrapEthThenV3TokenOutput()
+        public
+        view
+    {
+        bytes memory commands = hex"100c0b00"; // V4_SWAP + UNWRAP_WETH + WRAP_ETH + V3_SWAP_EXACT_IN
+        bytes[] memory inputs = new bytes[](4);
+        inputs[0] = _encodeSingleTakeRouter();
+        inputs[1] = abi.encode(ROUTER_ADDRESS, uint256(1));
+        inputs[2] = abi.encode(ROUTER_ADDRESS, CONTRACT_BALANCE);
+        inputs[3] = abi.encode(
+            MSG_SENDER,
+            uint256(1),
+            uint256(1),
+            bytes(""),
+            false
+        );
+
+        harness.validate(commands, inputs, false);
     }
 
     function testValidateRouteRevertsOnAllowRevertBit() public {
@@ -217,5 +253,39 @@ contract RoutePolicyUnitTest is Test {
             )
         );
         harness.validate(commands, inputs, false);
+    }
+
+    function _encodeSettleSingleTakeAll(address settleCurrency)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        bytes memory actions = abi.encodePacked(
+            uint8(0x0b),
+            uint8(0x06),
+            uint8(0x0f)
+        );
+        bytes[] memory params = new bytes[](3);
+        params[0] = abi.encode(settleCurrency, CONTRACT_BALANCE, false);
+        params[1] = hex"1234";
+        params[2] = abi.encode(address(0x5678), uint256(1));
+        return abi.encode(actions, params);
+    }
+
+    function _encodeSingleTakeRouter()
+        internal
+        pure
+        returns (bytes memory)
+    {
+        bytes memory actions = abi.encodePacked(
+            uint8(0x06),
+            uint8(0x0c),
+            uint8(0x0e)
+        );
+        bytes[] memory params = new bytes[](3);
+        params[0] = hex"1234";
+        params[1] = abi.encode(address(0x1234), uint256(1));
+        params[2] = abi.encode(address(0x5678), ROUTER_ADDRESS, OPEN_DELTA);
+        return abi.encode(actions, params);
     }
 }

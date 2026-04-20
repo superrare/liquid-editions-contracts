@@ -18,6 +18,42 @@ import {LiquidMigrationExecutor} from "liquid-editions/LiquidMigrationExecutor.s
  * @notice Shared wiring helpers for DeployLiquidSystem when components are redeployed/partially deployed.
  */
 library DeployLiquidSystemReconcile {
+    function reconcileFactoryLiquidRegistry(
+        address owner,
+        LiquidFactory factory,
+        LiquidRegistry liquidRegistry
+    ) internal {
+        if (address(factory) == address(0) || address(liquidRegistry) == address(0)) {
+            return;
+        }
+
+        if (factory.owner() != owner) {
+            console.log(
+                "  Warning: Factory owner is different; skip liquidRegistry wiring."
+            );
+            return;
+        }
+
+        try factory.liquidRegistry() returns (address currentRegistry) {
+            if (currentRegistry == address(liquidRegistry)) {
+                console.log("  Factory.liquidRegistry already up to date.");
+                return;
+            }
+        } catch {
+            console.log(
+                "  Warning: Could not read Factory.liquidRegistry(); attempting update."
+            );
+        }
+
+        try factory.setLiquidRegistry(address(liquidRegistry)) {
+            console.log("  Factory.liquidRegistry -> sharedLiquidRegistry");
+        } catch {
+            console.log(
+                "  Warning: Failed to set liquidRegistry on factory automatically."
+            );
+        }
+    }
+
     function reconcileFeeDistributorBeneficiaryRegistry(
         address owner,
         FeeDistributor feeDistributor,
@@ -35,6 +71,19 @@ library DeployLiquidSystemReconcile {
                 "  Warning: FeeDistributor owner is different; skip beneficiaryRegistry wiring."
             );
             return;
+        }
+
+        try feeDistributor.beneficiaryRegistry() returns (address currentRegistry) {
+            if (currentRegistry == address(liquidRegistry)) {
+                console.log(
+                    "  FeeDistributor.beneficiaryRegistry already up to date."
+                );
+                return;
+            }
+        } catch {
+            console.log(
+                "  Warning: Could not read FeeDistributor.beneficiaryRegistry(); attempting update."
+            );
         }
 
         try feeDistributor.setBeneficiaryRegistry(address(liquidRegistry)) {

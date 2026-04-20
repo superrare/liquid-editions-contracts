@@ -23,19 +23,33 @@ library RoutePolicy {
         address(0x0000000000000000000000000000000000000002);
 
     // Allowlisted V4 action bytes (from v4-periphery Actions.sol)
+    uint8 internal constant SWAP_EXACT_IN_SINGLE = 0x06;
     uint8 internal constant SWAP_EXACT_IN = 0x07;
+    uint8 internal constant SETTLE = 0x0b;
     uint8 internal constant SETTLE_ALL = 0x0c;
+    uint8 internal constant TAKE = 0x0e;
     uint8 internal constant TAKE_ALL = 0x0f;
+
+    // V4 action sentinels (from ActionConstants.sol)
+    uint256 internal constant OPEN_DELTA = 0;
+    uint256 internal constant CONTRACT_BALANCE =
+        0x8000000000000000000000000000000000000000000000000000000000000000;
 
     error DisallowedCommand(bytes1 command);
     error DisallowedCommandFlags(bytes1 command);
     error InvalidRouteRecipient(bytes1 command, address recipient);
     error MissingUnwrapWeth();
-    error MissingV4TakeAll();
     error InvalidFinalRouteCommand(bytes1 command);
     error InvalidFinalRecipient(bytes1 command, address recipient);
     error BlockedV4Action(uint8 action);
     error InvalidCommandInput(bytes1 command);
+    error InvalidV4ActionSequence();
+    error InvalidV4ActionParameters(uint8 action);
+
+    struct V4ActionResolution {
+        bool consumesRouterBalance;
+        bool outputsToRouter;
+    }
 
     /// @notice Validates a Universal Router route before execution
     /// @param commands Universal Router command bytes
@@ -46,10 +60,8 @@ library RoutePolicy {
         bytes[] memory inputs,
         bool expectsEthOutput
     ) internal pure {
-        bool outputsWethToRouter;
-        bool hasUnwrapWethToSender;
+        bool pendingRouterBalance;
         bytes1 lastCommand;
-        address lastRecipient;
 
         uint256 commandCount = commands.length;
         for (uint256 i; i < commandCount; ) {
@@ -63,31 +75,46 @@ library RoutePolicy {
 
             // Strict allowlist: only permit commands we explicitly handle
             if (command == V2_SWAP_EXACT_IN || command == V3_SWAP_EXACT_IN) {
-                address recipient = _decodeRecipient(command, input);
+                (
+                    address recipient,
+                    bool payerIsUser
+                ) = _decodeSwapRecipientAndPayer(command, input);
                 if (recipient != MSG_SENDER && recipient != ROUTER_ADDRESS) {
                     revert InvalidRouteRecipient(command, recipient);
                 }
-                if (expectsEthOutput && recipient == ROUTER_ADDRESS) {
-                    outputsWethToRouter = true;
+
+                if (!payerIsUser) {
+                    pendingRouterBalance = false;
                 }
 
-                lastRecipient = recipient;
+                if (recipient == ROUTER_ADDRESS) {
+                    pendingRouterBalance = true;
+                }
             } else if (command == WRAP_ETH) {
                 address recipient = _decodeRecipient(command, input);
                 if (recipient != ROUTER_ADDRESS) {
                     revert InvalidRouteRecipient(command, recipient);
                 }
-                lastRecipient = recipient;
+                pendingRouterBalance = true;
             } else if (command == UNWRAP_WETH) {
                 address recipient = _decodeRecipient(command, input);
-                if (recipient != MSG_SENDER) {
+                if (recipient != MSG_SENDER && recipient != ROUTER_ADDRESS) {
                     revert InvalidRouteRecipient(command, recipient);
                 }
-                hasUnwrapWethToSender = true;
-                lastRecipient = recipient;
+                if (!pendingRouterBalance) {
+                    revert MissingUnwrapWeth();
+                }
+                pendingRouterBalance = recipient == ROUTER_ADDRESS;
             } else if (command == V4_SWAP) {
-                _validateV4Actions(input);
-                lastRecipient = MSG_SENDER; // TAKE_ALL resolves to msgSender() in Universal Router.
+                V4ActionResolution memory resolution = _validateV4Actions(
+                    input
+                );
+                if (resolution.consumesRouterBalance) {
+                    pendingRouterBalance = false;
+                }
+                if (resolution.outputsToRouter) {
+                    pendingRouterBalance = true;
+                }
             } else {
                 // Default-reject: any command not explicitly allowlisted is blocked.
                 // This covers PERMIT2_TRANSFER_FROM, EXECUTE_SUB_PLAN, SWEEP,
@@ -102,37 +129,38 @@ library RoutePolicy {
             }
         }
 
-        if (
-            expectsEthOutput &&
-            outputsWethToRouter &&
-            !hasUnwrapWethToSender
-        ) {
-            revert MissingUnwrapWeth();
-        }
-
         // Enforce final route shape so output cannot remain in ROUTER_ADDRESS.
         if (expectsEthOutput) {
-            // ETH output must end with either explicit unwrap-to-sender or v4 TAKE_ALL route.
+            if (lastCommand == WRAP_ETH) {
+                revert InvalidFinalRouteCommand(lastCommand);
+            }
+
+            if (pendingRouterBalance) {
+                revert MissingUnwrapWeth();
+            }
+
+            // ETH output must end with either explicit unwrap-to-sender
+            // or a final V4 route that takes native ETH to msg.sender.
             if (lastCommand != UNWRAP_WETH && lastCommand != V4_SWAP) {
                 revert InvalidFinalRouteCommand(lastCommand);
             }
-            // If route used router-held WETH, unwrap must be the final command.
-            if (outputsWethToRouter && lastCommand != UNWRAP_WETH) {
+        } else {
+            if (lastCommand == WRAP_ETH || lastCommand == UNWRAP_WETH) {
                 revert InvalidFinalRouteCommand(lastCommand);
             }
-        } else {
-            // Token-output routes must deliver final output to msg.sender.
-            if (lastCommand == V2_SWAP_EXACT_IN || lastCommand == V3_SWAP_EXACT_IN) {
-                if (lastRecipient != MSG_SENDER) {
-                    revert InvalidFinalRecipient(lastCommand, lastRecipient);
-                }
-            } else if (lastCommand == WRAP_ETH || lastCommand == UNWRAP_WETH) {
-                revert InvalidFinalRouteCommand(lastCommand);
-            } else if (lastCommand != V4_SWAP) {
+
+            if (pendingRouterBalance) {
+                revert InvalidFinalRecipient(lastCommand, ROUTER_ADDRESS);
+            }
+
+            if (
+                lastCommand != V2_SWAP_EXACT_IN &&
+                lastCommand != V3_SWAP_EXACT_IN &&
+                lastCommand != V4_SWAP
+            ) {
                 revert InvalidFinalRouteCommand(lastCommand);
             }
         }
-
     }
 
     /// @notice Extracts command type from raw command byte by masking out flags
@@ -149,72 +177,130 @@ library RoutePolicy {
     }
 
     /// @notice Decodes recipient address from Universal Router command input
-    /// @dev Universal Router command inputs are ABI-encoded tuples. For V2/V3 swap commands,
-    ///      the first parameter is always the recipient address. This function:
-    ///      1. Validates input length is at least 32 bytes (minimum for ABI-encoded address)
-    ///      2. Decodes the first address from the ABI-encoded input
-    ///      3. Returns the recipient address for validation against allowed recipients (MSG_SENDER, ROUTER_ADDRESS)
-    ///      Used to extract and validate recipient addresses from swap command inputs to prevent
-    ///      unauthorized token redirection.
-    /// @param command Command byte (used for error reporting if input is invalid)
-    /// @param input ABI-encoded command input bytes (must contain at least one address parameter)
-    /// @return recipient Decoded recipient address (first address in the ABI-encoded input)
+    /// @dev Universal Router command inputs are ABI-encoded tuples. For WRAP/UNWRAP,
+    ///      the first parameter is always the recipient address.
     function _decodeRecipient(
         bytes1 command,
         bytes memory input
     ) private pure returns (address recipient) {
-        // Validate input has at least 32 bytes (minimum for ABI-encoded address)
         if (input.length < 32) revert InvalidCommandInput(command);
-        // Decode first address from ABI-encoded input (ignores additional parameters)
         recipient = abi.decode(input, (address));
     }
 
-    /// @notice Validates V4 swap actions are allowlisted and properly sequenced
-    /// @dev V4 swaps use an actions array that specifies the sequence of operations to perform.
-    ///      This function validates that:
-    ///      1. Only explicitly allowlisted actions are present (SWAP_EXACT_IN, SETTLE_ALL, TAKE_ALL)
-    ///      2. TAKE_ALL action is present (required to claim output tokens)
-    ///      3. No unauthorized actions are included (default-reject security model)
-    ///
-    ///      **Allowed Actions:**
-    ///      - SWAP_EXACT_IN (0x07): Executes the swap with exact input amount
-    ///      - SETTLE_ALL (0x0c): Settles all token debts to the pool (pays input tokens)
-    ///      - TAKE_ALL (0x0f): Claims all output tokens from the pool (required for token output)
-    ///
-    ///      **Security Rationale:**
-    ///      - TAKE_ALL is mandatory because without it, output tokens remain in PoolManager and cannot be accessed
-    ///      - Other V4 actions (e.g., TAKE, SETTLE, DONATE) are blocked to prevent token redirection or unauthorized operations
-    ///      - Default-reject model: any action not explicitly allowlisted is blocked
-    /// @param input Encoded V4 swap input (ABI-encoded tuple: actions bytes, params bytes[])
-    function _validateV4Actions(bytes memory input) private pure {
-        // Decode V4 swap input: (actions: bytes, params: bytes[])
-        (bytes memory actions, ) = abi.decode(input, (bytes, bytes[]));
+    /// @notice Decodes recipient and payer flag from a V2/V3 exact-input command
+    /// @dev Both variants share the same fixed ABI head:
+    ///      (address recipient, uint256 amountIn, uint256 amountOutMin, <dynamic>, bool payerIsUser)
+    function _decodeSwapRecipientAndPayer(
+        bytes1 command,
+        bytes memory input
+    ) private pure returns (address recipient, bool payerIsUser) {
+        if (input.length < 160) revert InvalidCommandInput(command);
 
-        bool hasTakeAll;
-        uint256 actionCount = actions.length;
-        // Iterate through each action byte in the actions array
-        for (uint256 i; i < actionCount; ) {
-            uint8 action = uint8(actions[i]);
-            if (action == SWAP_EXACT_IN) {
-                // Explicitly permitted: executes the swap
-            } else if (action == SETTLE_ALL) {
-                // Explicitly permitted: settles token debts to pool
-            } else if (action == TAKE_ALL) {
-                // Explicitly permitted: claims output tokens (required)
-                hasTakeAll = true;
-            } else {
-                // Default-reject: block any action not explicitly allowlisted
-                // This prevents unauthorized actions like TAKE (selective token claim),
-                // SETTLE (selective debt settlement), DONATE, etc.
-                revert BlockedV4Action(action);
-            }
+        assembly {
+            recipient := mload(add(input, 32))
+            payerIsUser := iszero(iszero(mload(add(input, 160))))
+        }
+    }
 
-            unchecked {
-                ++i;
-            }
+    /// @notice Validates V4 swap actions and returns how the route interacts with router custody
+    /// @dev The policy intentionally admits only the exact action sequences used by the router today:
+    ///      1. SWAP_EXACT_IN -> SETTLE_ALL -> TAKE_ALL
+    ///      2. SETTLE -> SWAP_EXACT_IN_SINGLE -> TAKE_ALL
+    ///      3. SWAP_EXACT_IN_SINGLE -> SETTLE_ALL -> TAKE
+    ///      4. SWAP_EXACT_IN -> SETTLE_ALL -> TAKE
+    function _validateV4Actions(
+        bytes memory input
+    ) private pure returns (V4ActionResolution memory resolution) {
+        (bytes memory actions, bytes[] memory params) = abi.decode(
+            input,
+            (bytes, bytes[])
+        );
+
+        if (actions.length != 3 || params.length != 3) {
+            revert InvalidV4ActionSequence();
         }
 
-        // Require TAKE_ALL to be present - without it, output tokens remain stuck in PoolManager
-        if (!hasTakeAll) revert MissingV4TakeAll();
+        uint8 action0 = uint8(actions[0]);
+        uint8 action1 = uint8(actions[1]);
+        uint8 action2 = uint8(actions[2]);
+
+        _ensureAllowlistedV4Action(action0);
+        _ensureAllowlistedV4Action(action1);
+        _ensureAllowlistedV4Action(action2);
+
+        if (
+            action0 == SWAP_EXACT_IN &&
+            action1 == SETTLE_ALL &&
+            action2 == TAKE_ALL
+        ) {
+            return resolution;
+        }
+
+        if (
+            action0 == SETTLE &&
+            action1 == SWAP_EXACT_IN_SINGLE &&
+            action2 == TAKE_ALL
+        ) {
+            _validateSettleAction(params[0]);
+            resolution.consumesRouterBalance = true;
+            return resolution;
+        }
+
+        if (
+            action0 == SWAP_EXACT_IN_SINGLE &&
+            action1 == SETTLE_ALL &&
+            action2 == TAKE
+        ) {
+            _validateTakeAction(params[2]);
+            resolution.outputsToRouter = true;
+            return resolution;
+        }
+
+        if (
+            action0 == SWAP_EXACT_IN && action1 == SETTLE_ALL && action2 == TAKE
+        ) {
+            _validateTakeAction(params[2]);
+            resolution.outputsToRouter = true;
+            return resolution;
+        }
+
+        revert InvalidV4ActionSequence();
+    }
+
+    function _ensureAllowlistedV4Action(uint8 action) private pure {
+        if (
+            action != SWAP_EXACT_IN_SINGLE &&
+            action != SWAP_EXACT_IN &&
+            action != SETTLE &&
+            action != SETTLE_ALL &&
+            action != TAKE &&
+            action != TAKE_ALL
+        ) {
+            revert BlockedV4Action(action);
+        }
+    }
+
+    function _validateSettleAction(bytes memory input) private pure {
+        (address currency, uint256 amount, bool payerIsUser) = abi.decode(
+            input,
+            (address, uint256, bool)
+        );
+        currency;
+
+        if (payerIsUser || amount != CONTRACT_BALANCE) {
+            revert InvalidV4ActionParameters(SETTLE);
+        }
+    }
+
+    function _validateTakeAction(bytes memory input) private pure {
+        (address currency, address recipient, uint256 amount) = abi.decode(
+            input,
+            (address, address, uint256)
+        );
+        currency;
+
+        if (recipient != ROUTER_ADDRESS || amount != OPEN_DELTA) {
+            revert InvalidV4ActionParameters(TAKE);
+        }
     }
 }

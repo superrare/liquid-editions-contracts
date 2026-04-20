@@ -136,6 +136,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
     {
         if (token == address(0)) revert AddressZero();
         if (recipient == address(0)) revert AddressZero();
+        if (msg.value == 0) revert InvalidAmount();
         if (minTokensOut == 0) revert InvalidAmount();
 
         if (!_isAllowedToken(token)) {
@@ -144,6 +145,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
 
         uint256 balanceBefore = IERC20(token).balanceOf(address(this));
         uint256 ethBalanceBefore = address(this).balance - msg.value;
+        uint256 universalRouterEthBefore = universalRouter.balance;
 
         _executeSwap(universalRouter, msg.value, commands, inputs, deadline, false);
 
@@ -151,6 +153,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         if (address(this).balance > ethBalanceBefore) {
             revert UnexpectedEthRefund();
         }
+        _verifyUniversalRouterDidNotRetainEth(universalRouterEthBefore);
 
         uint256 balanceAfter = IERC20(token).balanceOf(address(this));
         tokensReceived = balanceAfter - balanceBefore;
@@ -206,11 +209,13 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         _approvePermit2(token, tokenAmount);
 
         uint256 ethBalanceBefore = address(this).balance;
+        uint256 universalRouterEthBefore = universalRouter.balance;
 
         _executeSwap(universalRouter, 0, commands, inputs, deadline, true);
 
         _clearPermit2(token);
         _verifyTokensConsumed(token, tokenBalanceBefore, tokenAmount);
+        _verifyUniversalRouterDidNotRetainEth(universalRouterEthBefore);
 
         uint256 ethBalanceAfter = address(this).balance;
         ethReceived = ethBalanceAfter - ethBalanceBefore;
@@ -266,6 +271,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
         bool isEthOutput = tokenOut == address(0);
         uint256 ethValue = isEthInput ? msg.value : 0;
         uint256 inputAmount = isEthInput ? msg.value : amountIn;
+        uint256 universalRouterEthBefore = universalRouter.balance;
 
         uint256 tokenInBalanceBefore;
         if (isEthInput) {
@@ -292,6 +298,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
                 _clearPermit2(tokenIn);
                 _verifyTokensConsumed(tokenIn, tokenInBalanceBefore, amountIn);
             }
+            _verifyUniversalRouterDidNotRetainEth(universalRouterEthBefore);
 
             amountOut = address(this).balance - ethBalanceBefore;
             if (amountOut < minAmountOut) revert SlippageExceeded();
@@ -312,6 +319,7 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
             if (address(this).balance > expectedEthAfter) {
                 revert UnexpectedEthRefund();
             }
+            _verifyUniversalRouterDidNotRetainEth(universalRouterEthBefore);
 
             uint256 tokenAfter = IERC20(tokenOut).balanceOf(address(this));
             amountOut = tokenAfter - tokenBefore;
@@ -484,6 +492,13 @@ contract LiquidRouter is ILiquidRouter, ReentrancyGuard, Ownable, Pausable {
                 ? finalTokenBalance - balanceBefore
                 : balanceBefore - finalTokenBalance;
             revert UnexpectedTokenRefund(amountPulled, leftover);
+        }
+    }
+
+    /// @notice Verify ETH-funded routes do not increase the shared Universal Router's native ETH balance
+    function _verifyUniversalRouterDidNotRetainEth(uint256 balanceBefore) internal view {
+        if (universalRouter.balance > balanceBefore) {
+            revert UnexpectedUniversalRouterEthBalance();
         }
     }
 

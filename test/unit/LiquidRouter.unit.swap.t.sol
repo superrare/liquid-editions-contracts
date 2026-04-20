@@ -5,7 +5,12 @@ import {BoundaryConstants} from "liquid-editions-test/helpers/bases/BoundaryCons
 import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
 import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
 import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
-import {LiquidRouterUnitTestBase, MockUniversalRouterForRouter, MockUniversalRouterWithRefundForRouter} from "liquid-editions-test/unit/LiquidRouter.unit.base.sol";
+import {
+    EthDonorForRouter,
+    LiquidRouterUnitTestBase,
+    MockUniversalRouterForRouter,
+    MockUniversalRouterWithRefundForRouter
+} from "liquid-editions-test/unit/LiquidRouter.unit.base.sol";
 
 /// @title LiquidRouter Swap Unit Tests
 /// @notice Swap (two-leg) flow and edge cases
@@ -163,6 +168,62 @@ contract LiquidRouterUnitSwapTest is LiquidRouterUnitTestBase {
             address(tokenB),
             user1,
             1, // minAmountOut
+            leg1Commands,
+            leg1Inputs,
+            leg2Commands,
+            leg2Inputs,
+            block.timestamp + 1 hours,
+            0
+        );
+    }
+
+    function test_Swap_EthToToken_RevertsWhen_UniversalRouterRetainsETH() public {
+        router.setRetainEthOnExecute(true);
+        (bytes memory leg2Commands, bytes[] memory leg2Inputs) = _validRoute();
+
+        vm.expectRevert(ILiquidRouter.UnexpectedUniversalRouterEthBalance.selector);
+        vm.prank(user1);
+        _swapVia(
+            liquidRouter,
+            address(0),
+            0,
+            address(token),
+            user1,
+            1,
+            "",
+            new bytes[](0),
+            leg2Commands,
+            leg2Inputs,
+            block.timestamp + 1 hours,
+            1 ether
+        );
+    }
+
+    function test_Swap_TokenToToken_RevertsWhen_UniversalRouterRetainsETH()
+        public
+    {
+        EthDonorForRouter donor = new EthDonorForRouter();
+        vm.deal(address(donor), 1 ether);
+        router.setEthDonation(address(donor), 0.25 ether);
+        router.setOutputToken(address(tokenB));
+
+        (bytes memory leg1Commands, bytes[] memory leg1Inputs) = _validRoute();
+        (bytes memory leg2Commands, bytes[] memory leg2Inputs) = _validRoute();
+
+        vm.prank(user1);
+        token.approve(address(liquidRouter), 1000e18);
+
+        vm.expectRevert(
+            ILiquidRouter.UnexpectedUniversalRouterEthBalance.selector
+        );
+        vm.prank(user1);
+        _swapVia(
+            liquidRouter,
+            address(token),
+            1000e18,
+            address(tokenB),
+            user1,
+            1,
             leg1Commands,
             leg1Inputs,
             leg2Commands,

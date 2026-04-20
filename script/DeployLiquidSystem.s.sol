@@ -832,10 +832,12 @@ contract DeployLiquidSystem is Script {
             result.factory != address(0) &&
             address(sharedLiquidRegistry) != address(0)
         ) {
-            LiquidFactory factoryContract = LiquidFactory(result.factory);
-            factoryContract.setLiquidRegistry(address(sharedLiquidRegistry));
             console.log("=== Step 6g: Configuring auto-registration ===");
-            console.log("  factory.setLiquidRegistry(sharedLiquidRegistry)");
+            DeployLiquidSystemReconcile.reconcileFactoryLiquidRegistry(
+                deployer,
+                LiquidFactory(result.factory),
+                sharedLiquidRegistry
+            );
         }
         // Step 6h: Note: Router<->FeeDistributor price-forwarding wiring is no longer needed.
         //         FeeDistributor reads RARE/ETH spot price directly from pool slot0.

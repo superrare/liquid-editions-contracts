@@ -9,13 +9,27 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockERC20} from "liquid-editions-test/helpers/MockERC20.sol";
 import {LiquidRegistry} from "liquid-editions/LiquidRegistry.sol";
 
+contract EthDonorForRouter {
+    function donate(address payable to, uint256 amount) external {
+        (bool success, ) = to.call{value: amount}("");
+        require(success, "ETH donation failed");
+    }
+
+    receive() external payable {}
+}
+
 /// @title Mock Universal Router for LiquidRouter testing
 contract MockUniversalRouterForRouter {
+    address internal constant ETH_SINK =
+        address(0x000000000000000000000000000000000000dEaD);
     MockERC20 public token;
     MockERC20 public outputToken;
     uint256 public tokenPerEth = 1000e18;
     bool public shouldFail;
     uint256 public pullAmountOverride;
+    bool public retainEthOnExecute;
+    address public ethDonationSource;
+    uint256 public ethDonationAmount;
 
     address internal constant PERMIT2 =
         0x000000000022D473030F116dDEE9F6B43aC78BA3;
@@ -41,11 +55,35 @@ contract MockUniversalRouterForRouter {
         pullAmountOverride = amount;
     }
 
+    function setRetainEthOnExecute(bool retain) external {
+        retainEthOnExecute = retain;
+    }
+
+    function setEthDonation(address source, uint256 amount) external {
+        ethDonationSource = source;
+        ethDonationAmount = amount;
+    }
+
     receive() external payable {
         if (msg.value > 0 && !shouldFail) {
             uint256 tokensOut = (msg.value * tokenPerEth) / 1e18;
             outputToken.mint(msg.sender, tokensOut);
         }
+    }
+
+    function _consumeEth(uint256 amount) internal {
+        if (amount == 0) return;
+
+        (bool success, ) = ETH_SINK.call{value: amount}("");
+        require(success, "ETH consume failed");
+    }
+
+    function _donateEthToSelf() internal {
+        if (ethDonationSource == address(0) || ethDonationAmount == 0) return;
+        EthDonorForRouter(payable(ethDonationSource)).donate(
+            payable(address(this)),
+            ethDonationAmount
+        );
     }
 
     function execute(
@@ -58,6 +96,10 @@ contract MockUniversalRouterForRouter {
         if (msg.value > 0) {
             uint256 tokensOut = (msg.value * tokenPerEth) / 1e18;
             outputToken.mint(msg.sender, tokensOut);
+            if (!retainEthOnExecute) {
+                _consumeEth(msg.value);
+            }
+            _donateEthToSelf();
         } else {
             uint256 approved = token.allowance(msg.sender, PERMIT2);
             if (approved > 0) {
@@ -77,7 +119,7 @@ contract MockUniversalRouterForRouter {
                     (bool success, ) = msg.sender.call{value: ethOut}("");
                     require(success, "ETH transfer failed");
                 }
-
+                _donateEthToSelf();
             }
         }
     }
@@ -112,11 +154,17 @@ contract MockUniversalRouterWithRefundForRouter is
         if (msg.value > 0) {
             uint256 tokensOut = (msg.value * tokenPerEth) / 1e18;
             outputToken.mint(msg.sender, tokensOut);
+            uint256 ethToConsume = msg.value;
 
             if (shouldRefund && refundAmount > 0) {
+                ethToConsume -= refundAmount;
                 (bool success, ) = msg.sender.call{value: refundAmount}("");
                 require(success, "Refund failed");
             }
+            if (!retainEthOnExecute) {
+                _consumeEth(ethToConsume);
+            }
+            _donateEthToSelf();
         } else {
             uint256 approved = token.allowance(msg.sender, PERMIT2);
             if (approved > 0) {
@@ -139,6 +187,7 @@ contract MockUniversalRouterWithRefundForRouter is
                     (bool refundSuccess, ) = msg.sender.call{value: refundAmount}("");
                     require(refundSuccess, "Refund failed");
                 }
+                _donateEthToSelf();
             }
         }
     }
@@ -171,7 +220,7 @@ contract ReentrantRecipientForRouter {
         if (shouldReenter) {
             bytes[] memory inputs = new bytes[](1);
             bytes memory actions = abi.encodePacked(uint8(0x07), uint8(0x0c), uint8(0x0f));
-            bytes[] memory params = new bytes[](0);
+            bytes[] memory params = new bytes[](3);
             inputs[0] = abi.encode(actions, params);
             router.buy{value: 0.01 ether}(
                 token,
@@ -273,7 +322,7 @@ abstract contract LiquidRouterUnitTestBase is Test {
 
         // V4 route with allowed actions only.
         bytes memory actions = abi.encodePacked(uint8(0x07), uint8(0x0c), uint8(0x0f));
-        bytes[] memory params = new bytes[](0);
+        bytes[] memory params = new bytes[](3);
         inputs[0] = abi.encode(actions, params);
     }
 

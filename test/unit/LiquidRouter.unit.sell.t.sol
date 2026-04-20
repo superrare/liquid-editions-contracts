@@ -3,7 +3,12 @@ pragma solidity ^0.8.0;
 
 import {ILiquidRouter} from "liquid-editions/interfaces/ILiquidRouter.sol";
 import {LiquidRouter} from "liquid-editions/LiquidRouter.sol";
-import {LiquidRouterUnitTestBase, MockUniversalRouterForRouter, MockPermit2ForRouter} from "liquid-editions-test/unit/LiquidRouter.unit.base.sol";
+import {
+    EthDonorForRouter,
+    LiquidRouterUnitTestBase,
+    MockUniversalRouterForRouter,
+    MockPermit2ForRouter
+} from "liquid-editions-test/unit/LiquidRouter.unit.base.sol";
 import {MockFeeOnTransferToken} from "liquid-editions-test/helpers/MockERC20.sol";
 
 /// @title Mock Universal Router with token-sell ETH refund capability
@@ -111,6 +116,32 @@ contract LiquidRouterUnitSellTest is LiquidRouterUnitTestBase {
 
         // Router should not retain any ETH
         assertEq(address(liquidRouter).balance, routerBalBefore);
+    }
+
+    function testSellRevertsWhenUniversalRouterRetainsETH() public {
+        EthDonorForRouter donor = new EthDonorForRouter();
+        vm.deal(address(donor), 2 ether);
+        router.setEthDonation(address(donor), 1.25 ether);
+
+        uint256 tokenAmount = 1000e18;
+        (bytes memory commands, bytes[] memory inputs) = _validRoute();
+
+        vm.prank(user1);
+        token.approve(address(liquidRouter), tokenAmount);
+
+        vm.expectRevert(
+            ILiquidRouter.UnexpectedUniversalRouterEthBalance.selector
+        );
+        vm.prank(user1);
+        liquidRouter.sell(
+            address(token),
+            tokenAmount,
+            user1,
+            1,
+            commands,
+            inputs,
+            block.timestamp + 1 hours
+        );
     }
 
     function testSellRevertsOnZeroAmount() public {

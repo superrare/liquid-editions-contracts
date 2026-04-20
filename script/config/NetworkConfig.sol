@@ -64,7 +64,7 @@ library NetworkConfig {
                     protocolFeeRecipient: 0x860a80d33E85e97888F1f0C75c6e5BBD60b48DA9, // change this before actual mainnet deployment
                     liquid: LiquidAddresses({
                         factory: 0xd3D8Ca76E8c5547694106378B6e471B4AC8EFC63,
-                        router: 0x9515E3DfAfb758aA205BeDF9411e89FAF7aF1f61,
+                        router: 0xEBd58EdA8408d9EA409f2c2bE8898BD9738f3583,
                         auctioneer: 0x656b073247d2583994a88300B01Af82dD7d28EFA,
                         swapGuard: address(0), // not yet deployed
                         initGuard: address(0),
@@ -148,7 +148,7 @@ library NetworkConfig {
                     protocolFeeRecipient: 0xBa68422A154e459f7b4992a95Ad358d412b6bd1d,
                     liquid: LiquidAddresses({
                         factory: 0xfD18C0D99e5b6F89F3538806241C2C0d6FD728Ac,
-                        router: 0x72E39C9c2Ef18619fA76d6BE9Ba793fFBEC3672D,
+                        router: 0x429c3Ee66E7f6CDA12C5BadE4104aF3277aA2305,
                         auctioneer: 0xf0dC12B5A36498C30dE00708253258F7509f1130,
                         swapGuard: address(0),
                         initGuard: address(0),

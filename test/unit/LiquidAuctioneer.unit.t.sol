@@ -163,7 +163,7 @@ contract LiquidAuctioneerUnitTest is Test {
         commands = hex"10";
         inputs = new bytes[](1);
         bytes memory actions = abi.encodePacked(uint8(0x07), uint8(0x0c), uint8(0x0f));
-        bytes[] memory params = new bytes[](0);
+        bytes[] memory params = new bytes[](3);
         inputs[0] = abi.encode(actions, params);
     }
 
@@ -537,7 +537,7 @@ contract LiquidAuctioneerSecurityTest is Test {
         commands = hex"10";
         inputs = new bytes[](1);
         bytes memory actions = abi.encodePacked(uint8(0x07), uint8(0x0c), uint8(0x0f));
-        bytes[] memory params = new bytes[](0);
+        bytes[] memory params = new bytes[](3);
         inputs[0] = abi.encode(actions, params);
     }
 

@@ -42,6 +42,9 @@ interface ILiquidRouter {
     /// @notice Thrown when ETH is unexpectedly returned during a buy (forces EXACT_INPUT routes)
     error UnexpectedEthRefund();
 
+    /// @notice Thrown when a route increases the Universal Router's native ETH balance
+    error UnexpectedUniversalRouterEthBalance();
+
     /// @notice Thrown when tokens pulled from the user are not fully consumed during a sell
     /// @param expected Amount of tokens the router attempted to swap
     /// @param leftover Tokens that were not consumed by the Universal Router
