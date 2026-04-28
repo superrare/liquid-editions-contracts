@@ -38,11 +38,7 @@ interface ILiquidFactory {
     error InvalidAmount();
 
     /// @notice Thrown when the configured PoolHooks address is already bound to another factory
-    error SwapGuardFactoryMismatch(
-        address poolHooks,
-        address configuredFactory,
-        address expectedFactory
-    );
+    error SwapGuardFactoryMismatch(address poolHooks, address configuredFactory, address expectedFactory);
 
     /// @notice Thrown when an invalid pool hooks contract is configured
     error InvalidPoolHook(address poolHooks);
@@ -54,11 +50,7 @@ interface ILiquidFactory {
     /// @param poolHooks The hook address
     /// @param actualFlags Flags reported by the hook
     /// @param requiredFlags Minimum required flags mask
-    error PoolHookMissingFlags(
-        address poolHooks,
-        uint160 actualFlags,
-        uint160 requiredFlags
-    );
+    error PoolHookMissingFlags(address poolHooks, uint160 actualFlags, uint160 requiredFlags);
 
     /// @notice Thrown when poolHooks is address(0) during token creation
     error PoolHooksNotSet();
@@ -71,11 +63,7 @@ interface ILiquidFactory {
     /// @param token The address of the created token
     /// @param creator The address of the token creator
     /// @param tokenUri The token URI
-    event LiquidTokenCreated(
-        address indexed token,
-        address indexed creator,
-        string tokenUri
-    );
+    event LiquidTokenCreated(address indexed token, address indexed creator, string tokenUri);
 
     /// @notice Emitted when the Uniswap V4 PoolManager address is updated
     event PoolManagerUpdated(address poolManager);
@@ -110,10 +98,7 @@ interface ILiquidFactory {
     /// @notice Emitted when the registry used for token registration is updated
     /// @param oldLiquidRegistry Previous registry address
     /// @param newLiquidRegistry New registry address
-    event LiquidRegistryUpdated(
-        address indexed oldLiquidRegistry,
-        address indexed newLiquidRegistry
-    );
+    event LiquidRegistryUpdated(address indexed oldLiquidRegistry, address indexed newLiquidRegistry);
 
     /// @notice Emitted when the migration executor address is updated
     /// @param migrationExecutor The new migration executor address
@@ -206,10 +191,7 @@ interface ILiquidFactory {
     /// @param _salt The user-supplied salt that will be used for deployment
     /// @param _deployer The address that will call createLiquidTokenWithAuction (msg.sender)
     /// @return The predicted token clone address
-    function predictGraduatedTokenAddress(
-        bytes32 _salt,
-        address _deployer
-    ) external view returns (address);
+    function predictGraduatedTokenAddress(bytes32 _salt, address _deployer) external view returns (address);
 
     /// @notice Creates a new Liquid token with two-sided AMM liquidity
     /// @param _creator The address of the token creator (receives fees and launch reward)
@@ -227,6 +209,7 @@ interface ILiquidFactory {
     ) external returns (address token);
 
     /// @notice Creates a new Liquid token with multicurve liquidity
+    /// @dev Uses the factory's current maxTotalSupply and creatorLaunchReward.
     /// @param _creator The address of the token creator (receives fees and launch reward)
     /// @param _tokenUri The ERC20z token URI (metadata link)
     /// @param _name The token name
@@ -241,6 +224,26 @@ interface ILiquidFactory {
         string memory _symbol,
         uint256 _initialRareLiquidity,
         Curve[] calldata _curves
+    ) external returns (address token);
+
+    /// @notice Creates a new Liquid token with multicurve liquidity and a custom max total supply
+    /// @dev Uses the provided supply and the factory's current creatorLaunchReward.
+    /// @param _creator The address of the token creator (receives fees and launch reward)
+    /// @param _tokenUri The ERC20z token URI (metadata link)
+    /// @param _name The token name
+    /// @param _symbol The token symbol
+    /// @param _initialRareLiquidity The amount of RARE tokens to provide as initial liquidity
+    /// @param _curves Curve configuration for multicurve deployment
+    /// @param _customMaxTotalSupply Custom total token supply minted at launch
+    /// @return token The address of the created token
+    function createLiquidTokenMultiCurveWithSupply(
+        address _creator,
+        string memory _tokenUri,
+        string memory _name,
+        string memory _symbol,
+        uint256 _initialRareLiquidity,
+        Curve[] calldata _curves,
+        uint256 _customMaxTotalSupply
     ) external returns (address token);
 
     /// @notice Creates a new token through auction migration setup.
@@ -274,9 +277,7 @@ interface ILiquidFactory {
 
     /// @notice Sets the LiquidMultiCurve implementation (for multicurve anti-sniping launches)
     /// @param _implementation The implementation address
-    function setLiquidMultiCurveImplementation(
-        address _implementation
-    ) external;
+    function setLiquidMultiCurveImplementation(address _implementation) external;
 
     /// @notice Sets the LiquidInstant implementation (for two-sided AMM launches)
     /// @param _implementation The implementation address

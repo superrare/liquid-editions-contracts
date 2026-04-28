@@ -36,27 +36,23 @@ contract LiquidFactoryUnitTest is Test {
 
     function _defaultSingleCurve() internal view returns (Curve[] memory) {
         Curve[] memory curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            numPositions: 1,
-            shares: 1e18
-        });
+        curves[0] =
+            Curve({tickLower: factory.lpTickLower(), tickUpper: factory.lpTickUpper(), numPositions: 1, shares: 1e18});
         return curves;
+    }
+
+    function _setValidPoolHook() internal {
+        LiquidGuard guard = _deployLiquidGuardWithRequiredFlags();
+        vm.prank(admin);
+        guard.setFactory(address(factory));
+        vm.prank(admin);
+        factory.setPoolHooks(address(guard));
     }
 
     function setUp() public {
         poolManager = new MockV4PoolManager();
         baseToken = new MockERC20();
-        factory = new LiquidFactory(
-            admin,
-            address(poolManager),
-            -180,
-            120000,
-            address(0),
-            60,
-            1e15
-        );
+        factory = new LiquidFactory(admin, address(poolManager), -180, 120000, address(0), 60, 1e15);
 
         vm.prank(admin);
 
@@ -123,15 +119,7 @@ contract LiquidFactoryUnitTest is Test {
 
     function test_RevertWhen_Constructor_InvalidTickSpacing() public {
         vm.expectRevert(ILiquidFactory.InvalidTickSpacing.selector);
-        new LiquidFactory(
-            admin,
-            address(poolManager),
-            -200,
-            120000,
-            address(0),
-            60,
-            1e15
-        );
+        new LiquidFactory(admin, address(poolManager), -200, 120000, address(0), 60, 1e15);
     }
 
     function test_SetPoolManager_RevertsWhen_AddressZero() public {
@@ -165,18 +153,12 @@ contract LiquidFactoryUnitTest is Test {
 
     function test_SetPoolHooks_WithGuardBoundToDifferentFactory_Reverts() public {
         address maliciousFactory = makeAddr("maliciousFactory");
-        MockSwapGuardForFactory mockGuard = new MockSwapGuardForFactory(
-            admin,
-            maliciousFactory
-        );
+        MockSwapGuardForFactory mockGuard = new MockSwapGuardForFactory(admin, maliciousFactory);
 
         vm.prank(admin);
         vm.expectRevert(
             abi.encodeWithSelector(
-                ILiquidFactory.SwapGuardFactoryMismatch.selector,
-                address(mockGuard),
-                maliciousFactory,
-                address(factory)
+                ILiquidFactory.SwapGuardFactoryMismatch.selector, address(mockGuard), maliciousFactory, address(factory)
             )
         );
         factory.setPoolHooks(address(mockGuard));
@@ -186,18 +168,12 @@ contract LiquidFactoryUnitTest is Test {
         // This reproduces the prior silent-failure path: old code tried setFactory() and swallowed reverts.
         // With owner-only setFactory, a guard owned by another actor will not be bindable, and should be rejected.
         address attacker = makeAddr("attacker");
-        MockSwapGuardForFactory mockGuard = new MockSwapGuardForFactory(
-            attacker,
-            address(0)
-        );
+        MockSwapGuardForFactory mockGuard = new MockSwapGuardForFactory(attacker, address(0));
 
         vm.prank(admin);
         vm.expectRevert(
             abi.encodeWithSelector(
-                ILiquidFactory.SwapGuardFactoryMismatch.selector,
-                address(mockGuard),
-                address(0),
-                address(factory)
+                ILiquidFactory.SwapGuardFactoryMismatch.selector, address(mockGuard), address(0), address(factory)
             )
         );
         factory.setPoolHooks(address(mockGuard));
@@ -207,12 +183,7 @@ contract LiquidFactoryUnitTest is Test {
         address notAContract = makeAddr("notAContract");
 
         vm.prank(admin);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ILiquidFactory.InvalidPoolHook.selector,
-                notAContract
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(ILiquidFactory.InvalidPoolHook.selector, notAContract));
         factory.setPoolHooks(notAContract);
     }
 
@@ -236,20 +207,10 @@ contract LiquidFactoryUnitTest is Test {
         vm.prank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                ILiquidFactory.PoolHookMissingFlags.selector,
-                address(mockGuard),
-                actualFlags,
-                requiredFlags
+                ILiquidFactory.PoolHookMissingFlags.selector, address(mockGuard), actualFlags, requiredFlags
             )
         );
-        factory.createLiquidTokenMultiCurve(
-            user1,
-            "uri",
-            "Token",
-            "TKN",
-            1e15,
-            curves
-        );
+        factory.createLiquidTokenMultiCurve(user1, "uri", "Token", "TKN", 1e15, curves);
     }
 
     function test_CreateLiquidTokenMultiCurve_WithHookNotGuard_Reverts() public {
@@ -263,20 +224,8 @@ contract LiquidFactoryUnitTest is Test {
         vm.prank(user1);
         baseToken.approve(address(factory), 1e15);
         vm.prank(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ILiquidFactory.PoolHookNotGuard.selector,
-                address(mockHook)
-            )
-        );
-        factory.createLiquidTokenMultiCurve(
-            user1,
-            "uri",
-            "Token",
-            "TKN",
-            1e15,
-            curves
-        );
+        vm.expectRevert(abi.encodeWithSelector(ILiquidFactory.PoolHookNotGuard.selector, address(mockHook)));
+        factory.createLiquidTokenMultiCurve(user1, "uri", "Token", "TKN", 1e15, curves);
     }
 
     function test_CreateLiquidTokenMultiCurve_WithHookFactoryMismatchAtCreate_Reverts() public {
@@ -299,20 +248,10 @@ contract LiquidFactoryUnitTest is Test {
         vm.prank(user1);
         vm.expectRevert(
             abi.encodeWithSelector(
-                ILiquidFactory.SwapGuardFactoryMismatch.selector,
-                address(validHook),
-                badFactory,
-                address(factory)
+                ILiquidFactory.SwapGuardFactoryMismatch.selector, address(validHook), badFactory, address(factory)
             )
         );
-        factory.createLiquidTokenMultiCurve(
-            user1,
-            "uri",
-            "Token",
-            "TKN",
-            1e15,
-            curves
-        );
+        factory.createLiquidTokenMultiCurve(user1, "uri", "Token", "TKN", 1e15, curves);
     }
 
     function test_CreateLiquidTokenMultiCurve_WithNoHooks_RevertsPoolHooksNotSet() public {
@@ -324,14 +263,7 @@ contract LiquidFactoryUnitTest is Test {
         baseToken.approve(address(factory), 1e15);
         vm.prank(user1);
         vm.expectRevert(ILiquidFactory.PoolHooksNotSet.selector);
-        factory.createLiquidTokenMultiCurve(
-            user1,
-            "uri",
-            "Token",
-            "TKN",
-            1e15,
-            curves
-        );
+        factory.createLiquidTokenMultiCurve(user1, "uri", "Token", "TKN", 1e15, curves);
     }
 
     /// @dev Skipped: LiquidInitGuard is legacy and no longer satisfies the full 0x20CC flag
@@ -354,14 +286,7 @@ contract LiquidFactoryUnitTest is Test {
         vm.prank(user1);
         baseToken.approve(address(factory), 1e15);
         vm.prank(user1);
-        address token = factory.createLiquidTokenMultiCurve(
-            user1,
-            "uri",
-            "Token",
-            "TKN",
-            1e15,
-            curves
-        );
+        address token = factory.createLiquidTokenMultiCurve(user1, "uri", "Token", "TKN", 1e15, curves);
 
         assertTrue(token != address(0));
         assertTrue(ILiquidGuard(address(validHook)).allowedInitializers(token));
@@ -483,17 +408,13 @@ contract LiquidFactoryUnitTest is Test {
 
     // --- Token inherits factory values at launch ---
 
-    function test_LaunchedToken_InheritsSupplyParamsFromFactory() public {
+    function test_CreateLiquidTokenMultiCurve_LegacyPathStillUsesFactorySupplyParams() public {
         vm.prank(admin);
         factory.setMaxTotalSupply(2_000_000e18);
         vm.prank(admin);
         factory.setCreatorLaunchReward(200_000e18);
 
-        LiquidGuard guard = _deployLiquidGuardWithRequiredFlags();
-        vm.prank(admin);
-        guard.setFactory(address(factory));
-        vm.prank(admin);
-        factory.setPoolHooks(address(guard));
+        _setValidPoolHook();
 
         Curve[] memory curves = _defaultSingleCurve();
         vm.prank(user1);
@@ -509,15 +430,57 @@ contract LiquidFactoryUnitTest is Test {
         assertEq(token.balanceOf(user1), 200_000e18);
     }
 
+    function test_CreateLiquidTokenMultiCurveWithSupply_LargerThanFactoryDefault_Succeeds() public {
+        vm.prank(admin);
+        factory.setCreatorLaunchReward(150_000e18);
+        _setValidPoolHook();
+
+        Curve[] memory curves = _defaultSingleCurve();
+        vm.prank(user1);
+        address tokenAddr =
+            factory.createLiquidTokenMultiCurveWithSupply(user1, "uri", "Token", "TKN", 0, curves, 2_500_000e18);
+
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
+        assertEq(token.maxTotalSupply(), 2_500_000e18);
+        assertEq(token.creatorLaunchReward(), 150_000e18);
+        assertEq(token.poolLaunchSupply(), 2_350_000e18);
+        assertEq(token.totalSupply(), 2_500_000e18);
+        assertEq(token.balanceOf(user1), 150_000e18);
+    }
+
+    function test_CreateLiquidTokenMultiCurveWithSupply_SmallerThanFactoryDefault_Succeeds() public {
+        vm.prank(admin);
+        factory.setCreatorLaunchReward(100_000e18);
+        _setValidPoolHook();
+
+        Curve[] memory curves = _defaultSingleCurve();
+        vm.prank(user1);
+        address tokenAddr =
+            factory.createLiquidTokenMultiCurveWithSupply(user1, "uri", "Token", "TKN", 0, curves, 400_000e18);
+
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
+        assertEq(token.maxTotalSupply(), 400_000e18);
+        assertEq(token.creatorLaunchReward(), 100_000e18);
+        assertEq(token.poolLaunchSupply(), 300_000e18);
+        assertEq(token.totalSupply(), 400_000e18);
+        assertEq(token.balanceOf(user1), 100_000e18);
+    }
+
+    function test_CreateLiquidTokenMultiCurveWithSupply_RevertsWhen_CustomSupplyNotGreaterThanCreatorReward() public {
+        vm.prank(admin);
+        factory.setCreatorLaunchReward(200_000e18);
+
+        Curve[] memory curves = _defaultSingleCurve();
+        vm.prank(user1);
+        vm.expectRevert(ILiquidFactory.InvalidAmount.selector);
+        factory.createLiquidTokenMultiCurveWithSupply(user1, "uri", "Token", "TKN", 0, curves, 200_000e18);
+    }
+
     function test_LaunchedToken_WithZeroCreatorReward_AllTokensGoToPool() public {
         vm.prank(admin);
         factory.setCreatorLaunchReward(0);
 
-        LiquidGuard guard = _deployLiquidGuardWithRequiredFlags();
-        vm.prank(admin);
-        guard.setFactory(address(factory));
-        vm.prank(admin);
-        factory.setPoolHooks(address(guard));
+        _setValidPoolHook();
 
         Curve[] memory curves = _defaultSingleCurve();
         vm.prank(user1);
@@ -544,14 +507,7 @@ contract LiquidFactoryUnitTest is Test {
 
         vm.prank(attacker);
         vm.expectRevert(ILiquidFactory.Unauthorized.selector);
-        factory.createLiquidTokenMultiCurve(
-            victim,
-            "uri",
-            "Token",
-            "TKN",
-            0,
-            curves
-        );
+        factory.createLiquidTokenMultiCurve(victim, "uri", "Token", "TKN", 0, curves);
     }
 
     /// @dev Regression: createLiquidTokenInstant must reject calls where _creator != msg.sender
@@ -566,13 +522,7 @@ contract LiquidFactoryUnitTest is Test {
 
         vm.prank(attacker);
         vm.expectRevert(ILiquidFactory.Unauthorized.selector);
-        factory.createLiquidTokenInstant(
-            victim,
-            "uri",
-            "Token",
-            "TKN",
-            1e15
-        );
+        factory.createLiquidTokenInstant(victim, "uri", "Token", "TKN", 1e15);
     }
 
     function test_RevertWhen_NonAdmin_Pause() public {
@@ -607,14 +557,7 @@ contract LiquidFactoryUnitTest is Test {
 
         vm.prank(user1);
         vm.expectRevert();
-        factory.createLiquidTokenMultiCurve(
-            user1,
-            "uri",
-            "Token",
-            "TKN",
-            1e15,
-            curves
-        );
+        factory.createLiquidTokenMultiCurve(user1, "uri", "Token", "TKN", 1e15, curves);
     }
 
     function test_FactoryPauseAndUnpause_ResumesTokenCreation() public {
@@ -633,36 +576,19 @@ contract LiquidFactoryUnitTest is Test {
         baseToken.approve(address(factory), 2 * 1e15);
         vm.prank(user1);
         vm.expectRevert();
-        factory.createLiquidTokenMultiCurve(
-            user1,
-            "uri",
-            "Token",
-            "TKN",
-            1e15,
-            curves
-        );
+        factory.createLiquidTokenMultiCurve(user1, "uri", "Token", "TKN", 1e15, curves);
 
         vm.prank(admin);
         factory.unpause();
 
         vm.prank(user1);
-        address token = factory.createLiquidTokenMultiCurve(
-            user1,
-            "uri",
-            "Token",
-            "TKN",
-            1e15,
-            curves
-        );
+        address token = factory.createLiquidTokenMultiCurve(user1, "uri", "Token", "TKN", 1e15, curves);
         assertTrue(token != address(0));
     }
 
     function _fullRequiredFlags() internal pure returns (uint160) {
-        return Hooks.BEFORE_INITIALIZE_FLAG
-            | Hooks.BEFORE_SWAP_FLAG
-            | Hooks.AFTER_SWAP_FLAG
-            | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG
-            | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG; // 0x20CC
+        return Hooks.BEFORE_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
+            | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG; // 0x20CC
     }
 
     function _deployMockSwapGuardForFactoryWithoutRequiredFlags()
@@ -672,13 +598,11 @@ contract LiquidFactoryUnitTest is Test {
         uint160 requiredFlags = _fullRequiredFlags();
 
         for (uint256 i = 0; i < 512; i++) {
-            MockSwapGuardForFactory candidate = new MockSwapGuardForFactory{
-                salt: bytes32(i)
-            }(admin, address(factory));
+            MockSwapGuardForFactory candidate = new MockSwapGuardForFactory{salt: bytes32(i)}(admin, address(factory));
             uint160 actualFlags = uint160(address(candidate)) & Hooks.ALL_HOOK_MASK;
             if (
-                (actualFlags & requiredFlags) != requiredFlags &&
-                Hooks.isValidHookAddress(IHooks(address(candidate)), 0)
+                (actualFlags & requiredFlags) != requiredFlags
+                    && Hooks.isValidHookAddress(IHooks(address(candidate)), 0)
             ) {
                 return candidate;
             }
@@ -687,59 +611,37 @@ contract LiquidFactoryUnitTest is Test {
         revert("Could not find mock guard without required multicurve flags");
     }
 
-    function _deployLiquidGuardWithRequiredFlags()
-        internal
-        returns (LiquidGuard guard)
-    {
+    function _deployLiquidGuardWithRequiredFlags() internal returns (LiquidGuard guard) {
         address hookAddr = address(_fullRequiredFlags());
         address rareToken = makeAddr("rareToken");
         vm.prank(admin);
         deployCodeTo(
-            "LiquidGuard.sol:LiquidGuard",
-            abi.encode(IPoolManager(address(poolManager)), admin, rareToken),
-            hookAddr
+            "LiquidGuard.sol:LiquidGuard", abi.encode(IPoolManager(address(poolManager)), admin, rareToken), hookAddr
         );
         return LiquidGuard(hookAddr);
     }
 
-    function _deployMockHookWithoutGuardWithRequiredFlags()
-        internal
-        returns (MockHookWithoutGuard mockHook)
-    {
+    function _deployMockHookWithoutGuardWithRequiredFlags() internal returns (MockHookWithoutGuard mockHook) {
         address hookAddr = address(_fullRequiredFlags());
-        deployCodeTo(
-            "LiquidFactory.unit.t.sol:MockHookWithoutGuard",
-            "",
-            hookAddr
-        );
+        deployCodeTo("LiquidFactory.unit.t.sol:MockHookWithoutGuard", "", hookAddr);
         return MockHookWithoutGuard(hookAddr);
     }
 }
 
 contract MockHookWithoutGuard is IHooks {
-    function beforeInitialize(
-        address,
-        PoolKey calldata,
-        uint160
-    ) external pure returns (bytes4) {
+    function beforeInitialize(address, PoolKey calldata, uint160) external pure returns (bytes4) {
         return IHooks.beforeInitialize.selector;
     }
 
-    function afterInitialize(
-        address,
-        PoolKey calldata,
-        uint160,
-        int24
-    ) external pure returns (bytes4) {
+    function afterInitialize(address, PoolKey calldata, uint160, int24) external pure returns (bytes4) {
         return IHooks.afterInitialize.selector;
     }
 
-    function beforeAddLiquidity(
-        address,
-        PoolKey calldata,
-        IPoolManager.ModifyLiquidityParams calldata,
-        bytes calldata
-    ) external pure returns (bytes4) {
+    function beforeAddLiquidity(address, PoolKey calldata, IPoolManager.ModifyLiquidityParams calldata, bytes calldata)
+        external
+        pure
+        returns (bytes4)
+    {
         return IHooks.beforeAddLiquidity.selector;
     }
 
@@ -774,42 +676,27 @@ contract MockHookWithoutGuard is IHooks {
         return (IHooks.afterRemoveLiquidity.selector, BalanceDelta.wrap(0));
     }
 
-    function beforeSwap(
-        address,
-        PoolKey calldata,
-        IPoolManager.SwapParams calldata,
-        bytes calldata
-    ) external pure returns (bytes4, BeforeSwapDelta, uint24) {
+    function beforeSwap(address, PoolKey calldata, IPoolManager.SwapParams calldata, bytes calldata)
+        external
+        pure
+        returns (bytes4, BeforeSwapDelta, uint24)
+    {
         return (IHooks.beforeSwap.selector, BeforeSwapDelta.wrap(0), 0);
     }
 
-    function afterSwap(
-        address,
-        PoolKey calldata,
-        IPoolManager.SwapParams calldata,
-        BalanceDelta,
-        bytes calldata
-    ) external pure returns (bytes4, int128) {
+    function afterSwap(address, PoolKey calldata, IPoolManager.SwapParams calldata, BalanceDelta, bytes calldata)
+        external
+        pure
+        returns (bytes4, int128)
+    {
         return (IHooks.afterSwap.selector, 0);
     }
 
-    function beforeDonate(
-        address,
-        PoolKey calldata,
-        uint256,
-        uint256,
-        bytes calldata
-    ) external pure returns (bytes4) {
+    function beforeDonate(address, PoolKey calldata, uint256, uint256, bytes calldata) external pure returns (bytes4) {
         return IHooks.beforeDonate.selector;
     }
 
-    function afterDonate(
-        address,
-        PoolKey calldata,
-        uint256,
-        uint256,
-        bytes calldata
-    ) external pure returns (bytes4) {
+    function afterDonate(address, PoolKey calldata, uint256, uint256, bytes calldata) external pure returns (bytes4) {
         return IHooks.afterDonate.selector;
     }
 }
@@ -836,9 +723,7 @@ contract MockSwapGuardForFactory is ILiquidSwapGuard {
         revert("UNUSED");
     }
 
-    function allowedInitializers(
-        address
-    ) external pure override returns (bool) {
+    function allowedInitializers(address) external pure override returns (bool) {
         return false;
     }
 

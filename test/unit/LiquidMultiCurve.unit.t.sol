@@ -221,6 +221,16 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
         return LiquidMultiCurve(payable(tokenAddr));
     }
 
+    function _deployTokenWithSupply(uint256 customMaxTotalSupply) internal returns (LiquidMultiCurve) {
+        Curve[] memory curves = _defaultCurves();
+        vm.startPrank(creator);
+        address tokenAddr = factory.createLiquidTokenMultiCurveWithSupply(
+            creator, "ipfs://test", "Test", "TMC", 0, curves, customMaxTotalSupply
+        );
+        vm.stopPrank();
+        return LiquidMultiCurve(payable(tokenAddr));
+    }
+
     // ============================================
     // burn() — positive path, access, events
     // ============================================
@@ -365,6 +375,18 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
         assertEq(
             token.totalSupply(), POOL_SUPPLY + CREATOR_REWARD, "total supply should equal MAX_TOTAL_SUPPLY at init"
         );
+    }
+
+    function test_Initialize_Success_WithCustomMaxTotalSupply() public {
+        uint256 customMaxTotalSupply = 1_500_000e18;
+        LiquidMultiCurve token = _deployTokenWithSupply(customMaxTotalSupply);
+        uint256 creatorReward = factory.creatorLaunchReward();
+
+        assertEq(token.maxTotalSupply(), customMaxTotalSupply);
+        assertEq(token.creatorLaunchReward(), creatorReward);
+        assertEq(token.poolLaunchSupply(), customMaxTotalSupply - creatorReward);
+        assertEq(token.totalSupply(), customMaxTotalSupply);
+        assertEq(token.balanceOf(creator), creatorReward);
     }
 
     // ============================================

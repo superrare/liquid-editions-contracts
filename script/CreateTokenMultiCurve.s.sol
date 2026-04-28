@@ -27,6 +27,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  *
  * Environment Variables Optional:
  * - INITIAL_RARE_LIQUIDITY: Optional RARE for head position beyond curve range (default: 0)
+ * - MAX_TOTAL_SUPPLY: Optional custom token supply for this launch (default: factory maxTotalSupply)
  * - FACTORY_ADDRESS: Factory address (defaults to NetworkConfig)
  * - ROUTER_ADDRESS: Router address for token registration (defaults to NetworkConfig)
  * - CHAIN_ID: Chain ID (defaults to block.chainid)
@@ -48,6 +49,13 @@ contract CreateTokenMultiCurve is Script {
         } catch {
             initialRareLiquidity = 0; // No RARE required — bonding curve is funded by LIQUID tokens
         }
+
+        uint256 customMaxTotalSupply;
+        bool hasCustomMaxTotalSupply;
+        try vm.envUint("MAX_TOTAL_SUPPLY") returns (uint256 supply) {
+            customMaxTotalSupply = supply;
+            hasCustomMaxTotalSupply = true;
+        } catch {}
 
         uint256 chainId;
         try vm.envUint("CHAIN_ID") returns (uint256 _chainId) {
@@ -88,6 +96,10 @@ contract CreateTokenMultiCurve is Script {
         console.log("Token symbol:", tokenSymbol);
         console.log("Initial RARE liquidity:");
         console.logUint(initialRareLiquidity);
+        if (hasCustomMaxTotalSupply) {
+            console.log("Custom max total supply:");
+            console.logUint(customMaxTotalSupply);
+        }
         console.log("");
 
         address deployerAddress = vm.addr(deployerPrivateKey);
@@ -99,21 +111,14 @@ contract CreateTokenMultiCurve is Script {
         require(baseToken != address(0), "Base token not set in factory");
 
         if (initialRareLiquidity > 0) {
-            uint256 currentAllowance = IERC20(baseToken).allowance(
-                deployerAddress,
-                factoryAddress
-            );
+            uint256 currentAllowance = IERC20(baseToken).allowance(deployerAddress, factoryAddress);
             if (currentAllowance < initialRareLiquidity) {
                 IERC20(baseToken).approve(factoryAddress, type(uint256).max);
             }
 
-            uint256 deployerRareBalance = IERC20(baseToken).balanceOf(
-                deployerAddress
-            );
+            uint256 deployerRareBalance = IERC20(baseToken).balanceOf(deployerAddress);
             if (deployerRareBalance < initialRareLiquidity) {
-                revert(
-                    "Insufficient RARE balance for initial liquidity."
-                );
+                revert("Insufficient RARE balance for initial liquidity.");
             }
         }
 
@@ -124,14 +129,13 @@ contract CreateTokenMultiCurve is Script {
 
         Curve[] memory curves = _buildCurvesFromConfig();
 
-        address newToken = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            tokenURI,
-            tokenName,
-            tokenSymbol,
-            initialRareLiquidity,
-            curves
-        );
+        address newToken = hasCustomMaxTotalSupply
+            ? factory.createLiquidTokenMultiCurveWithSupply(
+                tokenCreator, tokenURI, tokenName, tokenSymbol, initialRareLiquidity, curves, customMaxTotalSupply
+            )
+            : factory.createLiquidTokenMultiCurve(
+                tokenCreator, tokenURI, tokenName, tokenSymbol, initialRareLiquidity, curves
+            );
 
         console.log("LiquidMultiCurve token created at:", newToken);
         vm.stopBroadcast();
@@ -146,8 +150,7 @@ contract CreateTokenMultiCurve is Script {
     }
 
     function _buildCurvesFromConfig() internal pure returns (Curve[] memory) {
-        DeployConfig.MultiCurveConfig memory cfg = DeployConfig
-            .getDefaultMultiCurveConfig();
+        DeployConfig.MultiCurveConfig memory cfg = DeployConfig.getDefaultMultiCurveConfig();
 
         Curve[] memory curves = new Curve[](3);
         curves[0] = Curve({

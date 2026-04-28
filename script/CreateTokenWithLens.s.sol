@@ -35,6 +35,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  *
  * Environment Variables Optional:
  * - INITIAL_RARE_LIQUIDITY: Amount of RARE tokens for initial liquidity (default: 0.001 ether)
+ * - MAX_TOTAL_SUPPLY: Optional custom token supply for this launch (default: factory maxTotalSupply)
  * - FACTORY_ADDRESS: Factory address (defaults to NetworkConfig)
  * - ROUTER_ADDRESS: Router address for token registration (defaults to NetworkConfig)
  * - CHAIN_ID: Chain ID (defaults to block.chainid)
@@ -65,6 +66,13 @@ contract CreateTokenWithLens is Script {
         } catch {
             initialRareLiquidity = 0.001 ether; // Default to 0.001 RARE if not specified
         }
+
+        uint256 customMaxTotalSupply;
+        bool hasCustomMaxTotalSupply;
+        try vm.envUint("MAX_TOTAL_SUPPLY") returns (uint256 supply) {
+            customMaxTotalSupply = supply;
+            hasCustomMaxTotalSupply = true;
+        } catch {}
 
         // Get optional NFT collection parameters
         string memory collectionName;
@@ -152,6 +160,10 @@ contract CreateTokenWithLens is Script {
         console.log("Token URI:", tokenURI);
         console.log("Initial RARE liquidity:");
         console.logUint(initialRareLiquidity);
+        if (hasCustomMaxTotalSupply) {
+            console.log("Custom max total supply:");
+            console.logUint(customMaxTotalSupply);
+        }
         console.log("Deployer address:");
         console.logAddress(deployerAddress);
         console.log("");
@@ -221,9 +233,13 @@ contract CreateTokenWithLens is Script {
 
         // Create the token
         console.log("Creating Liquid token...");
-        address newToken = factory.createLiquidTokenMultiCurve(
-            tokenCreator, tokenURI, tokenName, tokenSymbol, initialRareLiquidity, curves
-        );
+        address newToken = hasCustomMaxTotalSupply
+            ? factory.createLiquidTokenMultiCurveWithSupply(
+                tokenCreator, tokenURI, tokenName, tokenSymbol, initialRareLiquidity, curves, customMaxTotalSupply
+            )
+            : factory.createLiquidTokenMultiCurve(
+                tokenCreator, tokenURI, tokenName, tokenSymbol, initialRareLiquidity, curves
+            );
 
         console.log("Token created at:");
         console.logAddress(newToken);

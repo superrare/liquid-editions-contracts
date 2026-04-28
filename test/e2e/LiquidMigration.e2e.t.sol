@@ -9,7 +9,7 @@ import {LiquidMigrationExecutor} from "liquid-editions/LiquidMigrationExecutor.s
 import {ILiquidMigrationExecutor} from "liquid-editions/interfaces/ILiquidMigrationExecutor.sol";
 import {NetworkConfig} from "script/config/NetworkConfig.sol";
 import {DeployConfig} from "script/config/DeployConfig.sol";
-import {Curve} from "doppler/libraries/Multicurve.sol";
+import {Curve, Multicurve} from "doppler/libraries/Multicurve.sol";
 import {Position} from "doppler/types/Position.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
@@ -74,12 +74,8 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
 
     function _defaultSingleCurve() internal view returns (Curve[] memory) {
         Curve[] memory curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            numPositions: 1,
-            shares: 1e18
-        });
+        curves[0] =
+            Curve({tickLower: factory.lpTickLower(), tickUpper: factory.lpTickUpper(), numPositions: 1, shares: 1e18});
         return curves;
     }
 
@@ -121,11 +117,7 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         factory.setBaseToken(address(mockRARE));
 
         // Deploy migration executor (address(1) sentinel for registry — skips registration check)
-        executor = new LiquidMigrationExecutor(
-            admin,
-            protocolVault,
-            address(1)
-        );
+        executor = new LiquidMigrationExecutor(admin, protocolVault, address(1));
 
         // Configure executor
         executor.approveHook(initGuard1, true);
@@ -154,12 +146,7 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), rareLiquidity);
         address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://test",
-            "Test Token",
-            "TTKN",
-            rareLiquidity,
-            _defaultSingleCurve()
+            tokenCreator, "ipfs://test", "Test Token", "TTKN", rareLiquidity, _defaultSingleCurve()
         );
         vm.stopPrank();
         return LiquidMultiCurve(payable(tokenAddr));
@@ -169,37 +156,54 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), rareLiquidity);
         address tokenAddr = factory.createLiquidTokenInstant(
-            tokenCreator,
-            "ipfs://test-instant",
-            "Instant Token",
-            "INST",
-            rareLiquidity
+            tokenCreator, "ipfs://test-instant", "Instant Token", "INST", rareLiquidity
         );
         vm.stopPrank();
         return LiquidInstant(payable(tokenAddr));
     }
 
+    function _defaultInstantMigrationPositions(LiquidInstant token)
+        internal
+        view
+        returns (Position[] memory positions)
+    {
+        positions = new Position[](1);
+        positions[0] = Position({
+            tickLower: token.lpTickLower(),
+            tickUpper: token.lpTickUpper(),
+            liquidity: token.lpLiquidity(),
+            salt: bytes32(0)
+        });
+    }
+
+    function _defaultMultiCurveMigrationPositions(LiquidMultiCurve token, uint256 rareLiquidity)
+        internal
+        view
+        returns (Position[] memory positions)
+    {
+        Curve[] memory curves = _defaultSingleCurve();
+        (Currency currency0,,, int24 tickSpacing,) = token.poolKey();
+        bool isToken0 = Currency.unwrap(currency0) == address(token);
+
+        (Curve[] memory adjustedCurves,,) = Multicurve.adjustCurves(curves, 0, tickSpacing, isToken0);
+        positions = Multicurve.calculatePositions(
+            adjustedCurves, tickSpacing, token.poolLaunchSupply(), rareLiquidity, isToken0
+        );
+    }
+
     /// @dev Builds and executes a migration plan for a token to the given target hook.
     ///      Caller must have already whitelisted the token on targetHook via addInitializer.
     ///      Uses max dust values to allow for sequential migrations which may have larger dust.
-    function _executeMigrationTo(
-        address token,
-        address targetHook,
-        Position[] memory newPositions
-    ) internal {
+    function _executeMigrationTo(address token, address targetHook, Position[] memory newPositions) internal {
         IPoolManager pm = IPoolManager(config.uniswapV4PoolManager);
-        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing, ) = ILiquid(token).poolKey();
+        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing,) = ILiquid(token).poolKey();
         PoolId currentPoolId = ILiquid(token).poolId();
-        (uint160 currentSqrtPriceX96, , , ) = pm.getSlot0(currentPoolId);
+        (uint160 currentSqrtPriceX96,,,) = pm.getSlot0(currentPoolId);
 
         ILiquidMigrationExecutor.MigrationPlan memory plan = ILiquidMigrationExecutor.MigrationPlan({
             token: token,
             newPoolKey: PoolKey({
-                currency0: c0,
-                currency1: c1,
-                fee: fee,
-                tickSpacing: tickSpacing,
-                hooks: IHooks(targetHook)
+                currency0: c0, currency1: c1, fee: fee, tickSpacing: tickSpacing, hooks: IHooks(targetHook)
             }),
             newSqrtPriceX96: currentSqrtPriceX96,
             newPositions: newPositions,
@@ -244,7 +248,7 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
     function test_executeMigration_revert_hookNotApproved() public {
         LiquidMultiCurve token = _createToken(1 ether);
 
-        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing, ) = token.poolKey();
+        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing,) = token.poolKey();
         address badHook = makeAddr("badHook");
 
         Position[] memory positions = new Position[](1);
@@ -253,11 +257,7 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         ILiquidMigrationExecutor.MigrationPlan memory plan = ILiquidMigrationExecutor.MigrationPlan({
             token: address(token),
             newPoolKey: PoolKey({
-                currency0: c0,
-                currency1: c1,
-                fee: fee,
-                tickSpacing: tickSpacing,
-                hooks: IHooks(badHook)
+                currency0: c0, currency1: c1, fee: fee, tickSpacing: tickSpacing, hooks: IHooks(badHook)
             }),
             newSqrtPriceX96: 1e18,
             newPositions: positions,
@@ -282,33 +282,21 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         (Currency c0, Currency c1, uint24 fee, int24 tickSpacing, IHooks oldHooks) = token.poolKey();
         PoolId oldPoolId = token.poolId();
         uint256 preMigrationSupply = token.totalSupply();
-        uint128 preMigrationLiquidity = token.totalLiquidity();
-        (uint160 oldSqrtPriceX96, , , ) = pm.getSlot0(oldPoolId);
+        Position[] memory newPositions = _defaultMultiCurveMigrationPositions(token, 1 ether);
+        (uint160 oldSqrtPriceX96,,,) = pm.getSlot0(oldPoolId);
 
-        assertGt(preMigrationLiquidity, 0, "Pre-migration liquidity should be > 0");
+        assertGt(newPositions.length, 0, "Pre-migration positions should exist");
+        assertGt(newPositions[0].liquidity, 0, "First migration position should have liquidity");
         assertEq(address(oldHooks), initGuard1, "Old hooks should be initGuard1");
 
         // Whitelist the token on initGuard2 so it can initialize a new pool
         vm.prank(admin);
         LiquidGuard(initGuard2).addInitializer(address(token));
 
-        // Build migration plan: same currencies, same fee/tickSpacing, different hook, same price
-        Position[] memory newPositions = new Position[](1);
-        newPositions[0] = Position({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            liquidity: preMigrationLiquidity,
-            salt: bytes32(0)
-        });
-
         ILiquidMigrationExecutor.MigrationPlan memory plan = ILiquidMigrationExecutor.MigrationPlan({
             token: address(token),
             newPoolKey: PoolKey({
-                currency0: c0,
-                currency1: c1,
-                fee: fee,
-                tickSpacing: tickSpacing,
-                hooks: IHooks(initGuard2)
+                currency0: c0, currency1: c1, fee: fee, tickSpacing: tickSpacing, hooks: IHooks(initGuard2)
             }),
             newSqrtPriceX96: oldSqrtPriceX96,
             newPositions: newPositions,
@@ -321,14 +309,13 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         executor.executeMigration(plan);
 
         // Verify post-migration state
-        (, , , , IHooks newHooks) = token.poolKey();
+        (,,,, IHooks newHooks) = token.poolKey();
         PoolId newPoolId = token.poolId();
 
         assertEq(address(newHooks), initGuard2, "Hooks should be updated to initGuard2");
         assertTrue(PoolId.unwrap(newPoolId) != PoolId.unwrap(oldPoolId), "Pool ID should change");
         assertEq(token.totalSupply(), preMigrationSupply, "Total supply should be unchanged");
         assertEq(token.storedPositionsLength(), newPositions.length, "Position count should match new plan");
-        assertGt(token.totalLiquidity(), 0, "New pool should have liquidity");
 
         // Verify trading works on new pool: buy LIQUID with RARE
         uint256 buyAmount = 0.1 ether;
@@ -371,32 +358,22 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         (Currency c0, Currency c1, uint24 fee, int24 tickSpacing, IHooks oldHooks) = token.poolKey();
         PoolId oldPoolId = token.poolId();
         uint256 preMigrationSupply = token.totalSupply();
-        uint128 preMigrationLiquidity = token.totalLiquidity();
-        (uint160 oldSqrtPriceX96, , , ) = pm.getSlot0(oldPoolId);
+        Position[] memory newPositions = _defaultInstantMigrationPositions(token);
+        (uint160 oldSqrtPriceX96,,,) = pm.getSlot0(oldPoolId);
 
-        assertGt(preMigrationLiquidity, 0, "Pre-migration liquidity should be > 0");
+        assertGt(newPositions[0].liquidity, 0, "Pre-migration liquidity should be > 0");
         assertEq(address(oldHooks), initGuard1, "Old hooks should be initGuard1");
+
+        // Exact-liquidity instant migrations need 1 wei of RARE to offset V4 rounding on the RARE side.
+        mockRARE.mint(address(token), 1);
 
         vm.prank(admin);
         LiquidGuard(initGuard2).addInitializer(address(token));
 
-        // LiquidInstant requires exactly one position
-        Position[] memory newPositions = new Position[](1);
-        newPositions[0] = Position({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            liquidity: preMigrationLiquidity,
-            salt: bytes32(0)
-        });
-
         ILiquidMigrationExecutor.MigrationPlan memory plan = ILiquidMigrationExecutor.MigrationPlan({
             token: address(token),
             newPoolKey: PoolKey({
-                currency0: c0,
-                currency1: c1,
-                fee: fee,
-                tickSpacing: tickSpacing,
-                hooks: IHooks(initGuard2)
+                currency0: c0, currency1: c1, fee: fee, tickSpacing: tickSpacing, hooks: IHooks(initGuard2)
             }),
             newSqrtPriceX96: oldSqrtPriceX96,
             newPositions: newPositions,
@@ -407,16 +384,16 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         vm.prank(admin);
         executor.executeMigration(plan);
 
-        (, , , , IHooks newHooks) = token.poolKey();
+        (,,,, IHooks newHooks) = token.poolKey();
         PoolId newPoolId = token.poolId();
 
         assertEq(address(newHooks), initGuard2, "Hooks should be updated to initGuard2");
         assertTrue(PoolId.unwrap(newPoolId) != PoolId.unwrap(oldPoolId), "Pool ID should change");
         assertEq(token.totalSupply(), preMigrationSupply, "Total supply should be unchanged");
-        
+
         // For LiquidInstant, check lpLiquidity (stored value) which should match what we migrated
         uint128 postMigrationLiquidity = token.lpLiquidity();
-        assertEq(postMigrationLiquidity, preMigrationLiquidity, "lpLiquidity should match migrated liquidity");
+        assertEq(postMigrationLiquidity, newPositions[0].liquidity, "lpLiquidity should match migrated liquidity");
         assertGt(postMigrationLiquidity, 0, "New pool should have liquidity");
 
         // Verify trading still works on the new pool
@@ -439,53 +416,40 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         LiquidMultiCurve token = _createToken(1 ether);
 
         PoolId poolId1 = token.poolId();
-        uint128 liquidity1 = token.totalLiquidity();
-        assertGt(liquidity1, 0, "Initial liquidity should be > 0");
+        Position[] memory positions1 = _defaultMultiCurveMigrationPositions(token, 1 ether);
+        assertGt(positions1.length, 0, "Initial positions should exist");
+        assertGt(positions1[0].liquidity, 0, "Initial liquidity should be > 0");
 
         // ---- First migration: guard1 → guard2 ----
         vm.prank(admin);
         LiquidGuard(initGuard2).addInitializer(address(token));
-
-        Position[] memory positions1 = new Position[](1);
-        positions1[0] = Position({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            liquidity: liquidity1,
-            salt: bytes32(0)
-        });
         _executeMigrationTo(address(token), initGuard2, positions1);
 
         PoolId poolId2 = token.poolId();
-        (, , , , IHooks hooks2) = token.poolKey();
+        (,,,, IHooks hooks2) = token.poolKey();
         assertTrue(PoolId.unwrap(poolId2) != PoolId.unwrap(poolId1), "Pool ID should change on first migration");
         assertEq(address(hooks2), initGuard2, "Hook should be initGuard2 after first migration");
-        assertGt(token.totalLiquidity(), 0, "Pool should have liquidity after first migration");
+        assertEq(
+            token.storedPositionsLength(), positions1.length, "Stored positions should match after first migration"
+        );
 
         // ---- Second migration: guard2 → guard3 ----
         vm.prank(admin);
         LiquidGuard(initGuard3).addInitializer(address(token));
 
-        uint128 liquidity2 = token.totalLiquidity();
-        assertGt(liquidity2, 0, "Liquidity should be > 0 after first migration");
-        
-        // Use liquidity - 1 to avoid a 1-wei settlement deficit from rounding.
-        // The first migration may leave the contract with 0 token balance (all dust swept
-        // to protocolVault), so re-adding the exact same liquidity can require 1 more wei
-        // than the removal returns. This is the same approach an operator would use in prod.
-        Position[] memory positions2 = new Position[](1);
-        positions2[0] = Position({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            liquidity: liquidity2 - 1,
-            salt: bytes32(0)
-        });
+        Position[] memory positions2 = _defaultMultiCurveMigrationPositions(token, 1 ether);
+        mockRARE.mint(address(token), 1);
+        vm.prank(tokenCreator);
+        token.transfer(address(token), 1);
         _executeMigrationTo(address(token), initGuard3, positions2);
 
         PoolId poolId3 = token.poolId();
-        (, , , , IHooks hooks3) = token.poolKey();
+        (,,,, IHooks hooks3) = token.poolKey();
         assertTrue(PoolId.unwrap(poolId3) != PoolId.unwrap(poolId2), "Pool ID should change on second migration");
         assertEq(address(hooks3), initGuard3, "Hook should be initGuard3 after second migration");
-        assertGt(token.totalLiquidity(), 0, "Pool should have liquidity after second migration");
+        assertEq(
+            token.storedPositionsLength(), positions2.length, "Stored positions should match after second migration"
+        );
 
         // Trading works on the final pool
         uint256 buyAmount = 0.1 ether;
@@ -503,7 +467,7 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
 
     function test_executeMigration_revert_tickSpacingNotAllowed() public {
         LiquidMultiCurve token = _createToken(1 ether);
-        (Currency c0, Currency c1, uint24 fee, , ) = token.poolKey();
+        (Currency c0, Currency c1, uint24 fee,,) = token.poolKey();
 
         int24 disallowedTickSpacing = 10;
 
@@ -513,11 +477,7 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         ILiquidMigrationExecutor.MigrationPlan memory plan = ILiquidMigrationExecutor.MigrationPlan({
             token: address(token),
             newPoolKey: PoolKey({
-                currency0: c0,
-                currency1: c1,
-                fee: fee,
-                tickSpacing: disallowedTickSpacing,
-                hooks: IHooks(initGuard2)
+                currency0: c0, currency1: c1, fee: fee, tickSpacing: disallowedTickSpacing, hooks: IHooks(initGuard2)
             }),
             newSqrtPriceX96: 1e18,
             newPositions: positions,
@@ -534,7 +494,7 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
 
     function test_executeMigration_revert_feeNotAllowed() public {
         LiquidMultiCurve token = _createToken(1 ether);
-        (Currency c0, Currency c1, , int24 tickSpacing, ) = token.poolKey();
+        (Currency c0, Currency c1,, int24 tickSpacing,) = token.poolKey();
 
         uint24 disallowedFee = 3000;
 
@@ -544,11 +504,7 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         ILiquidMigrationExecutor.MigrationPlan memory plan = ILiquidMigrationExecutor.MigrationPlan({
             token: address(token),
             newPoolKey: PoolKey({
-                currency0: c0,
-                currency1: c1,
-                fee: disallowedFee,
-                tickSpacing: tickSpacing,
-                hooks: IHooks(initGuard2)
+                currency0: c0, currency1: c1, fee: disallowedFee, tickSpacing: tickSpacing, hooks: IHooks(initGuard2)
             }),
             newSqrtPriceX96: 1e18,
             newPositions: positions,
@@ -557,26 +513,20 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         });
 
         vm.prank(admin);
-        vm.expectRevert(
-            abi.encodeWithSelector(ILiquidMigrationExecutor.FeeNotAllowed.selector, disallowedFee)
-        );
+        vm.expectRevert(abi.encodeWithSelector(ILiquidMigrationExecutor.FeeNotAllowed.selector, disallowedFee));
         executor.executeMigration(plan);
     }
 
     function test_executeMigration_revert_noPositions() public {
         LiquidMultiCurve token = _createToken(1 ether);
-        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing, ) = token.poolKey();
+        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing,) = token.poolKey();
 
         Position[] memory emptyPositions = new Position[](0);
 
         ILiquidMigrationExecutor.MigrationPlan memory plan = ILiquidMigrationExecutor.MigrationPlan({
             token: address(token),
             newPoolKey: PoolKey({
-                currency0: c0,
-                currency1: c1,
-                fee: fee,
-                tickSpacing: tickSpacing,
-                hooks: IHooks(initGuard2)
+                currency0: c0, currency1: c1, fee: fee, tickSpacing: tickSpacing, hooks: IHooks(initGuard2)
             }),
             newSqrtPriceX96: 1e18,
             newPositions: emptyPositions,
@@ -595,47 +545,36 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
 
     /// @notice Verifies that dust bounds are enforced: migration reverts if actual dust exceeds maxDust.
     function test_executeMigration_revert_dustExceeded() public {
-        LiquidInstant token = _createInstantToken(1 ether);
+        LiquidMultiCurve token = _createToken(1 ether);
         IPoolManager pm = IPoolManager(config.uniswapV4PoolManager);
 
-        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing, ) = token.poolKey();
+        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing,) = token.poolKey();
         PoolId oldPoolId = token.poolId();
-        uint128 preMigrationLiquidity = token.totalLiquidity();
-        (uint160 oldSqrtPriceX96, , , ) = pm.getSlot0(oldPoolId);
+        Position[] memory newPositions = _defaultMultiCurveMigrationPositions(token, 1 ether);
+        (uint160 oldSqrtPriceX96,,,) = pm.getSlot0(oldPoolId);
 
         vm.prank(admin);
         LiquidGuard(initGuard2).addInitializer(address(token));
 
-        Position[] memory newPositions = new Position[](1);
-        newPositions[0] = Position({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            liquidity: preMigrationLiquidity,
-            salt: bytes32(0)
-        });
+        // Reducing the primary position by 2 yields token-side dust for this pool shape.
+        newPositions[0].liquidity -= 2;
 
-        // Use an unreasonably low maxDust that will be exceeded by the migration
         ILiquidMigrationExecutor.MigrationPlan memory plan = ILiquidMigrationExecutor.MigrationPlan({
             token: address(token),
             newPoolKey: PoolKey({
-                currency0: c0,
-                currency1: c1,
-                fee: fee,
-                tickSpacing: tickSpacing,
-                hooks: IHooks(initGuard2)
+                currency0: c0, currency1: c1, fee: fee, tickSpacing: tickSpacing, hooks: IHooks(initGuard2)
             }),
             newSqrtPriceX96: oldSqrtPriceX96,
             newPositions: newPositions,
-            maxDust0: 1, // Extremely low bound that will definitely be exceeded
-            maxDust1: 1
+            maxDust0: MULTICURVE_MAX_DUST,
+            maxDust1: 0
         });
 
         // Migration should revert with DustExceeded.
         // The exact currency and amounts vary, so we capture revert data and check the 4-byte selector.
         vm.prank(admin);
-        (bool success, bytes memory revertData) = address(executor).call(
-            abi.encodeCall(executor.executeMigration, (plan))
-        );
+        (bool success, bytes memory revertData) =
+            address(executor).call(abi.encodeCall(executor.executeMigration, (plan)));
         assertFalse(success, "Migration should have reverted");
         bytes4 gotSelector = bytes4(revertData);
         assertEq(gotSelector, ILiquid.DustExceeded.selector, "Revert should be DustExceeded");
@@ -648,22 +587,15 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         IPoolManager pm = IPoolManager(config.uniswapV4PoolManager);
 
         PoolId oldPoolId = token.poolId();
-        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing, ) = token.poolKey();
-        uint128 preMigrationLiquidity = token.totalLiquidity();
-        (uint160 oldSqrtPriceX96, , , ) = pm.getSlot0(oldPoolId);
+        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing,) = token.poolKey();
+        Position[] memory newPositions = _defaultMultiCurveMigrationPositions(token, 1 ether);
+        (uint160 oldSqrtPriceX96,,,) = pm.getSlot0(oldPoolId);
 
         vm.prank(admin);
         LiquidGuard(initGuard2).addInitializer(address(token));
 
-        // Use slightly less liquidity than preMigrationLiquidity to induce a dust remainder
-        uint128 reducedLiquidity = preMigrationLiquidity - 1;
-        Position[] memory newPositions = new Position[](1);
-        newPositions[0] = Position({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            liquidity: reducedLiquidity,
-            salt: bytes32(0)
-        });
+        // Reducing the primary curve by 2 produces token dust that is swept to the vault.
+        newPositions[0].liquidity -= 2;
 
         uint256 vaultRareBefore = mockRARE.balanceOf(protocolVault);
         uint256 vaultTokenBefore = token.balanceOf(protocolVault);
@@ -671,11 +603,7 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         ILiquidMigrationExecutor.MigrationPlan memory plan = ILiquidMigrationExecutor.MigrationPlan({
             token: address(token),
             newPoolKey: PoolKey({
-                currency0: c0,
-                currency1: c1,
-                fee: fee,
-                tickSpacing: tickSpacing,
-                hooks: IHooks(initGuard2)
+                currency0: c0, currency1: c1, fee: fee, tickSpacing: tickSpacing, hooks: IHooks(initGuard2)
             }),
             newSqrtPriceX96: oldSqrtPriceX96,
             newPositions: newPositions,
@@ -692,8 +620,7 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         uint256 dustRare = vaultRareAfter - vaultRareBefore;
         uint256 dustToken = vaultTokenAfter - vaultTokenBefore;
 
-        // At least one of the currencies should have received dust since liquidity was under-allocated
-        assertTrue(dustRare > 0 || dustToken > 0, "Protocol vault should receive dust from under-allocated liquidity");
+        assertGt(dustToken, 0, "Protocol vault should receive token dust from under-allocated liquidity");
         assertLe(dustRare, MULTICURVE_MAX_DUST, "RARE dust to vault should be within maxDust bound");
         assertLe(dustToken, MULTICURVE_MAX_DUST, "Token dust to vault should be within maxDust bound");
     }
@@ -707,29 +634,17 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         IPoolManager pm = IPoolManager(config.uniswapV4PoolManager);
 
         PoolId oldPoolId = token.poolId();
-        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing, ) = token.poolKey();
-        uint128 preMigrationLiquidity = token.totalLiquidity();
-        (uint160 oldSqrtPriceX96, , , ) = pm.getSlot0(oldPoolId);
+        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing,) = token.poolKey();
+        Position[] memory newPositions = _defaultMultiCurveMigrationPositions(token, 1 ether);
+        (uint160 oldSqrtPriceX96,,,) = pm.getSlot0(oldPoolId);
 
         vm.prank(admin);
         LiquidGuard(initGuard2).addInitializer(address(token));
 
-        Position[] memory newPositions = new Position[](1);
-        newPositions[0] = Position({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            liquidity: preMigrationLiquidity,
-            salt: bytes32(0)
-        });
-
         ILiquidMigrationExecutor.MigrationPlan memory plan = ILiquidMigrationExecutor.MigrationPlan({
             token: address(token),
             newPoolKey: PoolKey({
-                currency0: c0,
-                currency1: c1,
-                fee: fee,
-                tickSpacing: tickSpacing,
-                hooks: IHooks(initGuard2)
+                currency0: c0, currency1: c1, fee: fee, tickSpacing: tickSpacing, hooks: IHooks(initGuard2)
             }),
             newSqrtPriceX96: oldSqrtPriceX96,
             newPositions: newPositions,
@@ -760,31 +675,21 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         LiquidMultiCurve token = _createToken(1 ether);
         IPoolManager pm = IPoolManager(config.uniswapV4PoolManager);
 
-        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing, ) = token.poolKey();
+        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing,) = token.poolKey();
         PoolId oldPoolId = token.poolId();
-        uint128 preMigrationLiquidity = token.totalLiquidity();
-        (uint160 oldSqrtPriceX96, , , ) = pm.getSlot0(oldPoolId);
+        Position[] memory newPositions = _defaultMultiCurveMigrationPositions(token, 1 ether);
+        (uint160 oldSqrtPriceX96,,,) = pm.getSlot0(oldPoolId);
 
         vm.prank(admin);
         LiquidGuard(initGuard2).addInitializer(address(token));
 
-        // Request MORE liquidity than was removed — forces a negative net delta
-        Position[] memory newPositions = new Position[](1);
-        newPositions[0] = Position({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            liquidity: preMigrationLiquidity + 1000,
-            salt: bytes32(0)
-        });
+        // Request MORE liquidity on the primary curve position than was removed — forces a negative net delta
+        newPositions[0].liquidity += 1000;
 
         ILiquidMigrationExecutor.MigrationPlan memory plan = ILiquidMigrationExecutor.MigrationPlan({
             token: address(token),
             newPoolKey: PoolKey({
-                currency0: c0,
-                currency1: c1,
-                fee: fee,
-                tickSpacing: tickSpacing,
-                hooks: IHooks(initGuard2)
+                currency0: c0, currency1: c1, fee: fee, tickSpacing: tickSpacing, hooks: IHooks(initGuard2)
             }),
             newSqrtPriceX96: oldSqrtPriceX96,
             newPositions: newPositions,
@@ -810,34 +715,22 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         LiquidMultiCurve token = _createToken(1 ether);
         IPoolManager pm = IPoolManager(config.uniswapV4PoolManager);
 
-        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing, ) = token.poolKey();
+        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing,) = token.poolKey();
         PoolId oldPoolId = token.poolId();
-        uint128 preMigrationLiquidity = token.totalLiquidity();
-        (uint160 oldSqrtPriceX96, , , ) = pm.getSlot0(oldPoolId);
+        Position[] memory newPositions = _defaultMultiCurveMigrationPositions(token, 1 ether);
+        (uint160 oldSqrtPriceX96,,,) = pm.getSlot0(oldPoolId);
 
         // Record pre-migration price
-        (uint256 preMigrationRarePerToken, ) = token.getCurrentPrice();
+        (uint256 preMigrationRarePerToken,) = token.getCurrentPrice();
         assertGt(preMigrationRarePerToken, 0, "Pre-migration price should be > 0");
 
         vm.prank(admin);
         LiquidGuard(initGuard2).addInitializer(address(token));
 
-        Position[] memory newPositions = new Position[](1);
-        newPositions[0] = Position({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            liquidity: preMigrationLiquidity,
-            salt: bytes32(0)
-        });
-
         ILiquidMigrationExecutor.MigrationPlan memory plan = ILiquidMigrationExecutor.MigrationPlan({
             token: address(token),
             newPoolKey: PoolKey({
-                currency0: c0,
-                currency1: c1,
-                fee: fee,
-                tickSpacing: tickSpacing,
-                hooks: IHooks(initGuard2)
+                currency0: c0, currency1: c1, fee: fee, tickSpacing: tickSpacing, hooks: IHooks(initGuard2)
             }),
             newSqrtPriceX96: oldSqrtPriceX96,
             newPositions: newPositions,
@@ -849,7 +742,7 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         executor.executeMigration(plan);
 
         // Verify price is preserved (within 1% tolerance for rounding)
-        (uint256 postMigrationRarePerToken, ) = token.getCurrentPrice();
+        (uint256 postMigrationRarePerToken,) = token.getCurrentPrice();
         assertGt(postMigrationRarePerToken, 0, "Post-migration price should be > 0");
 
         uint256 priceDiffBps;
@@ -875,12 +768,16 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         LiquidInstant token = _createInstantToken(1 ether);
         IPoolManager pm = IPoolManager(config.uniswapV4PoolManager);
 
-        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing, ) = token.poolKey();
+        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing,) = token.poolKey();
         PoolId oldPoolId = token.poolId();
-        uint128 preMigrationLiquidity = token.lpLiquidity();
-        (uint160 oldSqrtPriceX96, , , ) = pm.getSlot0(oldPoolId);
+        Position[] memory newPositions = _defaultInstantMigrationPositions(token);
+        (uint160 oldSqrtPriceX96,,,) = pm.getSlot0(oldPoolId);
 
         uint256 supplyBefore = token.totalSupply();
+        uint256 tokenBalanceBefore = token.balanceOf(address(token));
+
+        // Fund the known 1-wei RARE deficit so the migration reaches token-side settlement.
+        mockRARE.mint(address(token), 1);
 
         vm.prank(admin);
         LiquidGuard(initGuard2).addInitializer(address(token));
@@ -888,22 +785,10 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         // Use full liquidity — this should result in a net-positive or net-zero delta
         // (removal returns tokens, re-add at same price and liquidity consumes same tokens).
         // If there is a small negative delta on the LIQUID currency, the self-transfer path fires.
-        Position[] memory newPositions = new Position[](1);
-        newPositions[0] = Position({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            liquidity: preMigrationLiquidity,
-            salt: bytes32(0)
-        });
-
         ILiquidMigrationExecutor.MigrationPlan memory plan = ILiquidMigrationExecutor.MigrationPlan({
             token: address(token),
             newPoolKey: PoolKey({
-                currency0: c0,
-                currency1: c1,
-                fee: fee,
-                tickSpacing: tickSpacing,
-                hooks: IHooks(initGuard2)
+                currency0: c0, currency1: c1, fee: fee, tickSpacing: tickSpacing, hooks: IHooks(initGuard2)
             }),
             newSqrtPriceX96: oldSqrtPriceX96,
             newPositions: newPositions,
@@ -917,8 +802,9 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         // Total supply must be preserved — the self-transfer moves tokens between
         // the contract and V4 but never mints or burns.
         assertEq(token.totalSupply(), supplyBefore, "Total supply must be unchanged after settlement");
+        assertEq(token.balanceOf(address(token)), tokenBalanceBefore - 1, "Token balance should fund settlement");
 
-        (, , , , IHooks newHooks) = token.poolKey();
+        (,,,, IHooks newHooks) = token.poolKey();
         assertEq(address(newHooks), initGuard2, "Hook should be updated");
     }
 
@@ -936,10 +822,10 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         LiquidMultiCurve token = _createToken(1 ether);
         IPoolManager pm = IPoolManager(config.uniswapV4PoolManager);
 
-        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing, ) = token.poolKey();
+        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing,) = token.poolKey();
         PoolId oldPoolId = token.poolId();
-        uint128 preMigrationLiquidity = token.totalLiquidity();
-        (uint160 correctSqrtPriceX96, , , ) = pm.getSlot0(oldPoolId);
+        Position[] memory newPositions = _defaultMultiCurveMigrationPositions(token, 1 ether);
+        (uint160 correctSqrtPriceX96,,,) = pm.getSlot0(oldPoolId);
 
         // Confirm the correct price is far from the upper tick
         uint160 upperTickPrice = TickMath.getSqrtPriceAtTick(factory.lpTickUpper() - 1);
@@ -948,24 +834,12 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         vm.prank(admin);
         LiquidGuard(initGuard2).addInitializer(address(token));
 
-        Position[] memory newPositions = new Position[](1);
-        newPositions[0] = Position({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            liquidity: preMigrationLiquidity,
-            salt: bytes32(0)
-        });
-
         // Pass a price near the upper tick — the contract only has ~1 RARE seeded,
         // but V4 will demand ~3.6e26 tokens to fill the position at this price.
         ILiquidMigrationExecutor.MigrationPlan memory plan = ILiquidMigrationExecutor.MigrationPlan({
             token: address(token),
             newPoolKey: PoolKey({
-                currency0: c0,
-                currency1: c1,
-                fee: fee,
-                tickSpacing: tickSpacing,
-                hooks: IHooks(initGuard2)
+                currency0: c0, currency1: c1, fee: fee, tickSpacing: tickSpacing, hooks: IHooks(initGuard2)
             }),
             newSqrtPriceX96: upperTickPrice,
             newPositions: newPositions,
@@ -980,7 +854,7 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         executor.executeMigration(plan);
 
         // Confirm the pool state is UNCHANGED — migration was fully rolled back
-        (, , , , IHooks hooks) = token.poolKey();
+        (,,,, IHooks hooks) = token.poolKey();
         assertEq(address(hooks), initGuard1, "Hook should still be initGuard1 after revert");
         assertEq(PoolId.unwrap(token.poolId()), PoolId.unwrap(oldPoolId), "Pool ID should be unchanged after revert");
     }
@@ -992,7 +866,7 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
     function test_executeMigration_revert_currencyMismatch() public {
         LiquidMultiCurve token = _createToken(1 ether);
 
-        (, , uint24 fee, int24 tickSpacing, ) = token.poolKey();
+        (,, uint24 fee, int24 tickSpacing,) = token.poolKey();
 
         Position[] memory positions = new Position[](1);
         positions[0] = Position({tickLower: -180, tickUpper: 120000, liquidity: 1e18, salt: bytes32(0)});

@@ -31,6 +31,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  *
  * Environment Variables Optional:
  * - INITIAL_RARE_LIQUIDITY: Amount of RARE tokens for initial liquidity (default: 0.001 ether)
+ * - MAX_TOTAL_SUPPLY: Optional custom token supply for this launch (default: factory maxTotalSupply)
  * - FACTORY_ADDRESS: Factory address (defaults to NetworkConfig)
  * - ROUTER_ADDRESS: Router address for token registration (defaults to NetworkConfig)
  * - CHAIN_ID: Chain ID (defaults to block.chainid)
@@ -68,6 +69,13 @@ contract CreateToken is Script {
         } catch {
             initialRareLiquidity = 0.001 ether; // Default to 0.001 RARE if not specified
         }
+
+        uint256 customMaxTotalSupply;
+        bool hasCustomMaxTotalSupply;
+        try vm.envUint("MAX_TOTAL_SUPPLY") returns (uint256 supply) {
+            customMaxTotalSupply = supply;
+            hasCustomMaxTotalSupply = true;
+        } catch {}
 
         // Get chain ID from environment or use block.chainid
         uint256 chainId;
@@ -115,6 +123,10 @@ contract CreateToken is Script {
         console.log("Token URI:", tokenURI);
         console.log("Initial RARE liquidity:");
         console.logUint(initialRareLiquidity);
+        if (hasCustomMaxTotalSupply) {
+            console.log("Custom max total supply:");
+            console.logUint(customMaxTotalSupply);
+        }
         console.log("");
 
         // Get deployer address (from DEPLOYER_PRIVATE_KEY)
@@ -139,17 +151,10 @@ contract CreateToken is Script {
         // The deployer calls createLiquidToken, and the function does transferFrom(msg.sender, ...)
         // So deployer must have RARE tokens and approve the factory
         // NOTE: If tokenCreator is different from deployer, ensure deployer has RARE tokens
-        uint256 currentAllowance = IERC20(baseToken).allowance(
-            deployerAddress,
-            factoryAddress
-        );
+        uint256 currentAllowance = IERC20(baseToken).allowance(deployerAddress, factoryAddress);
         if (currentAllowance < initialRareLiquidity) {
-            console.log(
-                "Approving factory to transfer RARE tokens from deployer..."
-            );
-            console.log(
-                "NOTE: Deployer must have RARE tokens balance >= initialRareLiquidity"
-            );
+            console.log("Approving factory to transfer RARE tokens from deployer...");
+            console.log("NOTE: Deployer must have RARE tokens balance >= initialRareLiquidity");
             // Approve with type(uint256).max to avoid approval issues (factory only transfers initialRareLiquidity)
             IERC20(baseToken).approve(factoryAddress, type(uint256).max);
         } else {
@@ -160,18 +165,14 @@ contract CreateToken is Script {
         console.log("Creating Liquid token...");
 
         // Check deployer has sufficient RARE balance
-        uint256 deployerRareBalance = IERC20(baseToken).balanceOf(
-            deployerAddress
-        );
+        uint256 deployerRareBalance = IERC20(baseToken).balanceOf(deployerAddress);
         console.log("Deployer RARE balance:");
         console.logUint(deployerRareBalance);
         console.log("Required RARE liquidity:");
         console.logUint(initialRareLiquidity);
 
         if (deployerRareBalance < initialRareLiquidity) {
-            revert(
-                "Insufficient RARE balance. Deployer needs at least initialRareLiquidity RARE tokens."
-            );
+            revert("Insufficient RARE balance. Deployer needs at least initialRareLiquidity RARE tokens.");
         }
 
         // Verify factory configuration
@@ -198,21 +199,16 @@ contract CreateToken is Script {
 
         // Build default single-curve config (equivalent to former LiquidMultiCurve)
         Curve[] memory curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            numPositions: 1,
-            shares: 1e18
-        });
+        curves[0] =
+            Curve({tickLower: factory.lpTickLower(), tickUpper: factory.lpTickUpper(), numPositions: 1, shares: 1e18});
 
-        address newToken = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            tokenURI,
-            tokenName,
-            tokenSymbol,
-            initialRareLiquidity,
-            curves
-        );
+        address newToken = hasCustomMaxTotalSupply
+            ? factory.createLiquidTokenMultiCurveWithSupply(
+                tokenCreator, tokenURI, tokenName, tokenSymbol, initialRareLiquidity, curves, customMaxTotalSupply
+            )
+            : factory.createLiquidTokenMultiCurve(
+                tokenCreator, tokenURI, tokenName, tokenSymbol, initialRareLiquidity, curves
+            );
 
         console.log("Token created at:", newToken);
         console.log("");
@@ -242,15 +238,9 @@ contract CreateToken is Script {
         console.log("1. Verify the token contract on Etherscan");
         console.log("2. The token is now ready for trading on Uniswap V4");
         if (routerAddress != address(0)) {
-            console.log(
-                "3. Register token with router to enable creator fees:"
-            );
-            console.log(
-                "   Use script/RegisterToken.s.sol or cast send command shown above"
-            );
+            console.log("3. Register token with router to enable creator fees:");
+            console.log("   Use script/RegisterToken.s.sol or cast send command shown above");
         }
-        console.log(
-            "4. Users can trade the token using LiquidRouter for multi-hop swaps"
-        );
+        console.log("4. Users can trade the token using LiquidRouter for multi-hop swaps");
     }
 }

@@ -51,8 +51,7 @@ contract LiquidMultiCurveIntegrationTest is Test, InitGuardTestHelper {
     uint256 constant MIN_RARE = 250e18;
 
     function _defaultCurves() internal pure returns (Curve[] memory) {
-        DeployConfig.MultiCurveConfig memory cfg =
-            DeployConfig.getDefaultMultiCurveConfig();
+        DeployConfig.MultiCurveConfig memory cfg = DeployConfig.getDefaultMultiCurveConfig();
 
         Curve[] memory curves = new Curve[](3);
         curves[0] = Curve({
@@ -93,22 +92,15 @@ contract LiquidMultiCurveIntegrationTest is Test, InitGuardTestHelper {
 
         vm.startPrank(admin);
 
-        address burnerAddr = DeployRAREBurner.deploy(
-            admin,
-            deployConfig.burner,
-            config
-        );
+        address burnerAddr = DeployRAREBurner.deploy(admin, deployConfig.burner, config);
         burner = RAREBurner(payable(burnerAddr));
 
         if (deployConfig.factory.poolHooks == address(0)) {
             deployConfig.factory.poolHooks = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         }
 
-        DeployLiquidFactory.DeployResult memory factoryResult = DeployLiquidFactory.deploy(
-            admin,
-            deployConfig.factory,
-            config
-        );
+        DeployLiquidFactory.DeployResult memory factoryResult =
+            DeployLiquidFactory.deploy(admin, deployConfig.factory, config);
         factory = LiquidFactory(factoryResult.factory);
 
         LiquidGuard(deployConfig.factory.poolHooks).setFactory(address(factory));
@@ -117,11 +109,7 @@ contract LiquidMultiCurveIntegrationTest is Test, InitGuardTestHelper {
         factory.setLiquidMultiCurveImplementation(address(multiCurveImpl));
 
         LiquidRegistry registry = new LiquidRegistry(admin);
-        (address routerAddr, ) = DeployLiquidRouter.deploy(
-            admin,
-            config.uniswapUniversalRouter,
-            address(registry)
-        );
+        (address routerAddr,) = DeployLiquidRouter.deploy(admin, config.uniswapUniversalRouter, address(registry));
         router = LiquidRouter(payable(routerAddr));
         registry.setWriter(address(factory), true);
         factory.setLiquidRegistry(address(registry));
@@ -137,12 +125,7 @@ contract LiquidMultiCurveIntegrationTest is Test, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         IERC20(config.rareToken).approve(address(factory), MIN_RARE);
         address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://integration-test",
-            "MultiCurve Test",
-            "MCT",
-            MIN_RARE,
-            curves
+            tokenCreator, "ipfs://integration-test", "MultiCurve Test", "MCT", MIN_RARE, curves
         );
         vm.stopPrank();
 
@@ -152,7 +135,7 @@ contract LiquidMultiCurveIntegrationTest is Test, InitGuardTestHelper {
         assertTrue(PoolId.unwrap(poolId) != bytes32(0), "Pool should exist");
 
         IPoolManager pm = IPoolManager(token.poolManager());
-        (uint160 sqrtPriceX96, , , ) = pm.getSlot0(poolId);
+        (uint160 sqrtPriceX96,,,) = pm.getSlot0(poolId);
         assertTrue(sqrtPriceX96 > 0, "Pool should be initialized");
 
         assertEq(token.lpLiquidity(), 0, "Multicurve has lpLiquidity=0");
@@ -164,14 +147,8 @@ contract LiquidMultiCurveIntegrationTest is Test, InitGuardTestHelper {
 
         vm.startPrank(tokenCreator);
         IERC20(config.rareToken).approve(address(factory), MIN_RARE);
-        address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://swap-test",
-            "Swap Test",
-            "SWP",
-            MIN_RARE,
-            curves
-        );
+        address tokenAddr =
+            factory.createLiquidTokenMultiCurve(tokenCreator, "ipfs://swap-test", "Swap Test", "SWP", MIN_RARE, curves);
         vm.stopPrank();
 
         LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
@@ -192,19 +169,14 @@ contract LiquidMultiCurveIntegrationTest is Test, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         IERC20(config.rareToken).approve(address(factory), MIN_RARE);
         address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://quote-test",
-            "Quote Test",
-            "QTE",
-            MIN_RARE,
-            curves
+            tokenCreator, "ipfs://quote-test", "Quote Test", "QTE", MIN_RARE, curves
         );
         vm.stopPrank();
 
         LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
         uint256 rareIn = 5e18;
 
-        (uint256 quotedOut, ) = token.quoteBuy(rareIn);
+        (uint256 quotedOut,) = token.quoteBuy(rareIn);
 
         vm.startPrank(buyer);
         IERC20(config.rareToken).approve(address(swapHelper), rareIn);
@@ -220,12 +192,7 @@ contract LiquidMultiCurveIntegrationTest is Test, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         IERC20(config.rareToken).approve(address(factory), MIN_RARE);
         address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://sell-quote-test",
-            "Sell Quote Test",
-            "SQT",
-            MIN_RARE,
-            curves
+            tokenCreator, "ipfs://sell-quote-test", "Sell Quote Test", "SQT", MIN_RARE, curves
         );
         vm.stopPrank();
 
@@ -238,7 +205,7 @@ contract LiquidMultiCurveIntegrationTest is Test, InitGuardTestHelper {
         uint256 tokenBalance = token.balanceOf(buyer);
         vm.stopPrank();
 
-        (uint256 quotedRareOut, ) = token.quoteSell(tokenBalance / 2);
+        (uint256 quotedRareOut,) = token.quoteSell(tokenBalance / 2);
 
         uint256 sellAmount = tokenBalance / 2;
         vm.startPrank(buyer);
@@ -255,19 +222,14 @@ contract LiquidMultiCurveIntegrationTest is Test, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         IERC20(config.rareToken).approve(address(factory), MIN_RARE);
         address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://factory-test",
-            "Factory Test",
-            "FCT",
-            MIN_RARE,
-            curves
+            tokenCreator, "ipfs://factory-test", "Factory Test", "FCT", MIN_RARE, curves
         );
         vm.stopPrank();
 
         LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
-        (ILiquidBase.LaunchType launchType, , , ) = token.getLaunchState();
+        (ILiquidBase.LaunchType launchType,,,) = token.getLaunchState();
         assertTrue(launchType == ILiquidBase.LaunchType.MULTICURVE);
         assertEq(token.tokenCreator(), tokenCreator);
-        assertEq(token.balanceOf(tokenCreator), 100_000e18);
+        assertEq(token.balanceOf(tokenCreator), factory.creatorLaunchReward());
     }
 }
