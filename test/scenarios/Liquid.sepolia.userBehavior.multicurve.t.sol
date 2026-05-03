@@ -43,12 +43,7 @@ contract LiquidSepoliaMultiCurveBehaviorTest is SepoliaBehaviorBase {
     ///      - All 100% of supply distributed across positions
     function _buildCurves() internal pure returns (Curve[] memory curves) {
         curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: 0,
-            tickUpper: 65040,
-            numPositions: 5,
-            shares: 1e18
-        });
+        curves[0] = Curve({tickLower: 0, tickUpper: 65040, numPositions: 5, shares: 1e18});
     }
 
     // ============================================
@@ -56,10 +51,7 @@ contract LiquidSepoliaMultiCurveBehaviorTest is SepoliaBehaviorBase {
     // ============================================
 
     /// @dev Format percentage with 3 decimal places for more precision (e.g., "12.345%").
-    function _fmtPct3Dec(
-        uint256 part,
-        uint256 total
-    ) internal pure returns (string memory) {
+    function _fmtPct3Dec(uint256 part, uint256 total) internal pure returns (string memory) {
         if (total == 0) return "0%";
         uint256 pctBps = (part * 100000) / total; // 100000 = 100% (3 decimal places)
         uint256 whole = pctBps / 1000;
@@ -90,9 +82,7 @@ contract LiquidSepoliaMultiCurveBehaviorTest is SepoliaBehaviorBase {
      *      [-tickUpper, -tickLower] for each segment. We must convert our config bounds
      *      to pool coordinates before comparing.
      */
-    function _fmtCurveProgress(
-        int24 tick
-    ) internal view returns (string memory) {
+    function _fmtCurveProgress(int24 tick) internal view returns (string memory) {
         Curve[] memory c = _buildCurves();
         uint256 totalSegs = c.length;
 
@@ -121,28 +111,25 @@ contract LiquidSepoliaMultiCurveBehaviorTest is SepoliaBehaviorBase {
                 if (p == n - 1) posHi = hi;
                 if (tick >= posLo && tick < posHi) {
                     posIdx = p;
-                    uint256 pct = (uint256(uint24(tick - posLo)) * 10000) /
-                        uint256(uint24(posHi - posLo));
+                    uint256 pct = (uint256(uint24(tick - posLo)) * 10000) / uint256(uint24(posHi - posLo));
                     string memory pctWhole = vm.toString(pct / 100);
-                    string memory pctFrac = pct % 100 < 10
-                        ? string.concat("0", vm.toString(pct % 100))
-                        : vm.toString(pct % 100);
-                    return
-                        string.concat(
-                            "seg=",
-                            vm.toString(s + 1),
-                            "/",
-                            vm.toString(totalSegs),
-                            " pos=",
-                            vm.toString(uint256(posIdx + 1)),
-                            "/",
-                            vm.toString(uint256(n)),
-                            " (",
-                            pctWhole,
-                            ".",
-                            pctFrac,
-                            "%)"
-                        );
+                    string memory pctFrac =
+                        pct % 100 < 10 ? string.concat("0", vm.toString(pct % 100)) : vm.toString(pct % 100);
+                    return string.concat(
+                        "seg=",
+                        vm.toString(s + 1),
+                        "/",
+                        vm.toString(totalSegs),
+                        " pos=",
+                        vm.toString(uint256(posIdx + 1)),
+                        "/",
+                        vm.toString(uint256(n)),
+                        " (",
+                        pctWhole,
+                        ".",
+                        pctFrac,
+                        "%)"
+                    );
                 }
             }
         }
@@ -166,34 +153,21 @@ contract LiquidSepoliaMultiCurveBehaviorTest is SepoliaBehaviorBase {
         uint256 ethAmount,
         string memory label
     ) internal {
-        (uint256 rarePriceBefore, , , , , ) = token.getMarketState();
+        (uint256 rarePriceBefore,,,,,) = token.getMarketState();
         uint256 ethPxBefore = _toEthPrice(rarePriceBefore);
         uint256 rareBefore = IERC20(config.rareToken).balanceOf(address(token));
 
         vm.recordLogs();
         vm.prank(buyer);
-        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRoute(
-            address(token),
-            ethAmount,
-            1
-        );
-        uint256 tokensReceived = router.buy{value: ethAmount}(
-            address(token),
-            buyer,
-            1,
-            commands,
-            inputs,
-            block.timestamp + 1 hours
-        );
+        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRoute(address(token), ethAmount, 1);
+        uint256 tokensReceived =
+            router.buy{value: ethAmount}(address(token), buyer, 1, commands, inputs, block.timestamp + 1 hours);
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
         uint256 rareAfter = IERC20(config.rareToken).balanceOf(address(token));
-        uint256 rareConsumed = rareAfter > rareBefore
-            ? rareAfter - rareBefore
-            : 0;
+        uint256 rareConsumed = rareAfter > rareBefore ? rareAfter - rareBefore : 0;
 
-        (uint256 rarePriceAfter, , , int24 tickAfter, , ) = token
-            .getMarketState();
+        (uint256 rarePriceAfter,,, int24 tickAfter,,) = token.getMarketState();
         uint256 ethPxAfter = _toEthPrice(rarePriceAfter);
 
         (uint256 feeEthTotal, uint256 feeRareTotal) = _parseFees(logs);
@@ -205,39 +179,32 @@ contract LiquidSepoliaMultiCurveBehaviorTest is SepoliaBehaviorBase {
         totals.totalFeesEth += feeEthTotal;
         totals.totalFeesRare += feeRareTotal;
         if (_rareIsCurrency0) {
-            if (tickAfter < totals.minTickReached)
+            if (tickAfter < totals.minTickReached) {
                 totals.minTickReached = tickAfter;
+            }
         } else {
-            if (tickAfter > totals.maxTickReached)
+            if (tickAfter > totals.maxTickReached) {
                 totals.maxTickReached = tickAfter;
+            }
         }
 
         // Build log line
         string memory pctChange;
         if (rarePriceBefore > 0) {
-            uint256 absDelta = rarePriceAfter > rarePriceBefore
-                ? rarePriceAfter - rarePriceBefore
-                : rarePriceBefore - rarePriceAfter;
-            pctChange = string.concat(
-                rarePriceAfter >= rarePriceBefore ? "+" : "-",
-                _fmtPct3Dec(absDelta, rarePriceBefore)
-            );
+            uint256 absDelta =
+                rarePriceAfter > rarePriceBefore ? rarePriceAfter - rarePriceBefore : rarePriceBefore - rarePriceAfter;
+            pctChange =
+                string.concat(rarePriceAfter >= rarePriceBefore ? "+" : "-", _fmtPct3Dec(absDelta, rarePriceBefore));
         } else {
             pctChange = "n/a";
         }
 
-        uint256 ethPerToken = tokensReceived == 0
-            ? 0
-            : (ethAmount * 1e18) / tokensReceived;
+        uint256 ethPerToken = tokensReceived == 0 ? 0 : (ethAmount * 1e18) / tokensReceived;
 
         string memory feeSummary;
         if (feeEthTotal > 0) {
             feeSummary = string.concat(
-                " | fee: ",
-                _fmtPrice(feeEthTotal),
-                "E (",
-                _fmtPct(feeEthTotal, ethAmount),
-                " of ETH in)"
+                " | fee: ", _fmtPrice(feeEthTotal), "E (", _fmtPct(feeEthTotal, ethAmount), " of ETH in)"
             );
         } else if (feeRareTotal > 0) {
             uint256 feeEthEquiv = _toEthPrice(feeRareTotal);
@@ -315,10 +282,7 @@ contract LiquidSepoliaMultiCurveBehaviorTest is SepoliaBehaviorBase {
         Curve[] memory curves = _buildCurves();
 
         vm.startPrank(tokenCreator);
-        IERC20(config.rareToken).approve(
-            address(factory),
-            initialRareLiquidity
-        );
+        IERC20(config.rareToken).approve(address(factory), initialRareLiquidity);
         address tokenAddr = factory.createLiquidTokenMultiCurve(
             tokenCreator,
             "ipfs://bafybeiggczftngflqbnnmlrmcysg3lgdojrvamtjxrsnmie7mm5gypqnri/metadata.json",
@@ -331,7 +295,7 @@ contract LiquidSepoliaMultiCurveBehaviorTest is SepoliaBehaviorBase {
 
         token = ILiquid(tokenAddr);
 
-        (Currency currency0, , , , ) = token.poolKey();
+        (Currency currency0,,,,) = token.poolKey();
         _rareIsCurrency0 = Currency.unwrap(currency0) == config.rareToken;
     }
 
@@ -348,13 +312,7 @@ contract LiquidSepoliaMultiCurveBehaviorTest is SepoliaBehaviorBase {
         console.log("Factory:", address(factory));
         console.log("Router:", address(router));
         console.log("FeeDistributor:", config.liquid.feeDistributor);
-        console.log(
-            string.concat(
-                "Initial RARE liquidity: ",
-                _fmt(initialRareLiquidity),
-                " RARE"
-            )
-        );
+        console.log(string.concat("Optional RARE liquidity: ", _fmt(initialRareLiquidity), " RARE"));
         console.log("");
 
         console.log("--- CURVE CONFIGURATION ---");
@@ -386,7 +344,7 @@ contract LiquidSepoliaMultiCurveBehaviorTest is SepoliaBehaviorBase {
         int24 initialTick;
         uint256 initialEthPx;
         {
-            (uint256 rarePrice, , , int24 tick, , ) = token.getMarketState();
+            (uint256 rarePrice,,, int24 tick,,) = token.getMarketState();
             initialTick = tick;
             initialEthPx = _toEthPrice(rarePrice);
             totals.minTickReached = tick;
@@ -407,10 +365,7 @@ contract LiquidSepoliaMultiCurveBehaviorTest is SepoliaBehaviorBase {
         for (uint256 i; i < NUM_BUYS; i++) {
             uint256 buyerIdx = i % 5;
             _doTrackedBuyWithProgress(
-                totals,
-                buyers[buyerIdx],
-                BUY_AMOUNT_ETH,
-                string.concat("buyer", vm.toString(buyerIdx))
+                totals, buyers[buyerIdx], BUY_AMOUNT_ETH, string.concat("buyer", vm.toString(buyerIdx))
             );
         }
 
@@ -422,16 +377,8 @@ contract LiquidSepoliaMultiCurveBehaviorTest is SepoliaBehaviorBase {
         uint256 buyer3Bal = IERC20(address(token)).balanceOf(buyers[3]);
         uint256 buyer4Bal = IERC20(address(token)).balanceOf(buyers[4]);
 
-        _doSell(
-            buyers[3],
-            buyer3Bal / 2,
-            "buyer3  [50% holdings] partial exit"
-        );
-        _doSell(
-            buyers[4],
-            buyer4Bal / 4,
-            "buyer4  [25% holdings] whale trim  "
-        );
+        _doSell(buyers[3], buyer3Bal / 2, "buyer3  [50% holdings] partial exit");
+        _doSell(buyers[4], buyer4Bal / 4, "buyer4  [25% holdings] whale trim  ");
 
         _printMarketState("FINAL STATE");
 
@@ -439,130 +386,41 @@ contract LiquidSepoliaMultiCurveBehaviorTest is SepoliaBehaviorBase {
         console.log("========================================");
         console.log("  SUMMARY");
         console.log("========================================");
+        console.log(string.concat("Total ETH spent on buys   : ", _fmtPrice(totals.totalEthIn), " ETH"));
+        console.log(string.concat("Total RARE routed in      : ", _fmt(totals.totalRareIn), " RARE"));
         console.log(
             string.concat(
-                "Total ETH spent on buys   : ",
-                _fmtPrice(totals.totalEthIn),
-                " ETH"
+                "  ETH->RARE efficiency    : ", _fmt((totals.totalRareIn * 1e18) / totals.totalEthIn), " RARE/ETH"
             )
         );
-        console.log(
-            string.concat(
-                "Total RARE routed in      : ",
-                _fmt(totals.totalRareIn),
-                " RARE"
-            )
-        );
-        console.log(
-            string.concat(
-                "  ETH->RARE efficiency    : ",
-                _fmt((totals.totalRareIn * 1e18) / totals.totalEthIn),
-                " RARE/ETH"
-            )
-        );
-        console.log(
-            string.concat(
-                "Total tokens purchased    : ",
-                _fmtTokens(totals.totalTokensBought)
-            )
-        );
-        console.log(
-            string.concat(
-                "  % of pool supply        : ",
-                _fmtPct(totals.totalTokensBought, 900_000e18)
-            )
-        );
-        console.log(
-            string.concat(
-                "Total fees paid (ETH)     : ",
-                _fmtPrice(totals.totalFeesEth),
-                " ETH"
-            )
-        );
-        console.log(
-            string.concat(
-                "Total fees paid (RARE)    : ",
-                _fmt(totals.totalFeesRare),
-                " RARE"
-            )
-        );
-        console.log(
-            string.concat(
-                "  Fee % of ETH spend      : ",
-                _fmtPct(totals.totalFeesEth, totals.totalEthIn)
-            )
-        );
-        console.log(
-            string.concat(
-                "Initial tick              : ",
-                vm.toString(int256(initialTick))
-            )
-        );
+        console.log(string.concat("Total tokens purchased    : ", _fmtTokens(totals.totalTokensBought)));
+        console.log(string.concat("  % of pool supply        : ", _fmtPct(totals.totalTokensBought, 900_000e18)));
+        console.log(string.concat("Total fees paid (ETH)     : ", _fmtPrice(totals.totalFeesEth), " ETH"));
+        console.log(string.concat("Total fees paid (RARE)    : ", _fmt(totals.totalFeesRare), " RARE"));
+        console.log(string.concat("  Fee % of ETH spend      : ", _fmtPct(totals.totalFeesEth, totals.totalEthIn)));
+        console.log(string.concat("Initial tick              : ", vm.toString(int256(initialTick))));
         if (_rareIsCurrency0) {
-            int256 tickDelta = int256(initialTick) -
-                int256(totals.minTickReached);
-            console.log(
-                string.concat(
-                    "Lowest tick (peak buys)   : ",
-                    vm.toString(int256(totals.minTickReached))
-                )
-            );
-            console.log(
-                string.concat(
-                    "Tick delta (buy pressure) : -",
-                    vm.toString(uint256(tickDelta)),
-                    " ticks"
-                )
-            );
+            int256 tickDelta = int256(initialTick) - int256(totals.minTickReached);
+            console.log(string.concat("Lowest tick (peak buys)   : ", vm.toString(int256(totals.minTickReached))));
+            console.log(string.concat("Tick delta (buy pressure) : -", vm.toString(uint256(tickDelta)), " ticks"));
         } else {
-            int256 tickDelta = int256(totals.maxTickReached) -
-                int256(initialTick);
-            console.log(
-                string.concat(
-                    "Highest tick (peak buys)  : ",
-                    vm.toString(int256(totals.maxTickReached))
-                )
-            );
-            console.log(
-                string.concat(
-                    "Tick delta (buy pressure) : +",
-                    vm.toString(uint256(tickDelta)),
-                    " ticks"
-                )
-            );
+            int256 tickDelta = int256(totals.maxTickReached) - int256(initialTick);
+            console.log(string.concat("Highest tick (peak buys)  : ", vm.toString(int256(totals.maxTickReached))));
+            console.log(string.concat("Tick delta (buy pressure) : +", vm.toString(uint256(tickDelta)), " ticks"));
         }
         {
-            (uint256 finalRarePrice, , , , , ) = token.getMarketState();
+            (uint256 finalRarePrice,,,,,) = token.getMarketState();
             uint256 finalEthPx = _toEthPrice(finalRarePrice);
             string memory totalPctChange;
             if (initialEthPx > 0 && finalEthPx > 0) {
-                uint256 absDelta = finalEthPx > initialEthPx
-                    ? finalEthPx - initialEthPx
-                    : initialEthPx - finalEthPx;
-                totalPctChange = string.concat(
-                    finalEthPx >= initialEthPx ? "+" : "-",
-                    _fmtPct(absDelta, initialEthPx)
-                );
+                uint256 absDelta = finalEthPx > initialEthPx ? finalEthPx - initialEthPx : initialEthPx - finalEthPx;
+                totalPctChange = string.concat(finalEthPx >= initialEthPx ? "+" : "-", _fmtPct(absDelta, initialEthPx));
             } else {
                 totalPctChange = "n/a";
             }
-            console.log(
-                string.concat(
-                    "Price start               : ",
-                    _fmtPrice(initialEthPx),
-                    " ETH/token"
-                )
-            );
-            console.log(
-                string.concat(
-                    "Price end                 : ",
-                    _fmtPrice(finalEthPx),
-                    " ETH/token"
-                )
-            );
-            console.log(
-                string.concat("Total price change        : ", totalPctChange)
-            );
+            console.log(string.concat("Price start               : ", _fmtPrice(initialEthPx), " ETH/token"));
+            console.log(string.concat("Price end                 : ", _fmtPrice(finalEthPx), " ETH/token"));
+            console.log(string.concat("Total price change        : ", totalPctChange));
         }
         console.log("========================================");
     }

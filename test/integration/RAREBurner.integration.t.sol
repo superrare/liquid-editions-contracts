@@ -17,7 +17,11 @@ import {ForkUrlResolver} from "liquid-editions-test/helpers/ForkUrlResolver.sol"
 contract MockPoolManager {
     function unlock(
         bytes calldata /* data */
-    ) external pure returns (bytes memory) {
+    )
+        external
+        pure
+        returns (bytes memory)
+    {
         return "";
     }
 }
@@ -48,12 +52,11 @@ contract RAREBurnerIntegrationTest is Test {
     int24 constant LP_TICK_UPPER = 120000; // Starting point - cheap tokens
 
     // Helper function to compute correct PoolId from parameters
-    function _computePoolId(
-        address rareToken,
-        uint24 fee,
-        int24 tickSpacing,
-        address hooks
-    ) internal pure returns (bytes32) {
+    function _computePoolId(address rareToken, uint24 fee, int24 tickSpacing, address hooks)
+        internal
+        pure
+        returns (bytes32)
+    {
         Currency ethC = Currency.wrap(address(0));
         Currency rareC = Currency.wrap(rareToken);
         bool ethIs0 = uint160(address(0)) < uint160(rareToken);
@@ -118,16 +121,8 @@ contract RAREBurnerIntegrationTest is Test {
         liquidImpl = new LiquidMultiCurve();
 
         // Deploy factory with burner (25% burn fee for integration tests)
-        factory = new LiquidFactory(
-            admin,
-            config.uniswapV4PoolManager, // V4 PoolManager
-            LP_TICK_LOWER,
-            LP_TICK_UPPER,
-            address(0), // poolHooks (no hooks)
-            60, // poolTickSpacing (standard for 0.3% fee tier)
-            1e15 // minRareLiquidityWei (0.001 RARE)
-        );
-                factory.setLiquidRegistry(address(1));
+        factory = new LiquidFactory(admin, config.uniswapV4PoolManager, address(0), 60);
+        factory.setLiquidRegistry(address(1));
 
         // Set implementation
         factory.setLiquidMultiCurveImplementation(address(liquidImpl));

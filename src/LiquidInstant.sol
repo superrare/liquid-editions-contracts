@@ -28,13 +28,20 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Position} from "doppler/types/Position.sol";
 import {QuoterRevert} from "@uniswap/v4-periphery/libraries/QuoterRevert.sol";
 
-/*                                    
-  _       _____  ____   _    _  _____  _____  
- | |     |_   _|/ __ \ | |  | ||_   _||  __ \ 
+/// @dev Legacy factory surface used only by the standalone LiquidInstant implementation.
+///      Current LiquidFactory no longer creates Instant tokens or exposes factory-level LP bands.
+interface ILiquidInstantLegacyFactory is ILiquidFactory {
+    function lpTickLower() external view returns (int24);
+    function lpTickUpper() external view returns (int24);
+}
+
+/*
+  _       _____  ____   _    _  _____  _____
+ | |     |_   _|/ __ \ | |  | ||_   _||  __ \
  | |       | | | |  | || |  | |  | |  | |  | |
  | |       | | | |  | || |  | |  | |  | |  | |
  | |____  _| |_| |__| || |__| | _| |_ | |__| |
- |______||_____|\___\_\ \____/ |_____||_____/ 
+ |______||_____|\___\_\ \____/ |_____||_____/
 
 */
 
@@ -44,13 +51,7 @@ import {QuoterRevert} from "@uniswap/v4-periphery/libraries/QuoterRevert.sol";
 ///      Trading is handled by LiquidRouter for multi-hop routes. This contract provides pool creation,
 ///      state management, and quote functions. Uses a clone pattern for gas-efficient deployment via LiquidFactory.
 ///      All tokens are minted at creation.
-contract LiquidInstant is
-    ILiquid,
-    ILiquidBase,
-    ERC20Upgradeable,
-    ReentrancyGuardUpgradeable,
-    IUnlockCallback
-{
+contract LiquidInstant is ILiquid, ILiquidBase, ERC20Upgradeable, ReentrancyGuardUpgradeable, IUnlockCallback {
     using BalanceDeltaLibrary for BalanceDelta;
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
@@ -182,8 +183,9 @@ contract LiquidInstant is
         ILiquidFactory factoryContract = ILiquidFactory(factory);
         baseToken = factoryContract.baseToken();
         poolManager = factoryContract.poolManager();
-        if (baseToken == address(0) || poolManager == address(0))
+        if (baseToken == address(0) || poolManager == address(0)) {
             revert AddressZero();
+        }
 
         // Validate that token URI is not empty string
         if (bytes(_tokenUri).length == 0) {
@@ -245,23 +247,12 @@ contract LiquidInstant is
     /// @param from The sender address
     /// @param to The recipient address
     /// @param value The amount transferred
-    function _update(
-        address from,
-        address to,
-        uint256 value
-    ) internal virtual override {
+    function _update(address from, address to, uint256 value) internal virtual override {
         // Execute standard ERC20 transfer logic
         super._update(from, to, value);
 
         // Emit enhanced event with post-transfer balances and supply
-        emit LiquidTransfer(
-            from,
-            to,
-            value,
-            balanceOf(from),
-            balanceOf(to),
-            totalSupply()
-        );
+        emit LiquidTransfer(from, to, value, balanceOf(from), balanceOf(to), totalSupply());
     }
 
     // ============================================
@@ -287,9 +278,7 @@ contract LiquidInstant is
             }
 
             // If tokenURI() failed, try tokenURI(0) for ERC721-style contracts
-            try IRender(renderContract).tokenURI(uint256(0)) returns (
-                string memory uri
-            ) {
+            try IRender(renderContract).tokenURI(uint256(0)) returns (string memory uri) {
                 // Validate that URI is not empty
                 if (bytes(uri).length > 0) {
                     return uri;
@@ -346,28 +335,20 @@ contract LiquidInstant is
 
         // Defense-in-depth: verify currencies match even though executor validates this
         if (
-            Currency.unwrap(newPoolKey.currency0) !=
-            Currency.unwrap(poolKey.currency0) ||
-            Currency.unwrap(newPoolKey.currency1) !=
-            Currency.unwrap(poolKey.currency1)
+            Currency.unwrap(newPoolKey.currency0) != Currency.unwrap(poolKey.currency0)
+                || Currency.unwrap(newPoolKey.currency1) != Currency.unwrap(poolKey.currency1)
         ) revert CurrencyMismatch();
 
         _unlockExpected = true;
-        IPoolManager(poolManager).unlock(
-            abi.encode(
-                UnlockContext({
-                    action: UnlockAction.MIGRATE_LIQUIDITY,
-                    data: abi.encode(
-                        newPoolKey,
-                        newSqrtPriceX96,
-                        newPositions,
-                        dustRecipient,
-                        maxDust0,
-                        maxDust1
-                    )
-                })
-            )
-        );
+        IPoolManager(poolManager)
+            .unlock(
+                abi.encode(
+                    UnlockContext({
+                        action: UnlockAction.MIGRATE_LIQUIDITY,
+                        data: abi.encode(newPoolKey, newSqrtPriceX96, newPositions, dustRecipient, maxDust0, maxDust1)
+                    })
+                )
+            );
         _unlockExpected = false;
     }
 
@@ -379,12 +360,7 @@ contract LiquidInstant is
     function getLaunchState()
         external
         pure
-        returns (
-            ILiquidBase.LaunchType launchType,
-            bool poolLive,
-            address auction,
-            address strategyAddr
-        )
+        returns (ILiquidBase.LaunchType launchType, bool poolLive, address auction, address strategyAddr)
     {
         return (
             ILiquidBase.LaunchType.INSTANT,
@@ -401,11 +377,7 @@ contract LiquidInstant is
     }
 
     /// @inheritdoc ILiquid
-    function getCurrentPrice()
-        external
-        view
-        returns (uint256 rarePerToken, uint256 tokenPerRare)
-    {
+    function getCurrentPrice() external view returns (uint256 rarePerToken, uint256 tokenPerRare) {
         // Check if pool exists
         if (PoolId.unwrap(poolId) == bytes32(0)) {
             revert PoolNotInitialized();
@@ -413,17 +385,13 @@ contract LiquidInstant is
 
         // Read current price from pool
         IPoolManager pm = IPoolManager(poolManager);
-        (uint160 sqrtPriceX96, , , ) = StateLibrary.getSlot0(pm, poolId);
+        (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(pm, poolId);
 
         // Convert sqrtPriceX96 to actual price
         // price = token1/token0 = (sqrtPriceX96 / 2^96)^2 = sqrtPriceX96^2 / 2^192
         // Use Q192.64 fixed point for intermediate calculations
         // Use FullMath.mulDiv to prevent overflow when squaring uint160 sqrtPriceX96
-        uint256 priceQ128 = FullMath.mulDiv(
-            uint256(sqrtPriceX96),
-            uint256(sqrtPriceX96),
-            1 << 64
-        ); // sqrtPriceX96^2 / 2^64
+        uint256 priceQ128 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), 1 << 64); // sqrtPriceX96^2 / 2^64
         uint256 denominatorQ128 = 1 << 128; // 2^192 / 2^64 = 2^128
 
         // Safety: if price is 0, return 0 for both (uninitialized or extreme state)
@@ -475,7 +443,7 @@ contract LiquidInstant is
 
         // Read current price from pool
         IPoolManager pm = IPoolManager(poolManager);
-        (sqrtPriceX96, currentTick, , ) = StateLibrary.getSlot0(pm, poolId);
+        (sqrtPriceX96, currentTick,,) = StateLibrary.getSlot0(pm, poolId);
 
         // Get total pool liquidity
         liquidity = StateLibrary.getLiquidity(pm, poolId);
@@ -485,11 +453,7 @@ contract LiquidInstant is
 
         // Convert sqrtPriceX96 to actual price (reuse logic from getCurrentPrice)
         // Use FullMath.mulDiv to prevent overflow when squaring uint160 sqrtPriceX96
-        uint256 priceQ128 = FullMath.mulDiv(
-            uint256(sqrtPriceX96),
-            uint256(sqrtPriceX96),
-            1 << 64
-        );
+        uint256 priceQ128 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), 1 << 64);
         uint256 denominatorQ128 = 1 << 128;
 
         // Safety: if price is 0, return 0 for price values (uninitialized or extreme state)
@@ -521,9 +485,7 @@ contract LiquidInstant is
     /// @param rareIn Amount of RARE to swap
     /// @return liquidOut LIQUID tokens that would be received from the swap
     /// @return sqrtPriceX96After Post-swap sqrt price (useful for price impact calculations)
-    function quoteBuy(
-        uint256 rareIn
-    ) external returns (uint256 liquidOut, uint160 sqrtPriceX96After) {
+    function quoteBuy(uint256 rareIn) external returns (uint256 liquidOut, uint160 sqrtPriceX96After) {
         return _simulateQuoteBuy(rareIn);
     }
 
@@ -535,9 +497,7 @@ contract LiquidInstant is
     /// @param liquidIn Amount of LIQUID tokens to swap
     /// @return rareOut RARE that would be received from the swap
     /// @return sqrtPriceX96After Post-swap sqrt price (useful for price impact calculations)
-    function quoteSell(
-        uint256 liquidIn
-    ) external returns (uint256 rareOut, uint160 sqrtPriceX96After) {
+    function quoteSell(uint256 liquidIn) external returns (uint256 rareOut, uint160 sqrtPriceX96After) {
         return _simulateQuoteSell(liquidIn);
     }
 
@@ -551,7 +511,7 @@ contract LiquidInstant is
     /// @param liquidityAmount The amount of RARE tokens to provide as initial liquidity
     function _deployPool(uint256 liquidityAmount) internal {
         // Pull config directly from factory
-        ILiquidFactory factoryContract = ILiquidFactory(factory);
+        ILiquidInstantLegacyFactory factoryContract = ILiquidInstantLegacyFactory(factory);
         int24 tickLower = factoryContract.lpTickLower();
         int24 tickUpper = factoryContract.lpTickUpper();
         int24 tickSpacing = factoryContract.poolTickSpacing();
@@ -574,11 +534,7 @@ contract LiquidInstant is
         }
 
         poolKey = PoolKey({
-            currency0: currency0,
-            currency1: currency1,
-            fee: LP_FEE,
-            tickSpacing: tickSpacing,
-            hooks: IHooks(hooks)
+            currency0: currency0, currency1: currency1, fee: LP_FEE, tickSpacing: tickSpacing, hooks: IHooks(hooks)
         });
 
         // Compute PoolId
@@ -624,7 +580,7 @@ contract LiquidInstant is
         }
 
         // Ticks are already aligned to tickSpacing by LiquidFactory validation
-        // (constructor, setLpTickLower, setLpTickUpper all enforce tick % spacing == 0).
+        // Legacy factory deployments were expected to enforce tick spacing.
         // Negation preserves alignment, so no rounding is needed here.
         lpTickLower = effectiveTickLower;
         lpTickUpper = effectiveTickUpper;
@@ -648,33 +604,20 @@ contract LiquidInstant is
             amount1 = liquidityAmount; // RARE is currency1
         }
 
-        uint160 sqrtPriceX96 = _calculateOptimalStartingPrice(
-            amount0,
-            amount1,
-            sqrtPriceLowerX96,
-            sqrtPriceUpperX96
-        );
+        uint160 sqrtPriceX96 = _calculateOptimalStartingPrice(amount0, amount1, sqrtPriceLowerX96, sqrtPriceUpperX96);
 
         // Calculate liquidity based on currency ordering
         if (baseTokenIsCurrency0) {
             // baseToken (RARE) is currency0, LIQUID is currency1
             // liquidityAmount RARE (currency0) + poolLaunchSupply LIQUID (currency1)
             lpLiquidity = _calculateLiquidity(
-                sqrtPriceX96,
-                sqrtPriceLowerX96,
-                sqrtPriceUpperX96,
-                liquidityAmount,
-                poolLaunchSupply
+                sqrtPriceX96, sqrtPriceLowerX96, sqrtPriceUpperX96, liquidityAmount, poolLaunchSupply
             );
         } else {
             // LIQUID is currency0, baseToken (RARE) is currency1
             // poolLaunchSupply LIQUID (currency0) + liquidityAmount RARE (currency1)
             lpLiquidity = _calculateLiquidity(
-                sqrtPriceX96,
-                sqrtPriceLowerX96,
-                sqrtPriceUpperX96,
-                poolLaunchSupply,
-                liquidityAmount
+                sqrtPriceX96, sqrtPriceLowerX96, sqrtPriceUpperX96, poolLaunchSupply, liquidityAmount
             );
         }
 
@@ -684,14 +627,8 @@ contract LiquidInstant is
         // Initialize pool and add liquidity via unlock
         // Only sqrtPriceX96 is needed - settlement amounts are determined by BalanceDelta from modifyLiquidity()
         _unlockExpected = true;
-        IPoolManager(poolManager).unlock(
-            abi.encode(
-                UnlockContext({
-                    action: UnlockAction.INITIALIZE_POOL,
-                    data: abi.encode(sqrtPriceX96)
-                })
-            )
-        );
+        IPoolManager(poolManager)
+            .unlock(abi.encode(UnlockContext({action: UnlockAction.INITIALIZE_POOL, data: abi.encode(sqrtPriceX96)})));
         _unlockExpected = false;
 
         // Emit event for pool graduation (market is now live)
@@ -712,20 +649,14 @@ contract LiquidInstant is
     /// @param rareAmount Amount of RARE to simulate swapping
     /// @return amountOut Expected LIQUID tokens output from the swap
     /// @return sqrtPriceAfter Post-swap sqrt price
-    function _simulateQuoteBuy(
-        uint256 rareAmount
-    ) internal returns (uint256 amountOut, uint160 sqrtPriceAfter) {
+    function _simulateQuoteBuy(uint256 rareAmount) internal returns (uint256 amountOut, uint160 sqrtPriceAfter) {
         _unlockExpected = true;
-        try
-            IPoolManager(poolManager).unlock(
-                abi.encode(
-                    UnlockContext({
-                        action: UnlockAction.QUOTE_SWAP_BUY,
-                        data: abi.encode(rareAmount)
-                    })
-                )
-            )
-        returns (bytes memory) {
+        try IPoolManager(poolManager)
+            .unlock(
+                abi.encode(UnlockContext({action: UnlockAction.QUOTE_SWAP_BUY, data: abi.encode(rareAmount)}))
+            ) returns (
+            bytes memory
+        ) {
             _unlockExpected = false;
             revert QuoteSimulationDidNotRevert();
         } catch (bytes memory reason) {
@@ -742,20 +673,14 @@ contract LiquidInstant is
     /// @param tokenAmount Amount of LIQUID tokens to simulate swapping
     /// @return amountOut Expected RARE output from the swap
     /// @return sqrtPriceAfter Post-swap sqrt price
-    function _simulateQuoteSell(
-        uint256 tokenAmount
-    ) internal returns (uint256 amountOut, uint160 sqrtPriceAfter) {
+    function _simulateQuoteSell(uint256 tokenAmount) internal returns (uint256 amountOut, uint160 sqrtPriceAfter) {
         _unlockExpected = true;
-        try
-            IPoolManager(poolManager).unlock(
-                abi.encode(
-                    UnlockContext({
-                        action: UnlockAction.QUOTE_SWAP_SELL,
-                        data: abi.encode(tokenAmount)
-                    })
-                )
-            )
-        returns (bytes memory) {
+        try IPoolManager(poolManager)
+            .unlock(
+                abi.encode(UnlockContext({action: UnlockAction.QUOTE_SWAP_SELL, data: abi.encode(tokenAmount)}))
+            ) returns (
+            bytes memory
+        ) {
             _unlockExpected = false;
             revert QuoteSimulationDidNotRevert();
         } catch (bytes memory reason) {
@@ -772,9 +697,7 @@ contract LiquidInstant is
     /// @param reason The revert reason bytes from the quote simulation
     /// @return amountOut The simulated output amount extracted from the QuoteResult
     /// @return sqrtPriceAfter The post-swap sqrt price extracted from the QuoteResult
-    function _decodeQuoteResult(
-        bytes memory reason
-    ) internal pure returns (uint256 amountOut, uint160 sqrtPriceAfter) {
+    function _decodeQuoteResult(bytes memory reason) internal pure returns (uint256 amountOut, uint160 sqrtPriceAfter) {
         bytes4 selector;
         assembly ("memory-safe") {
             selector := mload(add(reason, 0x20))
@@ -813,9 +736,7 @@ contract LiquidInstant is
     ///
     /// @param data Encoded UnlockContext
     /// @return Encoded return data
-    function unlockCallback(
-        bytes calldata data
-    ) external nonReentrant returns (bytes memory) {
+    function unlockCallback(bytes calldata data) external nonReentrant returns (bytes memory) {
         // Security: only PoolManager can call this
         if (msg.sender != poolManager) revert OnlyPoolManager();
 
@@ -843,9 +764,7 @@ contract LiquidInstant is
     ///      Uses internal transfer for LIQUID tokens to avoid external self-call.
     /// @param data Encoded sqrtPriceX96 (uint160)
     /// @return Empty bytes on success
-    function _unlockInitializePool(
-        bytes memory data
-    ) internal returns (bytes memory) {
+    function _unlockInitializePool(bytes memory data) internal returns (bytes memory) {
         uint160 sqrtPriceX96 = abi.decode(data, (uint160));
 
         IPoolManager pm = IPoolManager(poolManager);
@@ -858,7 +777,7 @@ contract LiquidInstant is
         if (lpLiquidity > uint128(type(int128).max)) {
             revert LiquidityTooLarge(lpLiquidity);
         }
-        (BalanceDelta delta, ) = pm.modifyLiquidity(
+        (BalanceDelta delta,) = pm.modifyLiquidity(
             poolKey,
             IPoolManager.ModifyLiquidityParams({
                 tickLower: lpTickLower,
@@ -924,9 +843,7 @@ contract LiquidInstant is
     ///      and settles net deltas. Tokens never leave the PoolManager.
     /// @param data Encoded (PoolKey, uint160, Position[], address, uint256, uint256)
     /// @return Empty bytes on success
-    function _unlockMigrateLiquidity(
-        bytes memory data
-    ) internal returns (bytes memory) {
+    function _unlockMigrateLiquidity(bytes memory data) internal returns (bytes memory) {
         (
             PoolKey memory newKey,
             uint160 newSqrtPrice,
@@ -934,10 +851,7 @@ contract LiquidInstant is
             address dustRecipient,
             uint256 maxDust0,
             uint256 maxDust1
-        ) = abi.decode(
-                data,
-                (PoolKey, uint160, Position[], address, uint256, uint256)
-            );
+        ) = abi.decode(data, (PoolKey, uint160, Position[], address, uint256, uint256));
 
         IPoolManager pm = IPoolManager(poolManager);
 
@@ -947,7 +861,7 @@ contract LiquidInstant is
 
         // Phase 1: Remove old position (deltas stay in PoolManager)
         {
-            (BalanceDelta delta, ) = pm.modifyLiquidity(
+            (BalanceDelta delta,) = pm.modifyLiquidity(
                 poolKey,
                 IPoolManager.ModifyLiquidityParams({
                     tickLower: lpTickLower,
@@ -971,7 +885,7 @@ contract LiquidInstant is
         }
 
         {
-            (BalanceDelta delta, ) = pm.modifyLiquidity(
+            (BalanceDelta delta,) = pm.modifyLiquidity(
                 newKey,
                 IPoolManager.ModifyLiquidityParams({
                     tickLower: newPos.tickLower,
@@ -988,11 +902,7 @@ contract LiquidInstant is
         // Phase 4: Settle net deltas
         if (netDelta0 > 0) {
             if (uint256(netDelta0) > maxDust0) {
-                revert DustExceeded(
-                    Currency.unwrap(newKey.currency0),
-                    uint256(netDelta0),
-                    maxDust0
-                );
+                revert DustExceeded(Currency.unwrap(newKey.currency0), uint256(netDelta0), maxDust0);
             }
             pm.take(newKey.currency0, dustRecipient, uint256(netDelta0));
         } else if (netDelta0 < 0) {
@@ -1009,11 +919,7 @@ contract LiquidInstant is
 
         if (netDelta1 > 0) {
             if (uint256(netDelta1) > maxDust1) {
-                revert DustExceeded(
-                    Currency.unwrap(newKey.currency1),
-                    uint256(netDelta1),
-                    maxDust1
-                );
+                revert DustExceeded(Currency.unwrap(newKey.currency1), uint256(netDelta1), maxDust1);
             }
             pm.take(newKey.currency1, dustRecipient, uint256(netDelta1));
         } else if (netDelta1 < 0) {
@@ -1047,9 +953,7 @@ contract LiquidInstant is
     ///      Handles currency ordering (baseToken can be currency0 or currency1).
     /// @param data Encoded rareAmount (uint256)
     /// @return Empty bytes (never reached - always reverts with QuoteResult)
-    function _unlockQuoteSwapBuy(
-        bytes memory data
-    ) internal returns (bytes memory) {
+    function _unlockQuoteSwapBuy(bytes memory data) internal returns (bytes memory) {
         uint256 rareAmount = abi.decode(data, (uint256));
 
         IPoolManager pm = IPoolManager(poolManager);
@@ -1063,9 +967,7 @@ contract LiquidInstant is
             IPoolManager.SwapParams({
                 zeroForOne: zeroForOne,
                 amountSpecified: -SafeCast.toInt256(rareAmount),
-                sqrtPriceLimitX96: zeroForOne
-                    ? TickMath.MIN_SQRT_PRICE + 1
-                    : TickMath.MAX_SQRT_PRICE - 1
+                sqrtPriceLimitX96: zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
             }),
             ""
         );
@@ -1085,12 +987,9 @@ contract LiquidInstant is
         }
 
         uint256 tokensReceived = baseTokenIsCurrency0
-            ? _toUint128Pos(delta1) // LIQUID is currency1
+            ? _toUint128Pos(delta1)  // LIQUID is currency1
             : _toUint128Pos(delta0); // LIQUID is currency0
-        (uint160 sqrtPriceAfter, , , ) = StateLibrary.getSlot0(
-            pm,
-            poolKey.toId()
-        );
+        (uint160 sqrtPriceAfter,,,) = StateLibrary.getSlot0(pm, poolKey.toId());
 
         revert QuoteResult(tokensReceived, sqrtPriceAfter);
     }
@@ -1101,9 +1000,7 @@ contract LiquidInstant is
     ///      Handles currency ordering (baseToken can be currency0 or currency1).
     /// @param data Encoded tokenAmount (uint256)
     /// @return Empty bytes (never reached - always reverts with QuoteResult)
-    function _unlockQuoteSwapSell(
-        bytes memory data
-    ) internal returns (bytes memory) {
+    function _unlockQuoteSwapSell(bytes memory data) internal returns (bytes memory) {
         uint256 tokenAmount = abi.decode(data, (uint256));
 
         IPoolManager pm = IPoolManager(poolManager);
@@ -1117,9 +1014,7 @@ contract LiquidInstant is
             IPoolManager.SwapParams({
                 zeroForOne: zeroForOne,
                 amountSpecified: -SafeCast.toInt256(tokenAmount),
-                sqrtPriceLimitX96: zeroForOne
-                    ? TickMath.MIN_SQRT_PRICE + 1
-                    : TickMath.MAX_SQRT_PRICE - 1
+                sqrtPriceLimitX96: zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
             }),
             ""
         );
@@ -1139,12 +1034,9 @@ contract LiquidInstant is
         }
 
         uint256 rareReceived = baseTokenIsCurrency0
-            ? _toUint128Pos(delta0) // RARE is currency0
+            ? _toUint128Pos(delta0)  // RARE is currency0
             : _toUint128Pos(delta1); // RARE is currency1
-        (uint160 sqrtPriceAfter, , , ) = StateLibrary.getSlot0(
-            pm,
-            poolKey.toId()
-        );
+        (uint160 sqrtPriceAfter,,,) = StateLibrary.getSlot0(pm, poolKey.toId());
 
         revert QuoteResult(rareReceived, sqrtPriceAfter);
     }
@@ -1185,9 +1077,12 @@ contract LiquidInstant is
         int256 y = -int256(x); // negate in 256-bit space to avoid int128.min overflow
         // Casting to uint256 is safe because y is non-negative after negation
         // forge-lint: disable-next-line(unsafe-typecast) -- y is non-negative after negation, fits uint256
-        if (uint256(y) > type(uint128).max)
+        if (
+            uint256(y) > type(uint128).max
             // forge-lint: disable-next-line(unsafe-typecast) -- y fits uint256, used for error reporting
+        ) {
             revert AmountExceedsUint128(uint256(y));
+        }
         // Casting to uint128 is safe because we checked bounds above
         // forge-lint: disable-next-line(unsafe-typecast)
         return uint128(uint256(y));
@@ -1241,11 +1136,8 @@ contract LiquidInstant is
         uint256 a = FullMath.mulDiv(amount0, sqrtUpper, FixedPoint96.Q96);
 
         // Calculate the term for 'b': amount0 * sqrtUpper * sqrtLower / Q96²
-        uint256 bTerm = FullMath.mulDiv(
-            FullMath.mulDiv(amount0, sqrtUpper, FixedPoint96.Q96),
-            sqrtLower,
-            FixedPoint96.Q96
-        );
+        uint256 bTerm =
+            FullMath.mulDiv(FullMath.mulDiv(amount0, sqrtUpper, FixedPoint96.Q96), sqrtLower, FixedPoint96.Q96);
 
         // b = amount1 - bTerm (can be negative)
         bool bIsNegative = bTerm > amount1;
@@ -1266,14 +1158,15 @@ contract LiquidInstant is
         if (fourA != 0 && cAbs > type(uint256).max / fourA) {
             // Overflow: use full-range constant-product formula
             // sqrtPriceX96 = sqrt(amount1 * Q96² / amount0)
-            uint256 Q192 = uint256(FixedPoint96.Q96) *
-                uint256(FixedPoint96.Q96);
+            uint256 Q192 = uint256(FixedPoint96.Q96) * uint256(FixedPoint96.Q96);
             uint256 ratioQ192 = FullMath.mulDiv(amount1, Q192, amount0);
             uint256 sqrtPriceFullRange = Math.sqrt(ratioQ192);
-            if (sqrtPriceFullRange <= sqrtLower)
+            if (sqrtPriceFullRange <= sqrtLower) {
                 sqrtPriceFullRange = sqrtLower + 1;
-            if (sqrtPriceFullRange >= sqrtUpper)
+            }
+            if (sqrtPriceFullRange >= sqrtUpper) {
                 sqrtPriceFullRange = sqrtUpper - 1;
+            }
             return uint160(sqrtPriceFullRange);
         }
 
@@ -1330,27 +1223,15 @@ contract LiquidInstant is
         uint256 amount1
     ) internal pure returns (uint128 liquidity) {
         // Calculate liquidity0 from amount0: L0 = amount0 * (sqrtPrice * sqrtUpper / Q96) / (sqrtUpper - sqrtPrice)
-        uint256 intermediate = FullMath.mulDiv(
-            sqrtPriceX96,
-            sqrtPriceUpperX96,
-            FixedPoint96.Q96
-        );
-        uint256 liq0 = FullMath.mulDiv(
-            amount0,
-            intermediate,
-            sqrtPriceUpperX96 - sqrtPriceX96
-        );
+        uint256 intermediate = FullMath.mulDiv(sqrtPriceX96, sqrtPriceUpperX96, FixedPoint96.Q96);
+        uint256 liq0 = FullMath.mulDiv(amount0, intermediate, sqrtPriceUpperX96 - sqrtPriceX96);
         if (liq0 > type(uint128).max) revert AmountExceedsUint128(liq0);
         // Casting to uint128 is safe because we checked bounds above
         // forge-lint: disable-next-line(unsafe-typecast)
         uint128 liquidity0 = uint128(liq0);
 
         // Calculate liquidity1 from amount1: L1 = amount1 * Q96 / (sqrtPrice - sqrtLower)
-        uint256 liq1 = FullMath.mulDiv(
-            amount1,
-            FixedPoint96.Q96,
-            sqrtPriceX96 - sqrtPriceLowerX96
-        );
+        uint256 liq1 = FullMath.mulDiv(amount1, FixedPoint96.Q96, sqrtPriceX96 - sqrtPriceLowerX96);
         if (liq1 > type(uint128).max) revert AmountExceedsUint128(liq1);
         // Casting to uint128 is safe because we checked bounds above
         // forge-lint: disable-next-line(unsafe-typecast)

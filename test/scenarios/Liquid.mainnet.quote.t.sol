@@ -47,20 +47,12 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
     int24 constant LP_TICK_UPPER = 120000; // Starting point - cheap tokens - multiple of 60
     uint256 constant INITIAL_LIQUIDITY_RARE = 0.001 ether;
     uint256 constant ORDERING_SWAP_RARE_IN = 1 ether;
-    address internal constant ORDERING_BASE_TOKEN_LOW =
-        address(0x0000000000000000000000000000000000000100);
-    address internal constant ORDERING_BASE_TOKEN_HIGH = address(
-        uint160(type(uint160).max)
-    );
+    address internal constant ORDERING_BASE_TOKEN_LOW = address(0x0000000000000000000000000000000000000100);
+    address internal constant ORDERING_BASE_TOKEN_HIGH = address(uint160(type(uint160).max));
 
-    function _defaultSingleCurve() internal view returns (Curve[] memory) {
+    function _defaultSingleCurve() internal pure returns (Curve[] memory) {
         Curve[] memory curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            numPositions: 1,
-            shares: 1e18
-        });
+        curves[0] = Curve({tickLower: LP_TICK_LOWER, tickUpper: LP_TICK_UPPER, numPositions: 1, shares: 1e18});
         return curves;
     }
 
@@ -106,15 +98,7 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
             0, // 0% slippage
             false // disabled initially
         );
-        factory = new LiquidFactory(
-            admin,
-            config.uniswapV4PoolManager, // V4 PoolManager
-            LP_TICK_LOWER,
-            LP_TICK_UPPER,
-            initGuardAddr, // poolHooks
-            60, // poolTickSpacing (standard for 0.3% fee tier)
-            1e15 // minRareLiquidityWei (0.001 RARE)
-        );
+        factory = new LiquidFactory(admin, config.uniswapV4PoolManager, initGuardAddr, 60);
         LiquidGuard(initGuardAddr).setFactory(address(factory));
 
         factory.setLiquidRegistry(address(1));
@@ -124,9 +108,7 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
         // Set base token to MockRARE
         factory.setBaseToken(address(mockRARE));
 
-        swapHelper = new LiquidPoolSwapHelper(
-            IPoolManager(config.uniswapV4PoolManager)
-        );
+        swapHelper = new LiquidPoolSwapHelper(IPoolManager(config.uniswapV4PoolManager));
 
         vm.stopPrank();
 
@@ -135,27 +117,16 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), INITIAL_LIQUIDITY_RARE);
         address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://test",
-            "Test Token",
-            "TEST",
-            INITIAL_LIQUIDITY_RARE,
-            _defaultSingleCurve()
+            tokenCreator, "ipfs://test", "Test Token", "TEST", INITIAL_LIQUIDITY_RARE, _defaultSingleCurve()
         );
         vm.stopPrank();
         token = LiquidMultiCurve(payable(tokenAddr));
 
         // Verify pool is initialized
-        require(
-            PoolId.unwrap(token.poolId()) != bytes32(0),
-            "Pool must be initialized for quote tests"
-        );
+        require(PoolId.unwrap(token.poolId()) != bytes32(0), "Pool must be initialized for quote tests");
 
         console.log("=== QUOTE TEST SETUP ===");
-        console.log(
-            "Pool initialized:",
-            PoolId.unwrap(token.poolId()) != bytes32(0)
-        );
+        console.log("Pool initialized:", PoolId.unwrap(token.poolId()) != bytes32(0));
         console.log("Token address:", address(token));
 
         // NOTE: buy() function removed - trading now handled by LiquidRouter
@@ -171,30 +142,17 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
         baseToken = MockRARE(baseAddress);
     }
 
-    function _createTokenWithBase(
-        MockRARE baseTokenToUse
-    ) internal returns (LiquidMultiCurve createdToken) {
-        baseTokenToUse.mint(
-            tokenCreator,
-            INITIAL_LIQUIDITY_RARE + (ORDERING_SWAP_RARE_IN * 2)
-        );
+    function _createTokenWithBase(MockRARE baseTokenToUse) internal returns (LiquidMultiCurve createdToken) {
+        baseTokenToUse.mint(tokenCreator, INITIAL_LIQUIDITY_RARE + (ORDERING_SWAP_RARE_IN * 2));
 
         vm.startPrank(admin);
         factory.setBaseToken(address(baseTokenToUse));
         vm.stopPrank();
 
         vm.startPrank(tokenCreator);
-        IERC20(address(baseTokenToUse)).approve(
-            address(factory),
-            INITIAL_LIQUIDITY_RARE
-        );
+        IERC20(address(baseTokenToUse)).approve(address(factory), INITIAL_LIQUIDITY_RARE);
         address tokenAddress = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://ordering-test",
-            "Ordering Test",
-            "ORDR",
-            INITIAL_LIQUIDITY_RARE,
-            _defaultSingleCurve()
+            tokenCreator, "ipfs://ordering-test", "Ordering Test", "ORDR", INITIAL_LIQUIDITY_RARE, _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -202,12 +160,11 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
         return createdToken;
     }
 
-    function _createTokenWithOrdering(
-        bool wantBaseTokenIsCurrency0
-    ) internal returns (LiquidMultiCurve createdToken, MockRARE baseToken) {
-        address baseAddress = wantBaseTokenIsCurrency0
-            ? ORDERING_BASE_TOKEN_LOW
-            : ORDERING_BASE_TOKEN_HIGH;
+    function _createTokenWithOrdering(bool wantBaseTokenIsCurrency0)
+        internal
+        returns (LiquidMultiCurve createdToken, MockRARE baseToken)
+    {
+        address baseAddress = wantBaseTokenIsCurrency0 ? ORDERING_BASE_TOKEN_LOW : ORDERING_BASE_TOKEN_HIGH;
 
         baseToken = _prepareMockBase(baseAddress);
         createdToken = _createTokenWithBase(baseToken);
@@ -219,84 +176,34 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
         revert("FailedToForceOrdering");
     }
 
-    function _assertMarketInversionCorrect(
-        LiquidMultiCurve testedToken
-    ) internal view {
-        (uint256 rarePerTokenPrice, uint256 tokenPerRarePrice) = testedToken
-            .getCurrentPrice();
-        (
-            uint256 rarePerTokenMarket,
-            uint256 tokenPerRareMarket,
-            uint160 sqrtPriceX96,
-            ,
-            ,
-            uint256 currentSupply
-        ) = testedToken.getMarketState();
+    function _assertMarketInversionCorrect(LiquidMultiCurve testedToken) internal view {
+        (uint256 rarePerTokenPrice, uint256 tokenPerRarePrice) = testedToken.getCurrentPrice();
+        (uint256 rarePerTokenMarket, uint256 tokenPerRareMarket, uint160 sqrtPriceX96,,, uint256 currentSupply) =
+            testedToken.getMarketState();
 
-        assertEq(
-            rarePerTokenPrice,
-            rarePerTokenMarket,
-            "getCurrentPrice/getMarketState rarePerToken mismatch"
-        );
-        assertEq(
-            tokenPerRarePrice,
-            tokenPerRareMarket,
-            "getCurrentPrice/getMarketState tokenPerRare mismatch"
-        );
-        assertEq(
-            currentSupply,
-            testedToken.maxTotalSupply(),
-            "market state should report max supply"
-        );
+        assertEq(rarePerTokenPrice, rarePerTokenMarket, "getCurrentPrice/getMarketState rarePerToken mismatch");
+        assertEq(tokenPerRarePrice, tokenPerRareMarket, "getCurrentPrice/getMarketState tokenPerRare mismatch");
+        assertEq(currentSupply, testedToken.maxTotalSupply(), "market state should report max supply");
 
         assertGt(sqrtPriceX96, 0, "sqrtPriceX96 must be non-zero");
 
-        uint256 priceQ128 = FullMath.mulDiv(
-            uint256(sqrtPriceX96),
-            uint256(sqrtPriceX96),
-            1 << 64
-        );
+        uint256 priceQ128 = FullMath.mulDiv(uint256(sqrtPriceX96), uint256(sqrtPriceX96), 1 << 64);
         uint256 denominatorQ128 = 1 << 128;
 
-        bool baseTokenIsCurrency0 = testedToken.baseToken() <
-            address(testedToken);
+        bool baseTokenIsCurrency0 = testedToken.baseToken() < address(testedToken);
         uint256 expectedRarePerToken;
         uint256 expectedTokenPerRare;
 
         if (baseTokenIsCurrency0) {
-            expectedRarePerToken = FullMath.mulDiv(
-                denominatorQ128,
-                1e18,
-                priceQ128
-            );
-            expectedTokenPerRare = FullMath.mulDiv(
-                priceQ128,
-                1e18,
-                denominatorQ128
-            );
+            expectedRarePerToken = FullMath.mulDiv(denominatorQ128, 1e18, priceQ128);
+            expectedTokenPerRare = FullMath.mulDiv(priceQ128, 1e18, denominatorQ128);
         } else {
-            expectedRarePerToken = FullMath.mulDiv(
-                priceQ128,
-                1e18,
-                denominatorQ128
-            );
-            expectedTokenPerRare = FullMath.mulDiv(
-                denominatorQ128,
-                1e18,
-                priceQ128
-            );
+            expectedRarePerToken = FullMath.mulDiv(priceQ128, 1e18, denominatorQ128);
+            expectedTokenPerRare = FullMath.mulDiv(denominatorQ128, 1e18, priceQ128);
         }
 
-        assertEq(
-            rarePerTokenPrice,
-            expectedRarePerToken,
-            "rare/ token inversion mismatch"
-        );
-        assertEq(
-            tokenPerRarePrice,
-            expectedTokenPerRare,
-            "token per rare inversion mismatch"
-        );
+        assertEq(rarePerTokenPrice, expectedRarePerToken, "rare/ token inversion mismatch");
+        assertEq(tokenPerRarePrice, expectedTokenPerRare, "token per rare inversion mismatch");
     }
 
     function _assertQuoteMatchesActualForToken(LiquidMultiCurve testedToken) internal {
@@ -309,38 +216,26 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
         }
 
         vm.startPrank(tokenCreator);
-        (uint256 quotedOut, ) = testedToken.quoteBuy(rareIn);
+        (uint256 quotedOut,) = testedToken.quoteBuy(rareIn);
         IERC20(testedToken.baseToken()).approve(address(swapHelper), rareIn);
         uint256 actualOut = swapHelper.buy(address(testedToken), rareIn, tokenCreator);
         vm.stopPrank();
 
         uint256 tolerance = (actualOut / 100) + 1;
-        assertApproxEqAbs(
-            quotedOut,
-            actualOut,
-            tolerance,
-            "Quote buy should match actual buy within tolerance"
-        );
+        assertApproxEqAbs(quotedOut, actualOut, tolerance, "Quote buy should match actual buy within tolerance");
 
         uint256 sellAmount = actualOut / 2;
 
-        (uint256 quotedRareOut, ) = testedToken.quoteSell(sellAmount);
+        (uint256 quotedRareOut,) = testedToken.quoteSell(sellAmount);
 
         vm.startPrank(tokenCreator);
         testedToken.approve(address(swapHelper), sellAmount);
-        uint256 actualRareOut = swapHelper.sell(
-            address(testedToken),
-            sellAmount,
-            tokenCreator
-        );
+        uint256 actualRareOut = swapHelper.sell(address(testedToken), sellAmount, tokenCreator);
         vm.stopPrank();
 
         tolerance = (actualRareOut / 100) + 1;
         assertApproxEqAbs(
-            quotedRareOut,
-            actualRareOut,
-            tolerance,
-            "Quote sell should match actual sell within tolerance"
+            quotedRareOut, actualRareOut, tolerance, "Quote sell should match actual sell within tolerance"
         );
     }
 
@@ -354,9 +249,7 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
         uint256 rareAmount = 1 ether;
 
         // Get quote (simplified - just output and price)
-        (uint256 tokenOut, uint160 sqrtPriceX96After) = token.quoteBuy(
-            rareAmount
-        );
+        (uint256 tokenOut, uint160 sqrtPriceX96After) = token.quoteBuy(rareAmount);
 
         // Verify quote returns values
         assertGt(tokenOut, 0, "Should return positive token output");
@@ -366,7 +259,7 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
     function test_QuoteBuy_MatchesActualTrade() public {
         uint256 rareAmount = 1 ether;
 
-        (uint256 quotedOut, ) = token.quoteBuy(rareAmount);
+        (uint256 quotedOut,) = token.quoteBuy(rareAmount);
 
         vm.startPrank(user1);
         IERC20(mockRARE).approve(address(swapHelper), rareAmount);
@@ -374,12 +267,7 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
         vm.stopPrank();
 
         uint256 tolerance = (actualOut / 100) + 1;
-        assertApproxEqAbs(
-            quotedOut,
-            actualOut,
-            tolerance,
-            "Quote buy should match actual buy within tolerance"
-        );
+        assertApproxEqAbs(quotedOut, actualOut, tolerance, "Quote buy should match actual buy within tolerance");
     }
 
     // ============================================
@@ -392,7 +280,7 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
         vm.deal(user1, largeAmount);
 
         // Get quote
-        (uint256 tokenOut, ) = token.quoteBuy(largeAmount);
+        (uint256 tokenOut,) = token.quoteBuy(largeAmount);
         assertGt(tokenOut, 0, "Should quote positive tokens for large amount");
     }
 
@@ -405,49 +293,32 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
         vm.stopPrank();
 
         uint256 sellAmount = tokenAmount / 2;
-        (uint256 quotedRareOut, ) = token.quoteSell(sellAmount);
+        (uint256 quotedRareOut,) = token.quoteSell(sellAmount);
 
         vm.startPrank(user1);
         token.approve(address(swapHelper), sellAmount);
-        uint256 actualRareOut = swapHelper.sell(
-            address(token),
-            sellAmount,
-            user1
-        );
+        uint256 actualRareOut = swapHelper.sell(address(token), sellAmount, user1);
         vm.stopPrank();
 
         uint256 tolerance = (actualRareOut / 100) + 1;
         assertApproxEqAbs(
-            quotedRareOut,
-            actualRareOut,
-            tolerance,
-            "Quote sell should match actual sell within tolerance"
+            quotedRareOut, actualRareOut, tolerance, "Quote sell should match actual sell within tolerance"
         );
     }
 
     function test_QuoteOrdering_BaseTokenLessThanToken_QuotesAndMarkets() public {
-        (LiquidMultiCurve orderedToken, MockRARE orderedBaseToken) = _createTokenWithOrdering(
-            true
-        );
+        (LiquidMultiCurve orderedToken, MockRARE orderedBaseToken) = _createTokenWithOrdering(true);
 
-        assertTrue(
-            address(orderedBaseToken) < address(orderedToken),
-            "baseToken should be currency0 for this branch"
-        );
+        assertTrue(address(orderedBaseToken) < address(orderedToken), "baseToken should be currency0 for this branch");
 
         _assertMarketInversionCorrect(orderedToken);
         _assertQuoteMatchesActualForToken(orderedToken);
     }
 
     function test_QuoteOrdering_BaseTokenGreaterThanToken_QuotesAndMarkets() public {
-        (LiquidMultiCurve orderedToken, MockRARE orderedBaseToken) = _createTokenWithOrdering(
-            false
-        );
+        (LiquidMultiCurve orderedToken, MockRARE orderedBaseToken) = _createTokenWithOrdering(false);
 
-        assertTrue(
-            address(orderedBaseToken) > address(orderedToken),
-            "baseToken should be currency1 for this branch"
-        );
+        assertTrue(address(orderedBaseToken) > address(orderedToken), "baseToken should be currency1 for this branch");
 
         _assertMarketInversionCorrect(orderedToken);
         _assertQuoteMatchesActualForToken(orderedToken);
@@ -481,20 +352,13 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
         uint256 tokenAmount = 1000e18;
 
         // Get current price before quote (for comparison)
-        (uint256 rarePerTokenBefore, uint256 tokenPerRareBefore) = token
-            .getCurrentPrice();
+        (uint256 rarePerTokenBefore, uint256 tokenPerRareBefore) = token.getCurrentPrice();
 
         // Verify pool is initialized
-        assertGt(
-            rarePerTokenBefore,
-            0,
-            "Pool should be initialized with non-zero price"
-        );
+        assertGt(rarePerTokenBefore, 0, "Pool should be initialized with non-zero price");
 
         // Get quote for selling tokens
-        (uint256 rareOut, uint160 sqrtPriceX96After) = token.quoteSell(
-            tokenAmount
-        );
+        (uint256 rareOut, uint160 sqrtPriceX96After) = token.quoteSell(tokenAmount);
 
         // Verify quote returns non-zero values
         assertGt(rareOut, 0, "Should return positive RARE output");
@@ -502,11 +366,7 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
 
         // Verify the quote makes sense: selling tokens should give us RARE
         // The amount should be reasonable (not zero, not unreasonably large)
-        assertLt(
-            rareOut,
-            tokenAmount,
-            "RARE output should be less than token input (slippage/fees)"
-        );
+        assertLt(rareOut, tokenAmount, "RARE output should be less than token input (slippage/fees)");
 
         console.log("QuoteSell test:");
         console.log("Token amount:", tokenAmount);
@@ -515,5 +375,4 @@ contract LiquidInstantQuoteTradeTest is Test, InitGuardTestHelper {
         console.log("RARE per token before:", rarePerTokenBefore);
         console.log("Token per RARE before:", tokenPerRareBefore);
     }
-
 }

@@ -37,8 +37,7 @@ contract LiquidMultiCurveMainnetTest is ForkTestBase, InitGuardTestHelper {
     uint256 constant POOL_RARE = 2000e18;
 
     function _defaultCurves() internal pure returns (Curve[] memory) {
-        DeployConfig.MultiCurveConfig memory cfg =
-            DeployConfig.getDefaultMultiCurveConfig();
+        DeployConfig.MultiCurveConfig memory cfg = DeployConfig.getDefaultMultiCurveConfig();
 
         Curve[] memory curves = new Curve[](3);
         curves[0] = Curve({
@@ -77,17 +76,9 @@ contract LiquidMultiCurveMainnetTest is ForkTestBase, InitGuardTestHelper {
 
         vm.startPrank(admin);
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
-        factory = new LiquidFactory(
-            admin,
-            config.uniswapV4PoolManager,
-            -180,
-            120000,
-            initGuardAddr,
-            60,
-            MIN_RARE
-        );
+        factory = new LiquidFactory(admin, config.uniswapV4PoolManager, initGuardAddr, 60);
         LiquidGuard(initGuardAddr).setFactory(address(factory));
-                factory.setLiquidRegistry(address(1));
+        factory.setLiquidRegistry(address(1));
         instantImpl = new LiquidMultiCurve();
         multiCurveImpl = new LiquidMultiCurve();
         factory.setLiquidMultiCurveImplementation(address(instantImpl));
@@ -99,14 +90,7 @@ contract LiquidMultiCurveMainnetTest is ForkTestBase, InitGuardTestHelper {
         // Create a dummy LiquidMultiCurve token first so multicurve tokens get same address layout as sniper test
         vm.startPrank(tokenCreator);
         mockRARE.approve(address(factory), MIN_RARE);
-        factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://dummy",
-            "Dummy",
-            "DMY",
-            MIN_RARE,
-            _defaultCurves()
-        );
+        factory.createLiquidTokenMultiCurve(tokenCreator, "ipfs://dummy", "Dummy", "DMY", MIN_RARE, _defaultCurves());
         vm.stopPrank();
     }
 
@@ -116,12 +100,7 @@ contract LiquidMultiCurveMainnetTest is ForkTestBase, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         mockRARE.approve(address(factory), POOL_RARE);
         address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://e2e-test",
-            "E2E MultiCurve",
-            "E2E",
-            POOL_RARE,
-            curves
+            tokenCreator, "ipfs://e2e-test", "E2E MultiCurve", "E2E", POOL_RARE, curves
         );
         vm.stopPrank();
 
@@ -152,12 +131,7 @@ contract LiquidMultiCurveMainnetTest is ForkTestBase, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         mockRARE.approve(address(factory), POOL_RARE);
         address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://multi-swap",
-            "Multi Swap",
-            "MSW",
-            POOL_RARE,
-            curves
+            tokenCreator, "ipfs://multi-swap", "Multi Swap", "MSW", POOL_RARE, curves
         );
         vm.stopPrank();
 
@@ -179,12 +153,7 @@ contract LiquidMultiCurveMainnetTest is ForkTestBase, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         mockRARE.approve(address(factory), POOL_RARE);
         address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://roundtrip",
-            "Roundtrip",
-            "RND",
-            POOL_RARE,
-            curves
+            tokenCreator, "ipfs://roundtrip", "Roundtrip", "RND", POOL_RARE, curves
         );
         vm.stopPrank();
 
@@ -212,12 +181,7 @@ contract LiquidMultiCurveMainnetTest is ForkTestBase, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         mockRARE.approve(address(factory), POOL_RARE);
         address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://full-flow",
-            "Full Flow MultiCurve",
-            "FFMC",
-            POOL_RARE,
-            curves
+            tokenCreator, "ipfs://full-flow", "Full Flow MultiCurve", "FFMC", POOL_RARE, curves
         );
         vm.stopPrank();
 
@@ -237,19 +201,19 @@ contract LiquidMultiCurveMainnetTest is ForkTestBase, InitGuardTestHelper {
         uint256 totalTokensBought = 0;
 
         console.log("=== MultiCurve full flow: buys (drive price up) ===");
-        (uint256 priceRarePerToken, ) = token.getCurrentPrice();
+        (uint256 priceRarePerToken,) = token.getCurrentPrice();
         console.log("  Initial price (RARE per token):", _fmtPrice(priceRarePerToken));
 
         for (uint256 i = 0; i < buyAmounts.length; i++) {
             uint256 rareIn = buyAmounts[i];
-            (uint256 priceBefore, ) = token.getCurrentPrice();
+            (uint256 priceBefore,) = token.getCurrentPrice();
 
             vm.startPrank(user1);
             mockRARE.approve(address(swapHelper), rareIn);
             uint256 tokensOut = swapHelper.buy(address(token), rareIn, user1);
             vm.stopPrank();
 
-            (uint256 priceAfter, ) = token.getCurrentPrice();
+            (uint256 priceAfter,) = token.getCurrentPrice();
             totalRareSpent += rareIn;
             totalTokensBought += tokensOut;
 
@@ -274,7 +238,7 @@ contract LiquidMultiCurveMainnetTest is ForkTestBase, InitGuardTestHelper {
 
         console.log("  Total RARE spent:", _fmt(totalRareSpent));
         console.log("  Total tokens bought:", _fmt(totalTokensBought));
-        (uint256 priceAfterBuys, ) = token.getCurrentPrice();
+        (uint256 priceAfterBuys,) = token.getCurrentPrice();
         console.log("  Price after all buys (RARE per token):", _fmtPrice(priceAfterBuys));
 
         console.log("=== Sells ===");
@@ -293,7 +257,7 @@ contract LiquidMultiCurveMainnetTest is ForkTestBase, InitGuardTestHelper {
         vm.stopPrank();
         console.log("  Sell 2 tokens:", _fmt(sellAmount2), "RARE out:", _fmt(rareOut2));
 
-        (uint256 priceAfterSells, ) = token.getCurrentPrice();
+        (uint256 priceAfterSells,) = token.getCurrentPrice();
         console.log("  Price after sells (RARE per token):", _fmtPrice(priceAfterSells));
 
         uint256 rareOutTotal = rareOut1 + rareOut2;

@@ -10,7 +10,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title TestCreateTokenGas
- * @notice Minimal script to test gas consumption of createLiquidToken
+ * @notice Minimal script to test gas consumption of createLiquidTokenMultiCurve
  */
 contract TestCreateTokenGas is Script {
     function run() external {
@@ -19,7 +19,7 @@ contract TestCreateTokenGas is Script {
         string memory tokenURI = vm.envString("TOKEN_URI");
         string memory tokenName = vm.envString("TOKEN_NAME");
         string memory tokenSymbol = vm.envString("TOKEN_SYMBOL");
-        
+
         uint256 initialRareLiquidity;
         try vm.envUint("INITIAL_RARE_LIQUIDITY") returns (uint256 rare) {
             initialRareLiquidity = rare;
@@ -50,13 +50,13 @@ contract TestCreateTokenGas is Script {
         console.log("Factory:", factoryAddress);
         console.log("Deployer:", deployerAddress);
         console.log("Base token:", baseToken);
-        console.log("Initial RARE liquidity:", initialRareLiquidity);
+        console.log("Optional RARE liquidity:", initialRareLiquidity);
         console.log("");
 
         // Check allowance
         uint256 currentAllowance = IERC20(baseToken).allowance(deployerAddress, factoryAddress);
         console.log("Current allowance:", currentAllowance);
-        
+
         if (currentAllowance < initialRareLiquidity) {
             console.log("Approving...");
             vm.startBroadcast(deployerPrivateKey);
@@ -73,26 +73,16 @@ contract TestCreateTokenGas is Script {
 
         // Build default single-curve config
         Curve[] memory curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            numPositions: 1,
-            shares: 1e18
-        });
+        curves[0] = Curve({tickLower: -180, tickUpper: 120000, numPositions: 1, shares: 1e18});
 
         vm.startBroadcast(deployerPrivateKey);
 
         uint256 gasStart = gasleft();
         address newToken = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            tokenURI,
-            tokenName,
-            tokenSymbol,
-            initialRareLiquidity,
-            curves
+            tokenCreator, tokenURI, tokenName, tokenSymbol, initialRareLiquidity, curves
         );
         uint256 gasUsed = gasStart - gasleft();
-        
+
         vm.stopBroadcast();
 
         console.log("Token created:", newToken);

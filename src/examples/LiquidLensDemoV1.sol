@@ -133,7 +133,7 @@ contract LiquidLensDemoV1 is ERC721, Ownable {
         uint256 burned = maxTotalSupply - currentSupply;
         metrics.burnPercentage = (burned * 100) / maxTotalSupply;
 
-        // Calculate bonding curve progress (simplified - assumes tick range from factory)
+        // Calculate bonding curve progress from the current pool tick.
         // Shift tick to positive range safely
         int256 tick256 = int256(int24(currentTick));
         int256 shiftedTick = tick256 + 887272;

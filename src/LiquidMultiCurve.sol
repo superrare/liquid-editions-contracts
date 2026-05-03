@@ -373,7 +373,7 @@ contract LiquidMultiCurve is ILiquid, ILiquidBase, ERC20Upgradeable, ReentrancyG
 
     /// @notice Deploys Uniswap V4 pool with multicurve liquidity (multiple concentrated positions)
     /// @dev Uses Doppler Multicurve library to distribute liquidity across positions for anti-sniping
-    /// @param rareBalance Amount of RARE tokens for initial liquidity
+    /// @param rareBalance Optional RARE available for multicurve/head liquidity (can be 0)
     /// @param curves Curve configuration (tick ranges, shares) for position distribution
     function _deployPool(uint256 rareBalance, Curve[] calldata curves) internal {
         // Pull pool config from factory

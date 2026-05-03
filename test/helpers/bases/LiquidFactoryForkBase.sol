@@ -40,11 +40,8 @@ abstract contract LiquidFactoryForkBase is ForkTestBase, InitGuardTestHelper {
         LiquidFactory f = new LiquidFactory(
             admin,
             config.uniswapV4PoolManager,
-            LP_TICK_LOWER,
-            LP_TICK_UPPER,
             initGuardAddr,
-            60, // poolTickSpacing
-            1e15 // minRareLiquidityWei (0.001 RARE)
+            60 // poolTickSpacing
         );
         LiquidGuard(initGuardAddr).setFactory(address(f));
         f.setLiquidRegistry(address(1));
@@ -53,15 +50,10 @@ abstract contract LiquidFactoryForkBase is ForkTestBase, InitGuardTestHelper {
         return f;
     }
 
-    /// @notice Returns a default single-curve config (equivalent to former LiquidMultiCurve)
-    function _defaultSingleCurve() internal view returns (Curve[] memory) {
+    /// @notice Returns the default single-curve config used by factory fork tests.
+    function _defaultSingleCurve() internal pure returns (Curve[] memory) {
         Curve[] memory curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            numPositions: 1,
-            shares: 1e18
-        });
+        curves[0] = Curve({tickLower: LP_TICK_LOWER, tickUpper: LP_TICK_UPPER, numPositions: 1, shares: 1e18});
         return curves;
     }
 
@@ -71,9 +63,8 @@ abstract contract LiquidFactoryForkBase is ForkTestBase, InitGuardTestHelper {
 
         admin = makeAddr("admin");
         tokenCreator = makeAddr("tokenCreator");
-        protocolFeeRecipient = config.protocolFeeRecipient != address(0)
-            ? config.protocolFeeRecipient
-            : makeAddr("protocolFeeRecipient");
+        protocolFeeRecipient =
+            config.protocolFeeRecipient != address(0) ? config.protocolFeeRecipient : makeAddr("protocolFeeRecipient");
 
         vm.deal(admin, 100 ether);
         vm.deal(tokenCreator, 100 ether);

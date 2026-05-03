@@ -39,12 +39,7 @@ contract LiquidInstantOptimalPriceTest is Test, InitGuardTestHelper {
 
     function _defaultSingleCurve() internal pure returns (Curve[] memory) {
         Curve[] memory curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: LP_TICK_LOWER,
-            tickUpper: LP_TICK_UPPER,
-            numPositions: 1,
-            shares: 1e18
-        });
+        curves[0] = Curve({tickLower: LP_TICK_LOWER, tickUpper: LP_TICK_UPPER, numPositions: 1, shares: 1e18});
         return curves;
     }
 
@@ -72,14 +67,11 @@ contract LiquidInstantOptimalPriceTest is Test, InitGuardTestHelper {
         factory = new LiquidFactory(
             admin,
             config.uniswapV4PoolManager,
-            LP_TICK_LOWER,
-            LP_TICK_UPPER,
             initGuardAddr, // poolHooks
-            60, // poolTickSpacing
-            1e15 // minRareLiquidityWei (0.001 RARE)
+            60 // poolTickSpacing
         );
         LiquidGuard(initGuardAddr).setFactory(address(factory));
-                factory.setLiquidRegistry(address(1));
+        factory.setLiquidRegistry(address(1));
 
         factory.setLiquidMultiCurveImplementation(address(liquidImpl));
 
@@ -100,12 +92,7 @@ contract LiquidInstantOptimalPriceTest is Test, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), rareAmount);
         address tokenAddress = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://test",
-            "Test Token",
-            "TEST",
-            rareAmount,
-            _defaultSingleCurve()
+            tokenCreator, "ipfs://test", "Test Token", "TEST", rareAmount, _defaultSingleCurve()
         );
         vm.stopPrank();
         return LiquidMultiCurve(payable(tokenAddress));
@@ -120,10 +107,7 @@ contract LiquidInstantOptimalPriceTest is Test, InitGuardTestHelper {
         LiquidMultiCurve token = _createToken(RARE_AMOUNT);
 
         // Verify pool was created
-        assertTrue(
-            PoolId.unwrap(token.poolId()) != bytes32(0),
-            "Pool should be created"
-        );
+        assertTrue(PoolId.unwrap(token.poolId()) != bytes32(0), "Pool should be created");
 
         // CRITICAL: Check that no RARE remains in the contract
         uint256 remainingRare = mockRARE.balanceOf(address(token));
@@ -131,11 +115,7 @@ contract LiquidInstantOptimalPriceTest is Test, InitGuardTestHelper {
         console.log("RARE remaining in contract:", remainingRare);
 
         // Allow 1 wei tolerance for rounding errors
-        assertLe(
-            remainingRare,
-            1,
-            "All RARE should be used (within 1 wei rounding tolerance)"
-        );
+        assertLe(remainingRare, 1, "All RARE should be used (within 1 wei rounding tolerance)");
 
         // Verify creator received any excess (if any)
         // The safety check should return excess to creator
@@ -159,28 +139,16 @@ contract LiquidInstantOptimalPriceTest is Test, InitGuardTestHelper {
             // Verify pool initialized
             IPoolManager pm = IPoolManager(token.poolManager());
             PoolId poolId = token.poolId();
-            (uint160 sqrtPriceX96, int24 currentTick, , ) = pm.getSlot0(poolId);
+            (uint160 sqrtPriceX96, int24 currentTick,,) = pm.getSlot0(poolId);
             assertTrue(sqrtPriceX96 > 0, "Pool should be initialized");
 
             // Verify tick is within multicurve bounds
-            assertGe(
-                currentTick,
-                token.lpTickLower(),
-                "Price should be at or above lower bound"
-            );
-            assertLe(
-                currentTick,
-                token.lpTickUpper(),
-                "Price should be within upper bound"
-            );
+            assertGe(currentTick, LP_TICK_LOWER, "Price should be at or above lower bound");
+            assertLe(currentTick, LP_TICK_UPPER, "Price should be within upper bound");
 
             // Verify all RARE used
             uint256 remainingRare = mockRARE.balanceOf(address(token));
-            assertLe(
-                remainingRare,
-                1,
-                "All RARE should be used for this amount"
-            );
+            assertLe(remainingRare, 1, "All RARE should be used for this amount");
 
             console.log("=== RARE Amount:", rareAmounts[i], "===");
             console.log("Sqrt price:", sqrtPriceX96);
@@ -206,18 +174,14 @@ contract LiquidInstantOptimalPriceTest is Test, InitGuardTestHelper {
             // Verify pool initialized correctly
             IPoolManager pm = IPoolManager(token.poolManager());
             PoolId poolId = token.poolId();
-            (uint160 sqrtPriceX96, , , ) = pm.getSlot0(poolId);
+            (uint160 sqrtPriceX96,,,) = pm.getSlot0(poolId);
 
             // Verify price is valid
             assertTrue(sqrtPriceX96 > 0, "Price should be positive");
 
             // Verify all RARE used regardless of ordering
             uint256 remainingRare = mockRARE.balanceOf(address(token));
-            assertLe(
-                remainingRare,
-                1,
-                "All RARE should be used regardless of currency ordering"
-            );
+            assertLe(remainingRare, 1, "All RARE should be used regardless of currency ordering");
 
             console.log("=== Token", i, "===");
             console.log("baseTokenIsCurrency0:", baseTokenIsCurrency0);
@@ -236,13 +200,8 @@ contract LiquidInstantOptimalPriceTest is Test, InitGuardTestHelper {
 
         // Verify multicurve positions were initialized (liquidity is split across ranges)
         uint256 positions = token.storedPositionsLength();
-        uint128 liquidity = IPoolManager(token.poolManager()).getLiquidity(
-            token.poolId()
-        );
-        assertTrue(
-            positions > 0 || liquidity > 0,
-            "Pool should have liquidity"
-        );
+        uint128 liquidity = IPoolManager(token.poolManager()).getLiquidity(token.poolId());
+        assertTrue(positions > 0 || liquidity > 0, "Pool should have liquidity");
 
         // Verify all RARE was used
         uint256 remainingRare = mockRARE.balanceOf(address(token));
@@ -254,18 +213,11 @@ contract LiquidInstantOptimalPriceTest is Test, InitGuardTestHelper {
         uint256 creatorLiquidBalance = token.balanceOf(tokenCreator);
 
         // Creator should have launch reward (100K)
-        assertEq(
-            creatorLiquidBalance,
-            100_000e18,
-            "Creator should have launch reward"
-        );
+        assertEq(creatorLiquidBalance, 100_000e18, "Creator should have launch reward");
 
         // Contract should have minimal balance (most tokens in pool)
         // Allow some tolerance for rounding
-        assertTrue(
-            contractLiquidBalance < EXPECTED_LIQUID / 10,
-            "Most LIQUID tokens should be in pool"
-        );
+        assertTrue(contractLiquidBalance < EXPECTED_LIQUID / 10, "Most LIQUID tokens should be in pool");
 
         console.log("=== Balance Verification ===");
         console.log("RARE provided:", RARE_AMOUNT);
@@ -285,21 +237,15 @@ contract LiquidInstantOptimalPriceTest is Test, InitGuardTestHelper {
 
         IPoolManager pm = IPoolManager(token.poolManager());
         PoolId poolId = token.poolId();
-        (uint160 sqrtPriceX96, int24 currentTick, , ) = pm.getSlot0(poolId);
+        (uint160 sqrtPriceX96, int24 currentTick,,) = pm.getSlot0(poolId);
 
-        int24 tickLower = token.lpTickLower();
-        int24 tickUpper = token.lpTickUpper();
+        int24 tickLower = LP_TICK_LOWER;
+        int24 tickUpper = LP_TICK_UPPER;
 
         // Verify price is within configured multicurve bounds
         // Old approach would set price at tickUpper - 1 or tickLower + 1
-        assertTrue(
-            currentTick >= tickLower,
-            "Price should be within configured lower bound"
-        );
-        assertTrue(
-            currentTick <= tickUpper,
-            "Price should be within configured upper bound"
-        );
+        assertTrue(currentTick >= tickLower, "Price should be within configured lower bound");
+        assertTrue(currentTick <= tickUpper, "Price should be within configured upper bound");
 
         console.log("=== Price Position Test ===");
         console.log("Current tick:", currentTick);
@@ -322,20 +268,12 @@ contract LiquidInstantOptimalPriceTest is Test, InitGuardTestHelper {
         LiquidMultiCurve token = _createToken(RARE_AMOUNT);
 
         // Verify pool was created and has liquidity
-        assertTrue(
-            PoolId.unwrap(token.poolId()) != bytes32(0),
-            "Pool should be created"
-        );
+        assertTrue(PoolId.unwrap(token.poolId()) != bytes32(0), "Pool should be created");
 
         // Verify pool has liquidity
         uint256 positions = token.storedPositionsLength();
-        uint128 liquidity = IPoolManager(token.poolManager()).getLiquidity(
-            token.poolId()
-        );
-        assertTrue(
-            positions > 0 || liquidity > 0,
-            "Pool should have liquidity"
-        );
+        uint128 liquidity = IPoolManager(token.poolManager()).getLiquidity(token.poolId());
+        assertTrue(positions > 0 || liquidity > 0, "Pool should have liquidity");
 
         // Verify all RARE was used (this is what the event claims)
         uint256 remainingRare = mockRARE.balanceOf(address(token));
@@ -343,10 +281,7 @@ contract LiquidInstantOptimalPriceTest is Test, InitGuardTestHelper {
 
         // Verify LIQUID tokens were deposited (900K should be in pool)
         uint256 contractLiquidBalance = token.balanceOf(address(token));
-        assertTrue(
-            contractLiquidBalance < EXPECTED_LIQUID / 10,
-            "Most LIQUID tokens should be in pool as event claims"
-        );
+        assertTrue(contractLiquidBalance < EXPECTED_LIQUID / 10, "Most LIQUID tokens should be in pool as event claims");
 
         console.log("=== Event Verification ===");
         console.log("RARE provided:", RARE_AMOUNT);
@@ -369,21 +304,14 @@ contract LiquidInstantOptimalPriceTest is Test, InitGuardTestHelper {
 
         // Verify all RARE used (within rounding tolerance)
         uint256 remainingRare = mockRARE.balanceOf(address(token));
-        assertLe(
-            remainingRare,
-            1,
-            "All RARE should be used for any valid amount"
-        );
+        assertLe(remainingRare, 1, "All RARE should be used for any valid amount");
 
         // Verify pool initialized
-        assertTrue(
-            PoolId.unwrap(token.poolId()) != bytes32(0),
-            "Pool should be created"
-        );
+        assertTrue(PoolId.unwrap(token.poolId()) != bytes32(0), "Pool should be created");
 
         IPoolManager pm = IPoolManager(token.poolManager());
         PoolId poolId = token.poolId();
-        (uint160 sqrtPriceX96, , , ) = pm.getSlot0(poolId);
+        (uint160 sqrtPriceX96,,,) = pm.getSlot0(poolId);
         assertTrue(sqrtPriceX96 > 0, "Pool should be initialized");
     }
 }

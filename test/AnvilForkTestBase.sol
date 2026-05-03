@@ -15,13 +15,10 @@ import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 
 /// @notice Interface for FullRangeLBPStrategyFactory to compute addresses
 interface IStrategyFactory {
-    function getAddress(
-        address token,
-        uint256 amount,
-        bytes calldata configData,
-        bytes32 salt,
-        address sender
-    ) external view returns (address);
+    function getAddress(address token, uint256 amount, bytes calldata configData, bytes32 salt, address sender)
+        external
+        view
+        returns (address);
 }
 
 /**
@@ -44,10 +41,8 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
     bytes1 constant V4_SWAP = 0x10;
 
     // Universal Router recipient placeholders
-    address constant MSG_SENDER =
-        address(0x0000000000000000000000000000000000000001);
-    address constant ROUTER_ADDRESS =
-        address(0x0000000000000000000000000000000000000002);
+    address constant MSG_SENDER = address(0x0000000000000000000000000000000000000001);
+    address constant ROUTER_ADDRESS = address(0x0000000000000000000000000000000000000002);
 
     // V4 action codes (from v4-periphery Actions.sol)
     uint8 constant SWAP_EXACT_IN = 0x07; // Multi-hop
@@ -69,29 +64,19 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
     }
 
     function _configureFactory() internal virtual override {
-        if (
-            config.ccaFactory != address(0) &&
-            config.lbpStrategyFactory != address(0)
-        ) {
-            factory.setCcaFactory(config.ccaFactory);
-            factory.setLbpStrategyFactory(config.lbpStrategyFactory);
-            factory.setProtocolFeeRecipient(protocolFeeRecipient);
+        if (config.ccaFactory != address(0) && config.lbpStrategyFactory != address(0)) {
             auctioneer = LiquidAuctioneer(
-                payable(
-                    DeployLiquidAuctioneer.deploy(
-                admin,
-                protocolFeeRecipient,
-                deployConfig.fees,
-                config.uniswapUniversalRouter,
-                config.rareToken,
-                config.weth,
-                true
-            )
-                )
+                payable(DeployLiquidAuctioneer.deploy(
+                        admin,
+                        protocolFeeRecipient,
+                        deployConfig.fees,
+                        config.uniswapUniversalRouter,
+                        config.rareToken,
+                        config.weth,
+                        true
+                    ))
             );
-            ILiquidRegistry(
-                auctioneer.liquidRegistry()
-            ).setWriter(address(auctioneer), true);
+            ILiquidRegistry(auctioneer.liquidRegistry()).setWriter(address(auctioneer), true);
         }
     }
 
@@ -100,23 +85,10 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
         forkUrlForFFI = _getForkUrl();
 
         vm.startPrank(tokenCreator);
-        uint256 minRare = factory.minRareLiquidityWei();
-        IERC20(config.rareToken).approve(address(factory), minRare);
-
         Curve[] memory curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            numPositions: 1,
-            shares: 1e18
-        });
+        curves[0] = Curve({tickLower: -180, tickUpper: 120000, numPositions: 1, shares: 1e18});
         address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://anvil-fork-test",
-            "Anvil Fork Test Token",
-            "AFT",
-            minRare,
-            curves
+            tokenCreator, "ipfs://anvil-fork-test", "Anvil Fork Test Token", "AFT", 0, curves
         );
         liquidToken = LiquidMultiCurve(payable(tokenAddr));
         vm.stopPrank();
@@ -146,17 +118,12 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
         return string.concat(vm.toString(whole), ".", fracStr);
     }
 
-    function _fmtPct(
-        uint256 part,
-        uint256 total
-    ) internal pure returns (string memory) {
+    function _fmtPct(uint256 part, uint256 total) internal pure returns (string memory) {
         if (total == 0) return "0%";
         uint256 pctBps = (part * 10000) / total;
         uint256 whole = pctBps / 100;
         uint256 frac = pctBps % 100;
-        string memory fracStr = frac < 10
-            ? string.concat("0", vm.toString(frac))
-            : vm.toString(frac);
+        string memory fracStr = frac < 10 ? string.concat("0", vm.toString(frac)) : vm.toString(frac);
         return string.concat(vm.toString(whole), ".", fracStr, "%");
     }
 
@@ -201,58 +168,28 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
     }
 
     /// @notice Fee BPS is managed by LiquidGuard hook. Returns 0 for router (no ETH fees deducted).
-    function _totalFeeBpsForRouter(
-        LiquidRouter
-    ) internal pure returns (uint256) {
+    function _totalFeeBpsForRouter(LiquidRouter) internal pure returns (uint256) {
         return 0;
     }
 
-    function _doBuy(
-        address asUser,
-        address token,
-        address recipient,
-        uint256 ethAmount
-    ) internal returns (uint256 tokensReceived) {
+    function _doBuy(address asUser, address token, address recipient, uint256 ethAmount)
+        internal
+        returns (uint256 tokensReceived)
+    {
         uint256 ethForSwap = _ethForSwap(ethAmount);
-        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRoute(
-            token,
-            ethForSwap,
-            1
-        );
+        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRoute(token, ethForSwap, 1);
         vm.prank(asUser);
-        return
-            router.buy{value: ethAmount}(
-                token,
-                recipient,
-                1,
-                commands,
-                inputs,
-                block.timestamp + 1 hours
-            );
+        return router.buy{value: ethAmount}(token, recipient, 1, commands, inputs, block.timestamp + 1 hours);
     }
 
-    function _doSell(
-        address asUser,
-        address token,
-        uint256 tokenAmount,
-        address recipient
-    ) internal returns (uint256 ethReceived) {
+    function _doSell(address asUser, address token, uint256 tokenAmount, address recipient)
+        internal
+        returns (uint256 ethReceived)
+    {
         vm.startPrank(asUser);
         IERC20(token).approve(address(router), tokenAmount);
-        (bytes memory commands, bytes[] memory inputs) = _encodeSellRoute(
-            token,
-            tokenAmount,
-            1
-        );
-        ethReceived = router.sell(
-            token,
-            tokenAmount,
-            recipient,
-            1,
-            commands,
-            inputs,
-            block.timestamp + 1 hours
-        );
+        (bytes memory commands, bytes[] memory inputs) = _encodeSellRoute(token, tokenAmount, 1);
+        ethReceived = router.sell(token, tokenAmount, recipient, 1, commands, inputs, block.timestamp + 1 hours);
         vm.stopPrank();
         return ethReceived;
     }
@@ -274,18 +211,10 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
             hookData: bytes("")
         });
         path[1] = PathKey({
-            intermediateCurrency: liquidTokenAddress,
-            fee: 0,
-            tickSpacing: 60,
-            hooks: poolHooks,
-            hookData: bytes("")
+            intermediateCurrency: liquidTokenAddress, fee: 0, tickSpacing: 60, hooks: poolHooks, hookData: bytes("")
         });
 
-        bytes memory actions = abi.encodePacked(
-            uint8(SWAP_EXACT_IN),
-            uint8(SETTLE_ALL),
-            uint8(TAKE_ALL)
-        );
+        bytes memory actions = abi.encodePacked(uint8(SWAP_EXACT_IN), uint8(SETTLE_ALL), uint8(TAKE_ALL));
 
         bytes[] memory params = new bytes[](3);
         params[0] = abi.encode(
@@ -307,18 +236,12 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
         inputs[0] = v4SwapInput;
     }
 
-    function _encodeBuyRoute(
-        address liquidTokenAddress,
-        uint256 ethForSwap,
-        uint256 minTokensOut
-    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
-        return
-            _encodeBuyRouteWithHooks(
-                liquidTokenAddress,
-                factory.poolHooks(),
-                ethForSwap,
-                minTokensOut
-            );
+    function _encodeBuyRoute(address liquidTokenAddress, uint256 ethForSwap, uint256 minTokensOut)
+        internal
+        view
+        returns (bytes memory commands, bytes[] memory inputs)
+    {
+        return _encodeBuyRouteWithHooks(liquidTokenAddress, factory.poolHooks(), ethForSwap, minTokensOut);
     }
 
     function _encodeSellRouteWithHooks(
@@ -331,11 +254,7 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
 
         PathKey[] memory path = new PathKey[](2);
         path[0] = PathKey({
-            intermediateCurrency: config.rareToken,
-            fee: 0,
-            tickSpacing: 60,
-            hooks: poolHooks,
-            hookData: bytes("")
+            intermediateCurrency: config.rareToken, fee: 0, tickSpacing: 60, hooks: poolHooks, hookData: bytes("")
         });
         path[1] = PathKey({
             intermediateCurrency: outputCurrency,
@@ -345,11 +264,7 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
             hookData: bytes("")
         });
 
-        bytes memory actions = abi.encodePacked(
-            uint8(SWAP_EXACT_IN),
-            uint8(SETTLE_ALL),
-            uint8(TAKE_ALL)
-        );
+        bytes memory actions = abi.encodePacked(uint8(SWAP_EXACT_IN), uint8(SETTLE_ALL), uint8(TAKE_ALL));
 
         bytes[] memory params = new bytes[](3);
         bytes memory structData = abi.encode(
@@ -372,39 +287,26 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
         inputs[0] = v4SwapInput;
     }
 
-    function _encodeSellRoute(
-        address liquidTokenAddress,
-        uint256 tokenAmount,
-        uint256 minEthOut
-    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
-        return
-            _encodeSellRouteWithHooks(
-                liquidTokenAddress,
-                factory.poolHooks(),
-                tokenAmount,
-                minEthOut
-            );
+    function _encodeSellRoute(address liquidTokenAddress, uint256 tokenAmount, uint256 minEthOut)
+        internal
+        view
+        returns (bytes memory commands, bytes[] memory inputs)
+    {
+        return _encodeSellRouteWithHooks(liquidTokenAddress, factory.poolHooks(), tokenAmount, minEthOut);
     }
 
     /// @notice Encode V3-only buy route: WRAP_ETH + V3_SWAP_EXACT_IN
     /// @dev Used for buying RARE (base token) directly via V3 WETH/RARE pool.
     ///      Validates that V3 routing works through LiquidRouter.
-    function _encodeBuyRouteV3Only(
-        address outputToken,
-        uint256 ethForSwap,
-        uint256 minTokensOut
-    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
-        bytes memory wrapInput = abi.encode(
-            ROUTER_ADDRESS,
-            ethForSwap
-        );
+    function _encodeBuyRouteV3Only(address outputToken, uint256 ethForSwap, uint256 minTokensOut)
+        internal
+        view
+        returns (bytes memory commands, bytes[] memory inputs)
+    {
+        bytes memory wrapInput = abi.encode(ROUTER_ADDRESS, ethForSwap);
 
         // V3 path: WETH -> outputToken (0.3% fee = 3000)
-        bytes memory v3Path = abi.encodePacked(
-            config.weth,
-            uint24(3000),
-            outputToken
-        );
+        bytes memory v3Path = abi.encodePacked(config.weth, uint24(3000), outputToken);
 
         bytes memory v3SwapInput = abi.encode(
             MSG_SENDER, // Send to LiquidRouter (msg.sender of execute)
@@ -420,10 +322,11 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
         inputs[1] = v3SwapInput;
     }
 
-    function _encodeBuyRouteForSwapLeg2(
-        address liquidTokenAddress,
-        uint256 minTokensOut
-    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
+    function _encodeBuyRouteForSwapLeg2(address liquidTokenAddress, uint256 minTokensOut)
+        internal
+        view
+        returns (bytes memory commands, bytes[] memory inputs)
+    {
         address currencyIn = address(0);
 
         PathKey[] memory path = new PathKey[](2);
@@ -442,11 +345,7 @@ abstract contract AnvilForkTestBase is LiquidRouterForkBase {
             hookData: bytes("")
         });
 
-        bytes memory actions = abi.encodePacked(
-            uint8(SWAP_EXACT_IN),
-            uint8(SETTLE_ALL),
-            uint8(TAKE_ALL)
-        );
+        bytes memory actions = abi.encodePacked(uint8(SWAP_EXACT_IN), uint8(SETTLE_ALL), uint8(TAKE_ALL));
 
         bytes[] memory params = new bytes[](3);
         uint128 amountIn = uint128(5e15);

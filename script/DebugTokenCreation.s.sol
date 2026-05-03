@@ -51,12 +51,10 @@ contract DebugTokenCreation is Script {
         address factoryImpl = factory.liquidMultiCurveImplementation();
         address factoryBaseToken = factory.baseToken();
         address factoryPoolManager = factory.poolManager();
-        uint256 minRareLiquidityWei = factory.minRareLiquidityWei();
 
         console.log("   Implementation:", factoryImpl);
         console.log("   Base Token:", factoryBaseToken);
         console.log("   Pool Manager:", factoryPoolManager);
-        console.log("   Min RARE Liquidity Wei:", minRareLiquidityWei);
 
         if (factoryImpl == address(0)) {
             console.log("   ERROR: Implementation not set!");
@@ -68,15 +66,6 @@ contract DebugTokenCreation is Script {
         }
         if (factoryPoolManager == address(0)) {
             console.log("   ERROR: Pool manager not set!");
-            return;
-        }
-        if (initialRareLiquidity < minRareLiquidityWei) {
-            console.log(
-                "   ERROR: Initial liquidity",
-                initialRareLiquidity,
-                "is less than minimum",
-                minRareLiquidityWei
-            );
             return;
         }
         console.log("   [OK] Factory configuration OK");
@@ -97,10 +86,7 @@ contract DebugTokenCreation is Script {
 
         // Check 3: Approval
         console.log("3. Checking approval...");
-        uint256 allowance = IERC20(baseToken).allowance(
-            deployerAddress,
-            factoryAddress
-        );
+        uint256 allowance = IERC20(baseToken).allowance(deployerAddress, factoryAddress);
         console.log("   Current Allowance:", allowance);
 
         if (allowance < initialRareLiquidity) {
@@ -121,10 +107,10 @@ contract DebugTokenCreation is Script {
         console.log("   [OK] Token URI valid");
         console.log("");
 
-        // Check 5: Factory tick configuration
-        console.log("5. Checking factory tick configuration...");
-        int24 tickLower = factory.lpTickLower();
-        int24 tickUpper = factory.lpTickUpper();
+        // Check 5: Default curve configuration
+        console.log("5. Checking default curve configuration...");
+        int24 tickLower = -180;
+        int24 tickUpper = 120000;
         int24 tickSpacing = factory.poolTickSpacing();
         address hooks = factory.poolHooks();
 
@@ -141,7 +127,7 @@ contract DebugTokenCreation is Script {
             console.log("   ERROR: Invalid tick spacing!");
             return;
         }
-        console.log("   [OK] Tick configuration OK");
+        console.log("   [OK] Default curve configuration OK");
         console.log("");
 
         // Check 6: Try to simulate the call (dry run)
@@ -155,32 +141,19 @@ contract DebugTokenCreation is Script {
 
         // Build default single-curve config
         Curve[] memory curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            numPositions: 1,
-            shares: 1e18
-        });
+        curves[0] = Curve({tickLower: -180, tickUpper: 120000, numPositions: 1, shares: 1e18});
 
         // Try to call createLiquidTokenMultiCurve (this will revert but we can catch it)
-        try
-            factory.createLiquidTokenMultiCurve(
-                tokenCreator,
-                tokenURI,
-                tokenName,
-                tokenSymbol,
-                initialRareLiquidity,
-                curves
-            )
-        returns (address newToken) {
+        try factory.createLiquidTokenMultiCurve(
+            tokenCreator, tokenURI, tokenName, tokenSymbol, initialRareLiquidity, curves
+        ) returns (
+            address newToken
+        ) {
             console.log("   [OK] Token created successfully at:", newToken);
 
             // Check if pool was initialized by trying to get price
             ILiquid liquid = ILiquid(newToken);
-            try liquid.getCurrentPrice() returns (
-                uint256 rarePerToken,
-                uint256 tokenPerRare
-            ) {
+            try liquid.getCurrentPrice() returns (uint256 rarePerToken, uint256 tokenPerRare) {
                 console.log("   [OK] Pool initialized successfully");
                 console.log("   Price - RARE per token:", rarePerToken);
                 console.log("   Price - Token per RARE:", tokenPerRare);

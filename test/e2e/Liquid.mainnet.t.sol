@@ -30,12 +30,11 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
     NetworkConfig.Config internal config;
 
     // Helper function to compute correct PoolId from parameters
-    function _computePoolId(
-        address rareToken,
-        uint24 fee,
-        int24 tickSpacing,
-        address hooks
-    ) internal pure returns (bytes32) {
+    function _computePoolId(address rareToken, uint24 fee, int24 tickSpacing, address hooks)
+        internal
+        pure
+        returns (bytes32)
+    {
         Currency ethC = Currency.wrap(address(0));
         Currency rareC = Currency.wrap(rareToken);
         bool ethIs0 = uint160(address(0)) < uint160(rareToken);
@@ -63,14 +62,9 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
     MockRARE public mockRARE;
     LiquidPoolSwapHelper public swapHelper;
 
-    function _defaultSingleCurve() internal view returns (Curve[] memory) {
+    function _defaultSingleCurve() internal pure returns (Curve[] memory) {
         Curve[] memory curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            numPositions: 1,
-            shares: 1e18
-        });
+        curves[0] = Curve({tickLower: -180, tickUpper: 120000, numPositions: 1, shares: 1e18});
         return curves;
     }
 
@@ -111,18 +105,9 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
 
         liquidImplementation = new LiquidMultiCurve();
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
-        factory = new LiquidFactory(
-            admin,
-            config.uniswapV4PoolManager, // V4 PoolManager
-            -180, // lpTickLower - max expensive (after price rises) - multiple of 60
-            120000, // lpTickUpper - starting point (cheap tokens)
-            initGuardAddr, // poolHooks
-            60, // poolTickSpacing (standard for 0.3% fee tier)
-            1e15 // minRareLiquidityWei (0.001 RARE)
-        );
+        factory = new LiquidFactory(admin, config.uniswapV4PoolManager, initGuardAddr, 60);
         LiquidGuard(initGuardAddr).setFactory(address(factory));
 
-        
         factory.setLiquidRegistry(address(1));
 
         // Set the implementation in the factory
@@ -131,9 +116,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         // Set base token (RARE) in factory
         factory.setBaseToken(address(mockRARE));
 
-        swapHelper = new LiquidPoolSwapHelper(
-            IPoolManager(config.uniswapV4PoolManager)
-        );
+        swapHelper = new LiquidPoolSwapHelper(IPoolManager(config.uniswapV4PoolManager));
 
         vm.stopPrank();
     }
@@ -163,12 +146,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         vm.startPrank(creator);
         IERC20(mockRARE).approve(address(factory), FACTORY_ETH_AMOUNT);
         address tokenAddress = factory.createLiquidTokenMultiCurve(
-            creator,
-            "ipfs://base-test",
-            "BASE_TEST",
-            "BT",
-            FACTORY_ETH_AMOUNT,
-            _defaultSingleCurve()
+            creator, "ipfs://base-test", "BASE_TEST", "BT", FACTORY_ETH_AMOUNT, _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -188,15 +166,12 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         assertEq(baseLiquid.tokenCreator(), creator);
 
         // Verify pool was created
-        assertTrue(
-            PoolId.unwrap(baseLiquid.poolId()) != bytes32(0),
-            "Base mainnet factory should create pool"
-        );
+        assertTrue(PoolId.unwrap(baseLiquid.poolId()) != bytes32(0), "Base mainnet factory should create pool");
 
         // Check pool initialization using V4 StateLibrary
         IPoolManager pm = IPoolManager(baseLiquid.poolManager());
         PoolId poolId = baseLiquid.poolId();
-        (uint160 sqrtPriceX96, , , ) = pm.getSlot0(poolId);
+        (uint160 sqrtPriceX96,,,) = pm.getSlot0(poolId);
         assertTrue(sqrtPriceX96 > 0, "Base mainnet pool should be initialized");
 
         // Check liquidity via multicurve position count (liquidity is split across ranges)
@@ -204,10 +179,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         uint128 liquidity = pm.getLiquidity(poolId);
 
         // CRITICAL TEST: Check that liquidity exists
-        assertTrue(
-            positions > 0 || liquidity > 0,
-            "Base mainnet LP position should have liquidity > 0"
-        );
+        assertTrue(positions > 0 || liquidity > 0, "Base mainnet LP position should have liquidity > 0");
 
         console.log("Pool positions:", positions);
         console.log("Pool's liquidity:", liquidity);
@@ -215,15 +187,9 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         // Verify creator got launch rewards
         uint256 creatorTokens = baseLiquid.balanceOf(creator);
         uint256 CREATOR_LAUNCH_REWARD = 100_000e18;
-        assertEq(
-            creatorTokens,
-            CREATOR_LAUNCH_REWARD,
-            "Creator should have only launch rewards"
-        );
+        assertEq(creatorTokens, CREATOR_LAUNCH_REWARD, "Creator should have only launch rewards");
 
-        console.log(
-            "=== BASE MAINNET FACTORY RARE LIQUIDITY CREATION TEST ==="
-        );
+        console.log("=== BASE MAINNET FACTORY RARE LIQUIDITY CREATION TEST ===");
         console.log("RARE sent to factory:", FACTORY_ETH_AMOUNT);
         console.log("Token address:", tokenAddress);
         console.log("Pool ID:");
@@ -248,12 +214,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         vm.startPrank(creator);
         IERC20(mockRARE).approve(address(factory), MIN_ETH_AMOUNT);
         address tokenAddress = factory.createLiquidTokenMultiCurve(
-            creator,
-            "ipfs://base-min-test",
-            "BASE_MIN",
-            "BM",
-            MIN_ETH_AMOUNT,
-            _defaultSingleCurve()
+            creator, "ipfs://base-min-test", "BASE_MIN", "BM", MIN_ETH_AMOUNT, _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -262,18 +223,14 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
 
         // Verify pool was created
         assertTrue(
-            PoolId.unwrap(baseLiquid.poolId()) != bytes32(0),
-            "Base mainnet should create pool with minimum RARE"
+            PoolId.unwrap(baseLiquid.poolId()) != bytes32(0), "Base mainnet should create pool with minimum RARE"
         );
 
         // Check pool initialization using V4 StateLibrary
         IPoolManager pm = IPoolManager(baseLiquid.poolManager());
         PoolId poolId = baseLiquid.poolId();
-        (uint160 sqrtPriceX96, , , ) = pm.getSlot0(poolId);
-        assertTrue(
-            sqrtPriceX96 > 0,
-            "Base mainnet pool should be initialized with minimum RARE"
-        );
+        (uint160 sqrtPriceX96,,,) = pm.getSlot0(poolId);
+        assertTrue(sqrtPriceX96 > 0, "Base mainnet pool should be initialized with minimum RARE");
 
         // Check liquidity via multicurve position count (liquidity is split across ranges)
         uint256 positions = baseLiquid.storedPositionsLength();
@@ -281,8 +238,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
 
         // Main assertion - even with minimum RARE on Base mainnet, there should be liquidity
         assertTrue(
-            positions > 0 || liquidity > 0,
-            "Base mainnet LP position should have liquidity > 0 even with minimum RARE"
+            positions > 0 || liquidity > 0, "Base mainnet LP position should have liquidity > 0 even with minimum RARE"
         );
 
         console.log("=== BASE MAINNET MINIMUM ETH TEST ===");
@@ -306,12 +262,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         address hooks = address(0);
 
         // Compute the PoolId from the actual pool parameters
-        bytes32 poolId = _computePoolId(
-            config.rareToken,
-            poolFee,
-            tickSpacing,
-            hooks
-        );
+        bytes32 poolId = _computePoolId(config.rareToken, poolFee, tickSpacing, hooks);
 
         console.log("Computed pool ID:", vm.toString(poolId));
 
@@ -348,38 +299,17 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         uint16 maxSlippageBPS = testBurner.maxSlippageBPS();
         bool enabled = testBurner.enabled();
 
-        assertEq(
-            rareToken,
-            config.rareToken,
-            "RARE token address should match"
-        );
+        assertEq(rareToken, config.rareToken, "RARE token address should match");
         assertTrue(enabled, "RARE burn should be enabled");
         assertEq(maxSlippageBPS, 0, "Max slippage should be 0% (no quoter)");
-        assertEq(
-            v4PoolManager,
-            config.uniswapV4PoolManager,
-            "V4 PoolManager should match"
-        );
+        assertEq(v4PoolManager, config.uniswapV4PoolManager, "V4 PoolManager should match");
         // Note: v4PoolId will be the COMPUTED value, not necessarily the hardcoded constant
-        bytes32 expectedPoolId = _computePoolId(
-            config.rareToken,
-            3000,
-            60,
-            address(0)
-        );
-        assertEq(
-            v4PoolId,
-            expectedPoolId,
-            "V4 pool ID should match computed value"
-        );
+        bytes32 expectedPoolId = _computePoolId(config.rareToken, 3000, 60, address(0));
+        assertEq(v4PoolId, expectedPoolId, "V4 pool ID should match computed value");
         assertEq(v4PoolFee, 3000, "Pool fee should be 0.3%");
         assertEq(v4TickSpacing, 60, "Tick spacing should be 60");
         assertEq(v4Hooks, address(0), "No hooks should be configured");
-        assertEq(
-            storedBurnAddress,
-            0x000000000000000000000000000000000000dEaD,
-            "Burn address should be 0xdEaD"
-        );
+        assertEq(storedBurnAddress, 0x000000000000000000000000000000000000dEaD, "Burn address should be 0xdEaD");
 
         console.log("RARE token:", config.rareToken);
         console.log("V4 PoolManager:", config.uniswapV4PoolManager);
@@ -392,14 +322,10 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         assertTrue(testBurner.isRAREBurnActive(), "RARE burn should be active");
         console.log("RARE burn is active: true");
         console.log("");
-        console.log(
-            "IMPORTANT: If the V4 pool uses NATIVE ETH instead of WETH:"
-        );
+        console.log("IMPORTANT: If the V4 pool uses NATIVE ETH instead of WETH:");
         console.log("- V4 represents native ETH as Currency.wrap(address(0))");
         console.log("- Our implementation uses WETH:", config.weth);
-        console.log(
-            "- This could cause PoolNotInitialized if pool expects native ETH"
-        );
+        console.log("- This could cause PoolNotInitialized if pool expects native ETH");
     }
 
     function testBaseMainnetTokenWithRAREBurn() public {
@@ -415,12 +341,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         vm.startPrank(creator);
         IERC20(mockRARE).approve(address(factory), 1 ether);
         address tokenAddress = factory.createLiquidTokenMultiCurve(
-            creator,
-            "ipfs://base-rare-test",
-            "BASE_RARE",
-            "BR",
-            1 ether,
-            _defaultSingleCurve()
+            creator, "ipfs://base-rare-test", "BASE_RARE", "BR", 1 ether, _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -457,13 +378,10 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         vm.stopPrank();
 
         // Verify burner was created and is active
-        assertTrue(
-            testBurner.isRAREBurnActive(),
-            "RARE burner should be active"
-        );
+        assertTrue(testBurner.isRAREBurnActive(), "RARE burner should be active");
 
         // Token created with RARE burn config; trading now via LiquidRouter
-        (uint256 quoteOut, ) = baseLiquid.quoteBuy(0.5 ether);
+        (uint256 quoteOut,) = baseLiquid.quoteBuy(0.5 ether);
         assertGt(quoteOut, 0, "Quote should work for created token");
     }
 
@@ -476,12 +394,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
         address token = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://test",
-            "Test Token",
-            "TEST",
-            0.1 ether,
-            _defaultSingleCurve()
+            tokenCreator, "ipfs://test", "Test Token", "TEST", 0.1 ether, _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -491,9 +404,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         uint256 buyAmount = 1 ether;
 
         // Get quote - now takes gross ETH and returns fee details
-        (uint256 liquidOut, uint160 sqrtPriceX96After) = liquid.quoteBuy(
-            buyAmount
-        );
+        (uint256 liquidOut, uint160 sqrtPriceX96After) = liquid.quoteBuy(buyAmount);
 
         console.log("=== Quote Buy Test ===");
         console.log("RARE in:", buyAmount);
@@ -510,19 +421,14 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
         address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://test",
-            "Test Token",
-            "TEST",
-            0.1 ether,
-            _defaultSingleCurve()
+            tokenCreator, "ipfs://test", "Test Token", "TEST", 0.1 ether, _defaultSingleCurve()
         );
         vm.stopPrank();
 
         LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
 
         uint256 rareIn = 1 ether;
-        (uint256 quotedOut, ) = token.quoteBuy(rareIn);
+        (uint256 quotedOut,) = token.quoteBuy(rareIn);
 
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(swapHelper), rareIn);
@@ -530,12 +436,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         vm.stopPrank();
 
         uint256 tolerance = (actualOut / 100) + 1;
-        assertApproxEqAbs(
-            quotedOut,
-            actualOut,
-            tolerance,
-            "Quote buy should match actual trade within tolerance"
-        );
+        assertApproxEqAbs(quotedOut, actualOut, tolerance, "Quote buy should match actual trade within tolerance");
     }
 
     function testQuoteSellMatchesActualTrade() public {
@@ -543,12 +444,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
         address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://test",
-            "Test Token",
-            "TEST",
-            0.1 ether,
-            _defaultSingleCurve()
+            tokenCreator, "ipfs://test", "Test Token", "TEST", 0.1 ether, _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -561,7 +457,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
         uint256 sellAmount = tokenAmount / 2;
 
-        (uint256 quotedRareOut, ) = token.quoteSell(sellAmount);
+        (uint256 quotedRareOut,) = token.quoteSell(sellAmount);
 
         vm.startPrank(tokenCreator);
         token.approve(address(swapHelper), sellAmount);
@@ -570,10 +466,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
 
         uint256 tolerance = (actualRareOut / 100) + 1;
         assertApproxEqAbs(
-            quotedRareOut,
-            actualRareOut,
-            tolerance,
-            "Quote sell should match actual trade within tolerance"
+            quotedRareOut, actualRareOut, tolerance, "Quote sell should match actual trade within tolerance"
         );
     }
 
@@ -582,12 +475,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
         factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://test",
-            "Test Token",
-            "TEST",
-            0.1 ether,
-            _defaultSingleCurve()
+            tokenCreator, "ipfs://test", "Test Token", "TEST", 0.1 ether, _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -612,12 +500,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
         address token = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://test",
-            "Test Token",
-            "TEST",
-            0.1 ether,
-            _defaultSingleCurve()
+            tokenCreator, "ipfs://test", "Test Token", "TEST", 0.1 ether, _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -637,7 +520,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
             uint256 buyAmount = amounts[i];
 
             // Returns: (liquidOut, sqrtPriceX96After)
-            (uint256 tokensOut, ) = liquid.quoteBuy(buyAmount);
+            (uint256 tokensOut,) = liquid.quoteBuy(buyAmount);
 
             console.log("ETH in (gross):", buyAmount, "Tokens out:", tokensOut);
             assertGt(tokensOut, 0, "Quote should return tokens");
@@ -649,12 +532,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
         address token = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://test",
-            "Test Token",
-            "TEST",
-            0.1 ether,
-            _defaultSingleCurve()
+            tokenCreator, "ipfs://test", "Test Token", "TEST", 0.1 ether, _defaultSingleCurve()
         );
         vm.stopPrank();
 
@@ -663,11 +541,11 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         // Get quote for small amount (gross ETH)
         uint256 smallAmount = 0.01 ether;
         // Returns: (liquidOut, sqrtPriceX96After)
-        (uint256 smallTokensOut, ) = liquid.quoteBuy(smallAmount);
+        (uint256 smallTokensOut,) = liquid.quoteBuy(smallAmount);
 
         // Get quote for large amount (gross RARE)
         uint256 largeAmount = 5 ether;
-        (uint256 largeTokensOut, ) = liquid.quoteBuy(largeAmount);
+        (uint256 largeTokensOut,) = liquid.quoteBuy(largeAmount);
 
         console.log("=== Price Impact Analysis ===");
         console.log("Small buy (0.01 ETH):", smallTokensOut, "tokens");
@@ -680,18 +558,10 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
 
         console.log("Small buy price per token:", smallPrice, "wei");
         console.log("Large buy price per token:", largePrice, "wei");
-        console.log(
-            "Price impact:",
-            ((largePrice - smallPrice) * 100) / smallPrice,
-            "%"
-        );
+        console.log("Price impact:", ((largePrice - smallPrice) * 100) / smallPrice, "%");
 
         // Larger buys should have worse price (higher price per token)
-        assertGt(
-            largePrice,
-            smallPrice,
-            "Larger buys should have price impact"
-        );
+        assertGt(largePrice, smallPrice, "Larger buys should have price impact");
     }
 
     function testQuoteRevertWithZeroAmount() public {
@@ -699,12 +569,7 @@ contract LiquidInstantBaseMainnetTest is Test, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
         address token = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://test",
-            "Test Token",
-            "TEST",
-            0.1 ether,
-            _defaultSingleCurve()
+            tokenCreator, "ipfs://test", "Test Token", "TEST", 0.1 ether, _defaultSingleCurve()
         );
         vm.stopPrank();
 

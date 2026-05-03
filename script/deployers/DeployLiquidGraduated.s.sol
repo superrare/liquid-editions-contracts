@@ -7,7 +7,7 @@ import {LiquidGraduated} from "liquid-editions/LiquidGraduated.sol";
 /**
  * @title DeployLiquidGraduated
  * @notice Library for deploying LiquidGraduated implementation (CCA auction launches)
- * @dev Used by DeployLiquidFactory when setting up factory for both instant and graduated tokens
+ * @dev Retained for legacy or standalone graduated deployments; current LiquidFactory deploys only multicurve.
  */
 library DeployLiquidGraduated {
     /**

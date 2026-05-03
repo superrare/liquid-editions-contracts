@@ -18,16 +18,13 @@ library DeployConfig {
     }
 
     struct FactoryConfig {
-        int24 lpTickLower;
-        int24 lpTickUpper;
         /// @notice Pool hooks address. When useSwapGuard or useLiquidGuard is true, resolved from the guard at deploy time.
         address poolHooks;
-        /// @notice When true, use LiquidSwapGuard for Instant/MultiCurve/Graduated pools (restricts swaps to LiquidRouter).
+        /// @notice When true, use LiquidSwapGuard for Liquid pools (restricts swaps to LiquidRouter).
         bool useSwapGuard;
         /// @notice When true, use LiquidGuard (hook-level fee skimming) instead of LiquidSwapGuard.
         bool useLiquidGuard;
         int24 poolTickSpacing;
-        uint256 minRareLiquidityWei;
         /// @notice Total token supply minted for each new token at launch (default 1_000_000e18).
         uint256 maxTotalSupplyWei;
         /// @notice Tokens transferred to creator at launch (default 100_000e18; 0 = no carve-out).
@@ -102,13 +99,10 @@ library DeployConfig {
                 enabled: true
             }),
             factory: FactoryConfig({
-                lpTickLower: -887220, // Full range: TickMath.MIN_TICK rounded to tickSpacing=60 used in LiquidInstant
-                lpTickUpper: 887220, // Full range: TickMath.MAX_TICK rounded to tickSpacing=60 used in LiquidInstant
                 poolHooks: address(0), // ignored when useSwapGuard/useLiquidGuard is true (resolved from guard at deploy time)
                 useSwapGuard: false, // legacy: use LiquidSwapGuard (restricts swaps to LiquidRouter)
                 useLiquidGuard: true, // use LiquidGuard (hook-level fee skimming, no caller restrictions)
                 poolTickSpacing: 60, // Price granularity (ticks must be multiples of this). Common values: 1, 10, 60, 200
-                minRareLiquidityWei: 0, // No RARE required — bonding curve is funded by LIQUID tokens, not creator RARE
                 maxTotalSupplyWei: 1_000_000e18, // 1M tokens minted per edition
                 creatorLaunchRewardWei: 0 // tokens sent to creator at launch
             }),
@@ -162,25 +156,20 @@ library DeployConfig {
     /// Trip wire: -27,000 to -18,720 (covers approach to current price)
     /// Distribution: -18,720 to -9,000 (current to ~7x)
     /// Steady: -9,000 to 60,000 (7x to ~400x, ~$500K FDV ceiling)
-    function getDefaultMultiCurveConfig()
-        internal
-        pure
-        returns (MultiCurveConfig memory)
-    {
-        return
-            MultiCurveConfig({
-                tripWireTickLower: -27000,
-                tripWireTickUpper: 0,
-                tripWirePositions: 2,
-                tripWireShares: 0.1e18,
-                distributionTickLower: 0,
-                distributionTickUpper: 28440,
-                distributionPositions: 3,
-                distributionShares: 0.4e18,
-                steadyStateTickLower: 28440,
-                steadyStateTickUpper: 60000,
-                steadyStatePositions: 5,
-                steadyStateShares: 0.50e18
-            });
+    function getDefaultMultiCurveConfig() internal pure returns (MultiCurveConfig memory) {
+        return MultiCurveConfig({
+            tripWireTickLower: -27000,
+            tripWireTickUpper: 0,
+            tripWirePositions: 2,
+            tripWireShares: 0.1e18,
+            distributionTickLower: 0,
+            distributionTickUpper: 28440,
+            distributionPositions: 3,
+            distributionShares: 0.4e18,
+            steadyStateTickLower: 28440,
+            steadyStateTickUpper: 60000,
+            steadyStatePositions: 5,
+            steadyStateShares: 0.5e18
+        });
     }
 }

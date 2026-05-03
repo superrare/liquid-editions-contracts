@@ -5,13 +5,11 @@ import {console} from "forge-std/console.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {DeployConfig} from "../config/DeployConfig.sol";
 import {NetworkConfig} from "../config/NetworkConfig.sol";
-import {DeployLiquid} from "./DeployLiquid.s.sol";
 import {DeployLiquidMultiCurve} from "./DeployLiquidMultiCurve.s.sol";
-import {DeployLiquidGraduated} from "./DeployLiquidGraduated.s.sol";
 
 /**
  * @title DeployLiquidFactory
- * @notice Library for deploying LiquidFactory and all implementation contracts
+ * @notice Library for deploying LiquidFactory and its factory-facing multicurve implementation
  * @dev This is a library-style deployer that can be used standalone or composed
  */
 library DeployLiquidFactory {
@@ -21,124 +19,82 @@ library DeployLiquidFactory {
         address rareToken;
     }
 
-    /// @notice All addresses produced by a full factory deployment
+    /// @notice Addresses produced by a factory deployment
     struct DeployResult {
         address factory;
-        address instantImplementation;
         address multiCurveImplementation;
-        address graduatedImplementation;
     }
 
     /**
-     * @notice Deploy LiquidFactory and all implementations
+     * @notice Deploy LiquidFactory and the multicurve implementation
      * @param admin Admin address for the factory
      * @param config Factory configuration from DeployConfig
      * @param network Network configuration from NetworkConfig
      */
-    function deploy(
-        address admin,
-        DeployConfig.FactoryConfig memory config,
-        NetworkConfig.Config memory network
-    ) internal returns (DeployResult memory result) {
+    function deploy(address admin, DeployConfig.FactoryConfig memory config, NetworkConfig.Config memory network)
+        internal
+        returns (DeployResult memory result)
+    {
         return deploy(
             admin,
             config,
-            NetworkAddresses({
-                uniswapV4PoolManager: network.uniswapV4PoolManager,
-                rareToken: network.rareToken
-            })
+            NetworkAddresses({uniswapV4PoolManager: network.uniswapV4PoolManager, rareToken: network.rareToken})
         );
     }
 
     /**
-     * @notice Deploy LiquidFactory and all implementations (minimal signature)
+     * @notice Deploy LiquidFactory and the multicurve implementation (minimal signature)
      * @param admin Admin address for the factory
      * @param config Factory configuration from DeployConfig
      * @param network Minimal network addresses
      */
-    function deploy(
-        address admin,
-        DeployConfig.FactoryConfig memory config,
-        NetworkAddresses memory network
-    ) internal returns (DeployResult memory result) {
+    function deploy(address admin, DeployConfig.FactoryConfig memory config, NetworkAddresses memory network)
+        internal
+        returns (DeployResult memory result)
+    {
         console.log("=== Deploying LiquidFactory ===");
 
-        require(
-            network.uniswapV4PoolManager != address(0),
-            "V4 PoolManager not configured for this network"
-        );
+        require(network.uniswapV4PoolManager != address(0), "V4 PoolManager not configured for this network");
 
-        // Deploy all implementations
-        result.instantImplementation = DeployLiquid.deploy();
+        // Deploy factory-facing implementation
         result.multiCurveImplementation = DeployLiquidMultiCurve.deploy();
-        result.graduatedImplementation = DeployLiquidGraduated.deploy(false);
 
         // Deploy factory
         result.factory = _deployFactory(admin, config, network);
 
         // Register implementations and base token
-        _configureFactory(
-            result.factory,
-            result.instantImplementation,
-            result.multiCurveImplementation,
-            result.graduatedImplementation,
-            network.rareToken
-        );
+        _configureFactory(result.factory, result.multiCurveImplementation, network.rareToken);
 
         // Apply supply params if they differ from the hardcoded storage defaults
         configureSupplyParams(result.factory, config);
     }
 
-    function _deployFactory(
-        address admin,
-        DeployConfig.FactoryConfig memory config,
-        NetworkAddresses memory network
-    ) private returns (address factory) {
+    function _deployFactory(address admin, DeployConfig.FactoryConfig memory config, NetworkAddresses memory network)
+        private
+        returns (address factory)
+    {
         console.log("Deploying LiquidFactory...");
         console.log("Configuration:");
         console.log("  Admin:");
         console.logAddress(admin);
-        console.log("  LP Tick Lower:");
-        console.logInt(config.lpTickLower);
-        console.log("  LP Tick Upper:");
-        console.logInt(config.lpTickUpper);
         console.log("  Pool Hooks:");
         console.logAddress(config.poolHooks);
         console.log("  Pool Tick Spacing:");
         console.logInt(config.poolTickSpacing);
-        console.log("  Min RARE Liquidity Wei:");
-        console.logUint(config.minRareLiquidityWei);
 
-        LiquidFactory factoryContract = new LiquidFactory(
-            admin,
-            network.uniswapV4PoolManager,
-            config.lpTickLower,
-            config.lpTickUpper,
-            config.poolHooks,
-            config.poolTickSpacing,
-            config.minRareLiquidityWei
-        );
+        LiquidFactory factoryContract =
+            new LiquidFactory(admin, network.uniswapV4PoolManager, config.poolHooks, config.poolTickSpacing);
 
         factory = address(factoryContract);
         console.log("LiquidFactory deployed at:");
         console.logAddress(factory);
     }
 
-    function _configureFactory(
-        address factory,
-        address instantImpl,
-        address multiCurveImpl,
-        address graduatedImpl,
-        address rareToken
-    ) private {
+    function _configureFactory(address factory, address multiCurveImpl, address rareToken) private {
         LiquidFactory factoryContract = LiquidFactory(factory);
 
-        console.log("Setting LiquidInstant implementation in factory...");
-        factoryContract.setLiquidInstantImplementation(instantImpl);
         console.log("Setting LiquidMultiCurve implementation in factory...");
         factoryContract.setLiquidMultiCurveImplementation(multiCurveImpl);
-        console.log("Setting LiquidGraduated implementation in factory...");
-        factoryContract.setLiquidGraduatedImplementation(graduatedImpl);
 
         if (rareToken != address(0)) {
             console.log("Setting base token (RARE)...");
@@ -148,10 +104,7 @@ library DeployLiquidFactory {
         }
     }
 
-    function configureSupplyParams(
-        address factory,
-        DeployConfig.FactoryConfig memory config
-    ) internal {
+    function configureSupplyParams(address factory, DeployConfig.FactoryConfig memory config) internal {
         LiquidFactory factoryContract = LiquidFactory(factory);
 
         uint256 defaultMaxSupply = 1_000_000e18;

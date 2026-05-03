@@ -22,19 +22,18 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  * 3. Registers the lens as the render contract on the Liquid token
  *
  * IMPORTANT REQUIREMENTS:
- * - The deployer must have RARE tokens >= INITIAL_RARE_LIQUIDITY
- * - The deployer must approve the factory to spend RARE tokens
+ * - If INITIAL_RARE_LIQUIDITY is non-zero, the deployer must have and approve that much RARE.
  * - The deployer must be the token creator (or have permission to set render contract)
  *
  * Environment Variables Required:
- * - DEPLOYER_PRIVATE_KEY: Private key for the deployer (must have RARE tokens and be token creator)
+ * - DEPLOYER_PRIVATE_KEY: Private key for the deployer
  * - TOKEN_CREATOR: Address that will receive creator fees and launch reward (must match deployer for render registration)
  * - TOKEN_URI: Metadata URI for the token
  * - TOKEN_NAME: Name of the token
  * - TOKEN_SYMBOL: Symbol of the token
  *
  * Environment Variables Optional:
- * - INITIAL_RARE_LIQUIDITY: Amount of RARE tokens for initial liquidity (default: 0.001 ether)
+ * - INITIAL_RARE_LIQUIDITY: Optional RARE for head liquidity beyond the curve range (default: 0.001 ether)
  * - MAX_TOTAL_SUPPLY: Optional custom token supply for this launch (default: factory maxTotalSupply)
  * - FACTORY_ADDRESS: Factory address (defaults to NetworkConfig)
  * - ROUTER_ADDRESS: Router address for token registration (defaults to NetworkConfig)
@@ -158,7 +157,7 @@ contract CreateTokenWithLens is Script {
         console.log("Token name:", tokenName);
         console.log("Token symbol:", tokenSymbol);
         console.log("Token URI:", tokenURI);
-        console.log("Initial RARE liquidity:");
+        console.log("Optional RARE liquidity:");
         console.logUint(initialRareLiquidity);
         if (hasCustomMaxTotalSupply) {
             console.log("Custom max total supply:");
@@ -197,7 +196,7 @@ contract CreateTokenWithLens is Script {
         uint256 deployerRareBalance = IERC20(baseToken).balanceOf(deployerAddress);
         console.log("Deployer RARE balance:");
         console.logUint(deployerRareBalance);
-        console.log("Required RARE liquidity:");
+        console.log("Optional RARE liquidity:");
         console.logUint(initialRareLiquidity);
 
         if (deployerRareBalance < initialRareLiquidity) {
@@ -228,8 +227,7 @@ contract CreateTokenWithLens is Script {
 
         // Build default single-curve config
         Curve[] memory curves = new Curve[](1);
-        curves[0] =
-            Curve({tickLower: factory.lpTickLower(), tickUpper: factory.lpTickUpper(), numPositions: 1, shares: 1e18});
+        curves[0] = Curve({tickLower: -180, tickUpper: 120000, numPositions: 1, shares: 1e18});
 
         // Create the token
         console.log("Creating Liquid token...");

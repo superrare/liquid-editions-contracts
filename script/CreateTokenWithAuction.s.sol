@@ -7,9 +7,9 @@ import {NetworkConfig} from "./config/NetworkConfig.sol";
 import {MigratorParameters} from "liquid-editions/types/MigratorParameters.sol";
 import {ILiquidGraduated} from "liquid-editions/interfaces/ILiquidGraduated.sol";
 
-/// @notice Interface for factory with CCA auction support (createLiquidTokenWithAuction)
-/// @dev Use this so the script compiles even when LiquidFactory only has createLiquidTokenMultiCurve.
-///      Runtime: reverts if the deployed factory does not implement this function.
+/// @notice Legacy interface for factories that still expose CCA auction support.
+/// @dev Current LiquidFactory no longer implements this surface. This script is retained only for
+///      legacy deployments and will revert at runtime against the current factory.
 interface IFactoryWithAuction {
     function createLiquidTokenWithAuction(
         address _creator,
@@ -31,13 +31,10 @@ interface IFactoryWithAuction {
 
 /// @notice Interface for FullRangeLBPStrategyFactory (salt mining validation)
 interface IStrategyFactory {
-    function getAddress(
-        address token,
-        uint256 amount,
-        bytes calldata configData,
-        bytes32 salt,
-        address sender
-    ) external view returns (address);
+    function getAddress(address token, uint256 amount, bytes calldata configData, bytes32 salt, address sender)
+        external
+        view
+        returns (address);
 }
 
 // CCA auction parameters struct (must match IContinuousClearingAuction.AuctionParameters)
@@ -57,11 +54,10 @@ struct AuctionParameters {
 
 /**
  * @title CreateTokenWithAuction
- * @notice Creates a LiquidGraduated token (CCA auction launch) via the factory
+ * @notice Legacy script for factories that still expose CCA auction launches
  *
  * Prerequisites:
- * - LiquidFactory deployed with liquidGraduatedImplementation, ccaFactory, lbpStrategyFactory,
- *   and protocolFeeRecipient set (see DEPLOYMENT_GUIDE.md CCA section)
+ * - A legacy LiquidFactory deployment with the CCA factory surface still present and configured
  * - Target chain has ccaFactory in NetworkConfig (e.g. mainnet)
  *
  * Environment Variables Required:
@@ -123,18 +119,9 @@ contract CreateTokenWithAuction is Script {
         } catch {
             factoryAddress = config.liquid.factory;
         }
-        require(
-            factoryAddress != address(0),
-            "FACTORY_ADDRESS or NetworkConfig.liquidFactory required"
-        );
-        require(
-            config.ccaFactory != address(0),
-            "Chain has no ccaFactory in NetworkConfig"
-        );
-        require(
-            config.rareToken != address(0),
-            "Chain has no rareToken in NetworkConfig (auction currency)"
-        );
+        require(factoryAddress != address(0), "FACTORY_ADDRESS or NetworkConfig.liquidFactory required");
+        require(config.ccaFactory != address(0), "Chain has no ccaFactory in NetworkConfig");
+        require(config.rareToken != address(0), "Chain has no rareToken in NetworkConfig (auction currency)");
 
         uint64 startBlock = uint64(block.number);
         try vm.envUint("AUCTION_START_BLOCK") returns (uint256 b) {
@@ -142,10 +129,7 @@ contract CreateTokenWithAuction is Script {
             // forge-lint: disable-next-line(unsafe-typecast) -- b validated <= uint64.max above
             startBlock = uint64(b);
         } catch {}
-        uint256 durationBlocks = vm.envOr(
-            "AUCTION_DURATION_BLOCKS",
-            uint256(10000)
-        );
+        uint256 durationBlocks = vm.envOr("AUCTION_DURATION_BLOCKS", uint256(10000));
         // forge-lint: disable-next-line(unsafe-typecast) -- startBlock + durationBlocks fits uint64
         uint64 endBlock = uint64(startBlock + durationBlocks);
         uint64 claimBlock = endBlock + 1;
@@ -165,10 +149,7 @@ contract CreateTokenWithAuction is Script {
         uint24 stepMps = uint24(mpsConstant / durationBlocks);
         // forge-lint: disable-next-line(unsafe-typecast) -- durationBlocks fits uint40
         uint40 stepBlockDelta = uint40(durationBlocks);
-        bytes memory auctionStepsData = abi.encodePacked(
-            stepMps,
-            stepBlockDelta
-        );
+        bytes memory auctionStepsData = abi.encodePacked(stepMps, stepBlockDelta);
 
         // CCA TickStorage: floorPrice must be != 0 and >= type(uint32).max + 1; and at a tick boundary (multiple of tickSpacing)
         uint256 tickSpacing = 1e18;
@@ -192,14 +173,7 @@ contract CreateTokenWithAuction is Script {
         // Mine salt via FFI when not provided (requires --ffi)
         if (!saltProvided) {
             address deployer = vm.addr(deployerPrivateKey);
-            salt = _mineSalt(
-                factoryAddress,
-                deployer,
-                auctionSupply,
-                params,
-                config,
-                chainId
-            );
+            salt = _mineSalt(factoryAddress, deployer, auctionSupply, params, config, chainId);
             console.log("Mined salt:", vm.toString(salt));
         }
 
@@ -213,13 +187,7 @@ contract CreateTokenWithAuction is Script {
         vm.startBroadcast(deployerPrivateKey);
         (address token, address auction) = IFactoryWithAuction(factoryAddress)
             .createLiquidTokenWithAuction(
-                tokenCreator,
-                tokenURI,
-                tokenName,
-                tokenSymbol,
-                auctionSupply,
-                auctionConfigData,
-                salt
+                tokenCreator, tokenURI, tokenName, tokenSymbol, auctionSupply, auctionConfigData, salt
             );
         vm.stopBroadcast();
 
@@ -242,18 +210,18 @@ contract CreateTokenWithAuction is Script {
 
         require(
             factory.lbpStrategyFactory() != address(0),
-            "Factory not configured for Graduated tokens. Run setLbpStrategyFactory, setCcaFactory, setProtocolFeeRecipient on the factory first."
+            "Legacy factory not configured for Graduated tokens. Run setLbpStrategyFactory, setCcaFactory, setProtocolFeeRecipient first."
         );
         require(
             factory.ccaFactory() != address(0),
-            "Factory not configured for Graduated tokens. Run setCcaFactory on the factory first."
+            "Legacy factory not configured for Graduated tokens. Run setCcaFactory first."
         );
         require(
             factory.protocolFeeRecipient() != address(0),
-            "Factory not configured for Graduated tokens. Run setProtocolFeeRecipient on the factory first."
+            "Legacy factory not configured for Graduated tokens. Run setProtocolFeeRecipient first."
         );
 
-        // Apply factory overrides (must match LiquidFactory.createLiquidTokenWithAuction)
+        // Apply legacy factory overrides (must match createLiquidTokenWithAuction on old deployments).
         params.fundsRecipient = address(1);
         if (params.tokensRecipient == address(0)) {
             params.tokensRecipient = factory.protocolFeeRecipient();
@@ -325,17 +293,11 @@ contract CreateTokenWithAuction is Script {
         // Verify mined salt produces valid hook
         address predictedToken = factory.predictGraduatedTokenAddress(validSalt, deployer);
         bytes32 effectiveSalt = keccak256(abi.encode(deployer, validSalt));
-        address predictedHook = IStrategyFactory(factory.lbpStrategyFactory()).getAddress(
-            predictedToken,
-            auctionSupply,
-            configData,
-            effectiveSalt,
-            factoryAddress
-        );
+        address predictedHook = IStrategyFactory(factory.lbpStrategyFactory())
+            .getAddress(predictedToken, auctionSupply, configData, effectiveSalt, factoryAddress);
         uint160 requiredFlags = uint160(1 << 13);
         require(
-            (uint160(predictedHook) & ((1 << 14) - 1)) == requiredFlags,
-            "Mined salt did not produce valid hook address"
+            (uint160(predictedHook) & ((1 << 14) - 1)) == requiredFlags, "Mined salt did not produce valid hook address"
         );
 
         return validSalt;

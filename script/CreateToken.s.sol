@@ -14,23 +14,21 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  * @dev
  *
  * IMPORTANT REQUIREMENTS:
- * - The deployer must have RARE tokens >= INITIAL_RARE_LIQUIDITY
- * - The deployer must approve the factory to spend RARE tokens
+ * - If INITIAL_RARE_LIQUIDITY is non-zero, the deployer must have and approve that much RARE.
  *
  * NOTE: Token creation is permissionless - anyone can create tokens.
- * The deployer calls createLiquidToken, so they need the RARE tokens.
- * If tokenCreator is different from deployer, ensure deployer has RARE tokens
- * (e.g., tokenCreator transfers RARE to deployer first).
+ * The deployer calls createLiquidTokenMultiCurve, so optional RARE is pulled from the deployer.
+ * If tokenCreator is different from deployer, ensure the deployer has any RARE needed.
  *
  * Environment Variables Required:
- * - DEPLOYER_PRIVATE_KEY: Private key for the deployer (must have RARE tokens)
+ * - DEPLOYER_PRIVATE_KEY: Private key for the deployer
  * - TOKEN_CREATOR: Address that will receive creator fees and launch reward
  * - TOKEN_URI: Metadata URI for the token
  * - TOKEN_NAME: Name of the token
  * - TOKEN_SYMBOL: Symbol of the token
  *
  * Environment Variables Optional:
- * - INITIAL_RARE_LIQUIDITY: Amount of RARE tokens for initial liquidity (default: 0.001 ether)
+ * - INITIAL_RARE_LIQUIDITY: Optional RARE for head liquidity beyond the curve range (default: 0.001 ether)
  * - MAX_TOTAL_SUPPLY: Optional custom token supply for this launch (default: factory maxTotalSupply)
  * - FACTORY_ADDRESS: Factory address (defaults to NetworkConfig)
  * - ROUTER_ADDRESS: Router address for token registration (defaults to NetworkConfig)
@@ -41,7 +39,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  *
  * Note: The --slow flag is recommended to ensure transactions are sent sequentially
  * and avoid nonce conflicts. This script sends two transactions:
- *   1. Token creation (createLiquidToken)
+ *   1. Token creation (createLiquidTokenMultiCurve)
  *   2. Router registration (registerToken)
  *
  * If you encounter "exceeds block gas limit" errors, try:
@@ -59,7 +57,7 @@ contract CreateToken is Script {
         address tokenCreator = vm.envAddress("TOKEN_CREATOR");
 
         // NOTE: The deployer (from DEPLOYER_PRIVATE_KEY) must have:
-        // 1. RARE tokens for initial liquidity (must approve factory)
+        // 1. Optional RARE for head liquidity (must approve factory when non-zero)
         string memory tokenURI = vm.envString("TOKEN_URI");
         string memory tokenName = vm.envString("TOKEN_NAME");
         string memory tokenSymbol = vm.envString("TOKEN_SYMBOL");
@@ -121,7 +119,7 @@ contract CreateToken is Script {
         console.log("Token name:", tokenName);
         console.log("Token symbol:", tokenSymbol);
         console.log("Token URI:", tokenURI);
-        console.log("Initial RARE liquidity:");
+        console.log("Optional RARE liquidity:");
         console.logUint(initialRareLiquidity);
         if (hasCustomMaxTotalSupply) {
             console.log("Custom max total supply:");
@@ -147,10 +145,8 @@ contract CreateToken is Script {
         address baseToken = factory.baseToken();
         require(baseToken != address(0), "Base token not set in factory");
 
-        // IMPORTANT: The deployer (msg.sender) needs to have RARE tokens approved
-        // The deployer calls createLiquidToken, and the function does transferFrom(msg.sender, ...)
-        // So deployer must have RARE tokens and approve the factory
-        // NOTE: If tokenCreator is different from deployer, ensure deployer has RARE tokens
+        // Optional RARE is pulled from msg.sender, so the deployer needs balance and approval
+        // only when initialRareLiquidity is non-zero.
         uint256 currentAllowance = IERC20(baseToken).allowance(deployerAddress, factoryAddress);
         if (currentAllowance < initialRareLiquidity) {
             console.log("Approving factory to transfer RARE tokens from deployer...");
@@ -161,14 +157,14 @@ contract CreateToken is Script {
             console.log("Approval already sufficient, skipping approval step");
         }
 
-        // Create the token (permissionless - deployer just needs RARE tokens)
+        // Create the token (permissionless; optional RARE is supplied by the deployer)
         console.log("Creating Liquid token...");
 
         // Check deployer has sufficient RARE balance
         uint256 deployerRareBalance = IERC20(baseToken).balanceOf(deployerAddress);
         console.log("Deployer RARE balance:");
         console.logUint(deployerRareBalance);
-        console.log("Required RARE liquidity:");
+        console.log("Optional RARE liquidity:");
         console.logUint(initialRareLiquidity);
 
         if (deployerRareBalance < initialRareLiquidity) {
@@ -199,8 +195,7 @@ contract CreateToken is Script {
 
         // Build default single-curve config (equivalent to former LiquidMultiCurve)
         Curve[] memory curves = new Curve[](1);
-        curves[0] =
-            Curve({tickLower: factory.lpTickLower(), tickUpper: factory.lpTickUpper(), numPositions: 1, shares: 1e18});
+        curves[0] = Curve({tickLower: -180, tickUpper: 120000, numPositions: 1, shares: 1e18});
 
         address newToken = hasCustomMaxTotalSupply
             ? factory.createLiquidTokenMultiCurveWithSupply(

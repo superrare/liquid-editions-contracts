@@ -29,8 +29,7 @@ contract LiquidMultiCurveBehaviorTest is LiquidTokenBehaviorBase, InitGuardTestH
     uint256 constant LIQUIDITY = 250e18;
 
     function _defaultCurves() internal pure returns (Curve[] memory) {
-        DeployConfig.MultiCurveConfig memory cfg = DeployConfig
-            .getDefaultMultiCurveConfig();
+        DeployConfig.MultiCurveConfig memory cfg = DeployConfig.getDefaultMultiCurveConfig();
 
         Curve[] memory curves = new Curve[](3);
         curves[0] = Curve({
@@ -54,11 +53,7 @@ contract LiquidMultiCurveBehaviorTest is LiquidTokenBehaviorBase, InitGuardTestH
         return curves;
     }
 
-    function _deployFactory()
-        internal
-        override
-        returns (LiquidFactory, MockRARE)
-    {
+    function _deployFactory() internal override returns (LiquidFactory, MockRARE) {
         string memory forkUrl = ForkUrlResolver.requireForkUrl(vm);
         vm.createSelectFork(forkUrl);
         config = NetworkConfig.getConfig(block.chainid);
@@ -68,15 +63,7 @@ contract LiquidMultiCurveBehaviorTest is LiquidTokenBehaviorBase, InitGuardTestH
 
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         vm.startPrank(admin);
-        LiquidFactory f = new LiquidFactory(
-            admin,
-            config.uniswapV4PoolManager,
-            -180,
-            120000,
-            initGuardAddr,
-            60,
-            LIQUIDITY
-        );
+        LiquidFactory f = new LiquidFactory(admin, config.uniswapV4PoolManager, initGuardAddr, 60);
         LiquidGuard(initGuardAddr).setFactory(address(f));
         f.setLiquidRegistry(address(1));
         LiquidMultiCurve impl = new LiquidMultiCurve();
@@ -92,14 +79,8 @@ contract LiquidMultiCurveBehaviorTest is LiquidTokenBehaviorBase, InitGuardTestH
 
         vm.startPrank(tokenCreator);
         mockRARE.approve(address(factory), LIQUIDITY);
-        address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            TOKEN_URI,
-            TOKEN_NAME,
-            TOKEN_SYMBOL,
-            LIQUIDITY,
-            curves
-        );
+        address tokenAddr =
+            factory.createLiquidTokenMultiCurve(tokenCreator, TOKEN_URI, TOKEN_NAME, TOKEN_SYMBOL, LIQUIDITY, curves);
         vm.stopPrank();
         return ILiquid(tokenAddr);
     }

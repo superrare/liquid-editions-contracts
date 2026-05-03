@@ -39,8 +39,7 @@ contract LiquidMultiCurveSnipingTest is Test, InitGuardTestHelper {
     uint256 constant MULTICURVE_LIQUIDITY = 2000e18;
 
     function _defaultCurves() internal pure returns (Curve[] memory) {
-        DeployConfig.MultiCurveConfig memory cfg =
-            DeployConfig.getDefaultMultiCurveConfig();
+        DeployConfig.MultiCurveConfig memory cfg = DeployConfig.getDefaultMultiCurveConfig();
 
         Curve[] memory curves = new Curve[](3);
         curves[0] = Curve({
@@ -80,17 +79,9 @@ contract LiquidMultiCurveSnipingTest is Test, InitGuardTestHelper {
 
         vm.startPrank(admin);
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
-        factory = new LiquidFactory(
-            admin,
-            config.uniswapV4PoolManager,
-            -180,
-            120000,
-            initGuardAddr,
-            60,
-            LIQUIDITY
-        );
+        factory = new LiquidFactory(admin, config.uniswapV4PoolManager, initGuardAddr, 60);
         LiquidGuard(initGuardAddr).setFactory(address(factory));
-                factory.setLiquidRegistry(address(1));
+        factory.setLiquidRegistry(address(1));
         instantImpl = new LiquidMultiCurve();
         multiCurveImpl = new LiquidMultiCurve();
         factory.setLiquidMultiCurveImplementation(address(instantImpl));
@@ -105,28 +96,16 @@ contract LiquidMultiCurveSnipingTest is Test, InitGuardTestHelper {
 
         vm.startPrank(tokenCreator);
         mockRARE.approve(address(factory), LIQUIDITY + MULTICURVE_LIQUIDITY);
-        factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://dummy",
-            "Dummy",
-            "DMY",
-            LIQUIDITY,
-            _defaultCurves()
-        );
+        factory.createLiquidTokenMultiCurve(tokenCreator, "ipfs://dummy", "Dummy", "DMY", LIQUIDITY, _defaultCurves());
         mockRARE.approve(address(factory), MULTICURVE_LIQUIDITY);
         address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://tripwire",
-            "Tripwire",
-            "TRP",
-            MULTICURVE_LIQUIDITY,
-            curves
+            tokenCreator, "ipfs://tripwire", "Tripwire", "TRP", MULTICURVE_LIQUIDITY, curves
         );
         vm.stopPrank();
 
         LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
 
-        (uint256 priceBeforeRarePerToken, ) = token.getCurrentPrice();
+        (uint256 priceBeforeRarePerToken,) = token.getCurrentPrice();
 
         uint256 largeBuy = 100e18;
         vm.startPrank(sniper);
@@ -134,11 +113,8 @@ contract LiquidMultiCurveSnipingTest is Test, InitGuardTestHelper {
         swapHelper.buy(address(token), largeBuy, sniper);
         vm.stopPrank();
 
-        (uint256 priceAfterRarePerToken, ) = token.getCurrentPrice();
+        (uint256 priceAfterRarePerToken,) = token.getCurrentPrice();
 
-        assertTrue(
-            priceAfterRarePerToken > priceBeforeRarePerToken,
-            "Large buy should increase price (trip wire)"
-        );
+        assertTrue(priceAfterRarePerToken > priceBeforeRarePerToken, "Large buy should increase price (trip wire)");
     }
 }

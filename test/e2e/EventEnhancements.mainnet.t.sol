@@ -22,7 +22,11 @@ import {Curve} from "doppler/libraries/Multicurve.sol";
 contract MockPoolManager {
     function unlock(
         bytes calldata /* data */
-    ) external pure returns (bytes memory) {
+    )
+        external
+        pure
+        returns (bytes memory)
+    {
         return "";
     }
 }
@@ -53,30 +57,21 @@ contract EventEnhancementsMainnetTest is Test, InitGuardTestHelper {
     int24 constant LP_TICK_UPPER = 120000; // Starting point - cheap tokens
 
     event BurnerDeposit(
-        address indexed liquidToken,
-        address indexed burnerAccumulator,
-        uint256 ethAmount,
-        bool depositSuccess
+        address indexed liquidToken, address indexed burnerAccumulator, uint256 ethAmount, bool depositSuccess
     );
 
-    function _defaultSingleCurve() internal view returns (Curve[] memory) {
+    function _defaultSingleCurve() internal pure returns (Curve[] memory) {
         Curve[] memory curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            numPositions: 1,
-            shares: 1e18
-        });
+        curves[0] = Curve({tickLower: LP_TICK_LOWER, tickUpper: LP_TICK_UPPER, numPositions: 1, shares: 1e18});
         return curves;
     }
 
     // Helper function to compute correct PoolId from parameters
-    function _computePoolId(
-        address rareToken,
-        uint24 fee,
-        int24 tickSpacing,
-        address hooks
-    ) internal pure returns (bytes32) {
+    function _computePoolId(address rareToken, uint24 fee, int24 tickSpacing, address hooks)
+        internal
+        pure
+        returns (bytes32)
+    {
         Currency ethC = Currency.wrap(address(0));
         Currency rareC = Currency.wrap(rareToken);
         bool ethIs0 = uint160(address(0)) < uint160(rareToken);
@@ -143,15 +138,7 @@ contract EventEnhancementsMainnetTest is Test, InitGuardTestHelper {
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
 
         // Deploy factory (fee config moved to LiquidRouter)
-        factory = new LiquidFactory(
-            admin,
-            config.uniswapV4PoolManager, // V4 PoolManager
-            LP_TICK_LOWER,
-            LP_TICK_UPPER,
-            initGuardAddr, // poolHooks
-            60, // poolTickSpacing (standard for 0.3% fee tier)
-            1e15 // minRareLiquidityWei (0.001 RARE)
-        );
+        factory = new LiquidFactory(admin, config.uniswapV4PoolManager, initGuardAddr, 60);
         LiquidGuard(initGuardAddr).setFactory(address(factory));
         factory.setLiquidRegistry(address(1));
 
@@ -173,15 +160,7 @@ contract EventEnhancementsMainnetTest is Test, InitGuardTestHelper {
         // Deploy new factory and verify config values are set correctly
         vm.startPrank(admin);
 
-        new LiquidFactory(
-            admin,
-            config.uniswapV4PoolManager, // V4 PoolManager
-            LP_TICK_LOWER,
-            LP_TICK_UPPER,
-            address(0), // poolHooks (no hooks)
-            60, // poolTickSpacing (standard for 0.3% fee tier)
-            1e15 // minRareLiquidityWei (0.001 RARE)
-        );
+        new LiquidFactory(admin, config.uniswapV4PoolManager, address(0), 60);
 
         vm.stopPrank();
     }
@@ -203,17 +182,12 @@ contract EventEnhancementsMainnetTest is Test, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), initialRareLiquidity);
         address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://test3",
-            "Test Token 3",
-            "TEST3",
-            initialRareLiquidity,
-            _defaultSingleCurve()
+            tokenCreator, "ipfs://test3", "Test Token 3", "TEST3", initialRareLiquidity, _defaultSingleCurve()
         );
         vm.stopPrank();
 
         LiquidMultiCurve createdToken = LiquidMultiCurve(payable(tokenAddr));
-        (uint256 quoteOut, ) = createdToken.quoteBuy(0.5 ether);
+        (uint256 quoteOut,) = createdToken.quoteBuy(0.5 ether);
         assertGt(quoteOut, 0, "Quote should work after config change");
     }
 }

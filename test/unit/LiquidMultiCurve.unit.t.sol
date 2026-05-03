@@ -40,7 +40,7 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
         poolManager = new MockV4PoolManager();
         baseToken = new MockERC20();
         address initGuardAddr = _deployInitGuardForTest(address(poolManager), admin);
-        factory = new LiquidFactory(admin, address(poolManager), -180, 120000, initGuardAddr, 60, MIN_RARE);
+        factory = new LiquidFactory(admin, address(poolManager), initGuardAddr, 60);
         vm.prank(admin);
         LiquidGuard(initGuardAddr).setFactory(address(factory));
 
@@ -135,8 +135,7 @@ contract LiquidMultiCurveUnitTest is Test, InitGuardTestHelper {
 
     function test_Initialize_Revert_ImplementationNotSet() public {
         address newInitGuardAddr = _deployInitGuardForTest(address(poolManager), admin);
-        LiquidFactory newFactory =
-            new LiquidFactory(admin, address(poolManager), -180, 120000, newInitGuardAddr, 60, MIN_RARE);
+        LiquidFactory newFactory = new LiquidFactory(admin, address(poolManager), newInitGuardAddr, 60);
         vm.prank(admin);
         LiquidGuard(newInitGuardAddr).setFactory(address(newFactory));
         vm.startPrank(admin);

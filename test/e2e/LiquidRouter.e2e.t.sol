@@ -24,15 +24,8 @@ import {ActionConstants} from "v4-periphery/libraries/ActionConstants.sol";
 contract AnvilForkIntegrationTest is AnvilForkTestBase {
     using StateLibrary for IPoolManager;
 
-    function _assertNoNativeEthRetention(
-        uint256 routerEthBefore,
-        uint256 universalRouterEthBefore
-    ) internal view {
-        assertEq(
-            address(router).balance,
-            routerEthBefore,
-            "LiquidRouter should not retain native ETH"
-        );
+    function _assertNoNativeEthRetention(uint256 routerEthBefore, uint256 universalRouterEthBefore) internal view {
+        assertEq(address(router).balance, routerEthBefore, "LiquidRouter should not retain native ETH");
         assertEq(
             router.universalRouter().balance,
             universalRouterEthBefore,
@@ -40,14 +33,9 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         );
     }
 
-    function _assertNoWethRetention(
-        uint256 routerWethBefore,
-        uint256 universalRouterWethBefore
-    ) internal view {
+    function _assertNoWethRetention(uint256 routerWethBefore, uint256 universalRouterWethBefore) internal view {
         assertEq(
-            IERC20(config.weth).balanceOf(address(router)),
-            routerWethBefore,
-            "LiquidRouter should not retain WETH"
+            IERC20(config.weth).balanceOf(address(router)), routerWethBefore, "LiquidRouter should not retain WETH"
         );
         assertEq(
             IERC20(config.weth).balanceOf(router.universalRouter()),
@@ -61,31 +49,21 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         factory.setBaseToken(config.weth);
 
         Curve[] memory curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            numPositions: 1,
-            shares: 1e18
-        });
+        curves[0] = Curve({tickLower: -180, tickUpper: 120000, numPositions: 1, shares: 1e18});
 
         vm.prank(tokenCreator);
         address tokenAddr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://anvil-fork-weth-base",
-            "Anvil Fork WETH Base Token",
-            "AFWETH",
-            0,
-            curves
+            tokenCreator, "ipfs://anvil-fork-weth-base", "Anvil Fork WETH Base Token", "AFWETH", 0, curves
         );
 
         wethBaseToken = LiquidMultiCurve(payable(tokenAddr));
     }
 
-    function _encodeBuyRouteWethBase(
-        address liquidTokenAddress,
-        uint256 ethForSwap,
-        uint256 minTokensOut
-    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
+    function _encodeBuyRouteWethBase(address liquidTokenAddress, uint256 ethForSwap, uint256 minTokensOut)
+        internal
+        view
+        returns (bytes memory commands, bytes[] memory inputs)
+    {
         Currency wethCurrency = Currency.wrap(config.weth);
         Currency liquidCurrency = Currency.wrap(liquidTokenAddress);
         bool wethIsCurrency0 = config.weth < liquidTokenAddress;
@@ -98,14 +76,13 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             hooks: IHooks(factory.poolHooks())
         });
 
-        IV4Router.ExactInputSingleParams memory swapParams = IV4Router
-            .ExactInputSingleParams({
-                poolKey: poolKey,
-                zeroForOne: wethIsCurrency0,
-                amountIn: ActionConstants.OPEN_DELTA,
-                amountOutMinimum: uint128(minTokensOut),
-                hookData: bytes("")
-            });
+        IV4Router.ExactInputSingleParams memory swapParams = IV4Router.ExactInputSingleParams({
+            poolKey: poolKey,
+            zeroForOne: wethIsCurrency0,
+            amountIn: ActionConstants.OPEN_DELTA,
+            amountOutMinimum: uint128(minTokensOut),
+            hookData: bytes("")
+        });
 
         bytes memory actions = abi.encodePacked(uint8(0x0b), uint8(0x06), uint8(0x0f));
         bytes[] memory params = new bytes[](3);
@@ -119,11 +96,11 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         inputs[1] = abi.encode(actions, params);
     }
 
-    function _encodeSellRouteWethBaseViaEthRare(
-        address liquidTokenAddress,
-        uint256 tokenAmount,
-        uint256 minRareOut
-    ) internal view returns (bytes memory commands, bytes[] memory inputs) {
+    function _encodeSellRouteWethBaseViaEthRare(address liquidTokenAddress, uint256 tokenAmount, uint256 minRareOut)
+        internal
+        view
+        returns (bytes memory commands, bytes[] memory inputs)
+    {
         Currency wethCurrency = Currency.wrap(config.weth);
         Currency liquidCurrency = Currency.wrap(liquidTokenAddress);
         bool liquidIsCurrency0 = liquidTokenAddress < config.weth;
@@ -136,20 +113,15 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             hooks: IHooks(factory.poolHooks())
         });
 
-        IV4Router.ExactInputSingleParams memory sellParams = IV4Router
-            .ExactInputSingleParams({
-                poolKey: liquidPoolKey,
-                zeroForOne: liquidIsCurrency0,
-                amountIn: uint128(tokenAmount),
-                amountOutMinimum: 1,
-                hookData: bytes("")
-            });
+        IV4Router.ExactInputSingleParams memory sellParams = IV4Router.ExactInputSingleParams({
+            poolKey: liquidPoolKey,
+            zeroForOne: liquidIsCurrency0,
+            amountIn: uint128(tokenAmount),
+            amountOutMinimum: 1,
+            hookData: bytes("")
+        });
 
-        bytes memory actions0 = abi.encodePacked(
-            uint8(0x06),
-            uint8(0x0c),
-            uint8(0x0e)
-        );
+        bytes memory actions0 = abi.encodePacked(uint8(0x06), uint8(0x0c), uint8(0x0e));
         bytes[] memory params0 = new bytes[](3);
         params0[0] = abi.encode(sellParams);
         params0[1] = abi.encode(liquidTokenAddress, type(uint128).max);
@@ -163,26 +135,17 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
             hooks: IHooks(address(0))
         });
 
-        IV4Router.ExactInputSingleParams memory rareBuyParams = IV4Router
-            .ExactInputSingleParams({
-                poolKey: rarePoolKey,
-                zeroForOne: true,
-                amountIn: ActionConstants.OPEN_DELTA,
-                amountOutMinimum: uint128(minRareOut),
-                hookData: bytes("")
-            });
+        IV4Router.ExactInputSingleParams memory rareBuyParams = IV4Router.ExactInputSingleParams({
+            poolKey: rarePoolKey,
+            zeroForOne: true,
+            amountIn: ActionConstants.OPEN_DELTA,
+            amountOutMinimum: uint128(minRareOut),
+            hookData: bytes("")
+        });
 
-        bytes memory actions2 = abi.encodePacked(
-            uint8(0x0b),
-            uint8(0x06),
-            uint8(0x0f)
-        );
+        bytes memory actions2 = abi.encodePacked(uint8(0x0b), uint8(0x06), uint8(0x0f));
         bytes[] memory params2 = new bytes[](3);
-        params2[0] = abi.encode(
-            address(0),
-            ActionConstants.CONTRACT_BALANCE,
-            false
-        );
+        params2[0] = abi.encode(address(0), ActionConstants.CONTRACT_BALANCE, false);
         params2[1] = abi.encode(rareBuyParams);
         params2[2] = abi.encode(config.rareToken, uint128(minRareOut));
 
@@ -202,10 +165,7 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         assertTrue(address(factory) != address(0), "Factory deployed");
         assertTrue(address(router) != address(0), "Router deployed");
         assertTrue(address(liquidToken) != address(0), "Liquid token created");
-        assertTrue(
-            PoolId.unwrap(liquidToken.poolId()) != bytes32(0),
-            "Pool created"
-        );
+        assertTrue(PoolId.unwrap(liquidToken.poolId()) != bytes32(0), "Pool created");
         assertTrue(liquidToken.storedPositionsLength() > 0, "Pool has liquidity positions");
         assertEq(factory.baseToken(), config.rareToken, "Base token set");
     }
@@ -221,30 +181,16 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         uint256 ethForSwap = _ethForSwap(ethAmount);
         uint256 rareBefore = IERC20(config.rareToken).balanceOf(buyer);
 
-        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRouteV3Only(
-            config.rareToken,
-            ethForSwap,
-            1
-        );
+        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRouteV3Only(config.rareToken, ethForSwap, 1);
 
         vm.prank(buyer);
-        uint256 tokensReceived = router.buy{value: ethAmount}(
-            config.rareToken,
-            buyer,
-            1,
-            commands,
-            inputs,
-            block.timestamp + 1 hours
-        );
+        uint256 tokensReceived =
+            router.buy{value: ethAmount}(config.rareToken, buyer, 1, commands, inputs, block.timestamp + 1 hours);
 
         uint256 rareAfter = IERC20(config.rareToken).balanceOf(buyer);
 
         assertGt(tokensReceived, 0, "Should receive RARE");
-        assertEq(
-            rareAfter - rareBefore,
-            tokensReceived,
-            "Balance should match"
-        );
+        assertEq(rareAfter - rareBefore, tokensReceived, "Balance should match");
 
         console.log("V3 routing buy successful:");
         console.log("  ETH spent:", _fmt(ethAmount));
@@ -261,30 +207,16 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         uint256 routerEthBefore = address(router).balance;
         uint256 universalRouterEthBefore = router.universalRouter().balance;
 
-        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRouteV3Only(
-            config.rareToken,
-            ethForSwap,
-            1
-        );
+        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRouteV3Only(config.rareToken, ethForSwap, 1);
 
         vm.prank(buyer);
-        uint256 tokensReceived = router.buy{value: ethAmount}(
-            config.rareToken,
-            buyer,
-            1,
-            commands,
-            inputs,
-            block.timestamp + 1 hours
-        );
+        uint256 tokensReceived =
+            router.buy{value: ethAmount}(config.rareToken, buyer, 1, commands, inputs, block.timestamp + 1 hours);
 
         uint256 rareAfter = IERC20(config.rareToken).balanceOf(buyer);
 
         assertGt(tokensReceived, 0, "Should receive RARE");
-        assertEq(
-            rareAfter - rareBefore,
-            tokensReceived,
-            "Balance should match"
-        );
+        assertEq(rareAfter - rareBefore, tokensReceived, "Balance should match");
         _assertNoNativeEthRetention(routerEthBefore, universalRouterEthBefore);
     }
 
@@ -292,21 +224,12 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         uint256 ethAmount = 0.01 ether;
         uint256 balanceBefore = liquidToken.balanceOf(buyer);
 
-        uint256 tokensReceived = _doBuy(
-            buyer,
-            address(liquidToken),
-            buyer,
-            ethAmount
-        );
+        uint256 tokensReceived = _doBuy(buyer, address(liquidToken), buyer, ethAmount);
 
         uint256 balanceAfter = liquidToken.balanceOf(buyer);
 
         assertGt(tokensReceived, 0, "Should receive tokens");
-        assertEq(
-            balanceAfter - balanceBefore,
-            tokensReceived,
-            "Balance should match"
-        );
+        assertEq(balanceAfter - balanceBefore, tokensReceived, "Balance should match");
 
         console.log("Buy successful:");
         console.log("  ETH spent:", _fmt(ethAmount));
@@ -319,21 +242,12 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         uint256 routerEthBefore = address(router).balance;
         uint256 universalRouterEthBefore = router.universalRouter().balance;
 
-        uint256 tokensReceived = _doBuy(
-            buyer,
-            address(liquidToken),
-            buyer,
-            ethAmount
-        );
+        uint256 tokensReceived = _doBuy(buyer, address(liquidToken), buyer, ethAmount);
 
         uint256 balanceAfter = liquidToken.balanceOf(buyer);
 
         assertGt(tokensReceived, 0, "Should receive tokens");
-        assertEq(
-            balanceAfter - balanceBefore,
-            tokensReceived,
-            "Balance should match"
-        );
+        assertEq(balanceAfter - balanceBefore, tokensReceived, "Balance should match");
         _assertNoNativeEthRetention(routerEthBefore, universalRouterEthBefore);
     }
 
@@ -347,57 +261,33 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         uint256 routerWethBefore = IERC20(config.weth).balanceOf(address(router));
         uint256 universalRouterWethBefore = IERC20(config.weth).balanceOf(router.universalRouter());
 
-        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRouteWethBase(
-            address(wethBaseToken),
-            ethAmount,
-            1
-        );
+        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRouteWethBase(address(wethBaseToken), ethAmount, 1);
 
         vm.prank(buyer);
-        uint256 tokensReceived = router.buy{value: ethAmount}(
-            address(wethBaseToken),
-            buyer,
-            1,
-            commands,
-            inputs,
-            block.timestamp + 1 hours
-        );
+        uint256 tokensReceived =
+            router.buy{value: ethAmount}(address(wethBaseToken), buyer, 1, commands, inputs, block.timestamp + 1 hours);
 
         uint256 tokenBalanceAfter = wethBaseToken.balanceOf(buyer);
 
         assertEq(wethBaseToken.baseToken(), config.weth, "Base token should be WETH");
         assertGt(tokensReceived, 0, "Should receive WETH-base LIQUID");
-        assertEq(
-            tokenBalanceAfter - tokenBalanceBefore,
-            tokensReceived,
-            "Balance should match"
-        );
+        assertEq(tokenBalanceAfter - tokenBalanceBefore, tokensReceived, "Balance should match");
         _assertNoNativeEthRetention(routerEthBefore, universalRouterEthBefore);
         _assertNoWethRetention(routerWethBefore, universalRouterWethBefore);
     }
 
-    function test_Swap_WethBaseLiquidToken_ViaUnwrapToRouterIntoRare_DoesNotRetainEthOrWeth()
-        public
-    {
+    function test_Swap_WethBaseLiquidToken_ViaUnwrapToRouterIntoRare_DoesNotRetainEthOrWeth() public {
         vm.prank(admin);
         router.addCurrency(config.rareToken);
 
         LiquidMultiCurve wethBaseToken = _createWethBaseLiquidToken();
 
-        (bytes memory buyCommands, bytes[] memory buyInputs) = _encodeBuyRouteWethBase(
-            address(wethBaseToken),
-            0.05 ether,
-            1
-        );
+        (bytes memory buyCommands, bytes[] memory buyInputs) =
+            _encodeBuyRouteWethBase(address(wethBaseToken), 0.05 ether, 1);
 
         vm.prank(buyer);
         uint256 tokensBought = router.buy{value: 0.05 ether}(
-            address(wethBaseToken),
-            buyer,
-            1,
-            buyCommands,
-            buyInputs,
-            block.timestamp + 1 hours
+            address(wethBaseToken), buyer, 1, buyCommands, buyInputs, block.timestamp + 1 hours
         );
 
         uint256 tokenAmount = tokensBought / 2;
@@ -407,23 +297,13 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         uint256 routerWethBefore = IERC20(config.weth).balanceOf(address(router));
         uint256 universalRouterWethBefore = IERC20(config.weth).balanceOf(router.universalRouter());
 
-        (bytes memory commands, bytes[] memory inputs) = _encodeSellRouteWethBaseViaEthRare(
-            address(wethBaseToken),
-            tokenAmount,
-            1
-        );
+        (bytes memory commands, bytes[] memory inputs) =
+            _encodeSellRouteWethBaseViaEthRare(address(wethBaseToken), tokenAmount, 1);
 
         vm.startPrank(buyer);
         IERC20(address(wethBaseToken)).approve(address(router), tokenAmount);
         uint256 rareReceived = router.swap(
-            address(wethBaseToken),
-            tokenAmount,
-            config.rareToken,
-            buyer,
-            1,
-            commands,
-            inputs,
-            block.timestamp + 1 hours
+            address(wethBaseToken), tokenAmount, config.rareToken, buyer, 1, commands, inputs, block.timestamp + 1 hours
         );
         vm.stopPrank();
 
@@ -444,20 +324,11 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         require(tokensToSell > 0, "No tokens to sell");
 
         uint256 ethBefore = buyer.balance;
-        uint256 ethReceived = _doSell(
-            buyer,
-            address(liquidToken),
-            tokensToSell,
-            buyer
-        );
+        uint256 ethReceived = _doSell(buyer, address(liquidToken), tokensToSell, buyer);
         uint256 ethAfter = buyer.balance;
 
         assertGt(ethReceived, 0, "Should receive ETH");
-        assertEq(
-            ethAfter - ethBefore,
-            ethReceived,
-            "ETH balance should increase"
-        );
+        assertEq(ethAfter - ethBefore, ethReceived, "ETH balance should increase");
 
         console.log("Sell successful:");
         console.log("  Tokens sold:", _fmt(tokensToSell));
@@ -465,19 +336,10 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
     }
 
     function test_BuySell_RoundTrip() public {
-        uint256 tokensBought = _doBuy(
-            buyer,
-            address(liquidToken),
-            buyer,
-            0.005 ether
-        );
+        uint256 tokensBought = _doBuy(buyer, address(liquidToken), buyer, 0.005 ether);
         _doSell(buyer, address(liquidToken), tokensBought, buyer);
 
-        assertEq(
-            liquidToken.balanceOf(buyer),
-            0,
-            "Should have sold all tokens"
-        );
+        assertEq(liquidToken.balanceOf(buyer), 0, "Should have sold all tokens");
         console.log("Round trip complete");
     }
 
@@ -487,21 +349,13 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         uint256 ethAmount = 0.01 ether;
         uint256 ethForSwap = _ethForSwap(ethAmount);
         uint256 unreasonableMinOut = 1_000_000 ether;
-        (bytes memory commands, bytes[] memory inputs) = _encodeBuyRoute(
-            address(liquidToken),
-            ethForSwap,
-            unreasonableMinOut
-        );
+        (bytes memory commands, bytes[] memory inputs) =
+            _encodeBuyRoute(address(liquidToken), ethForSwap, unreasonableMinOut);
 
         vm.prank(buyer);
         vm.expectRevert(); // Universal Router reverts on slippage before LiquidRouter check
         router.buy{value: ethAmount}(
-            address(liquidToken),
-            buyer,
-            unreasonableMinOut,
-            commands,
-            inputs,
-            block.timestamp + 1 hours
+            address(liquidToken), buyer, unreasonableMinOut, commands, inputs, block.timestamp + 1 hours
         );
     }
 
@@ -513,11 +367,8 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         require(tokensToSell > 0, "No tokens to sell");
 
         uint256 unreasonableMinEthOut = 1000 ether;
-        (bytes memory commands, bytes[] memory inputs) = _encodeSellRoute(
-            address(liquidToken),
-            tokensToSell,
-            unreasonableMinEthOut
-        );
+        (bytes memory commands, bytes[] memory inputs) =
+            _encodeSellRoute(address(liquidToken), tokensToSell, unreasonableMinEthOut);
 
         vm.prank(buyer);
         IERC20(liquidToken).approve(address(router), tokensToSell);
@@ -546,26 +397,13 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         vm.prank(buyer);
         liquidToken.burn(burnAmount);
 
-        assertEq(
-            liquidToken.balanceOf(buyer),
-            balanceBefore - burnAmount,
-            "Balance should decrease"
-        );
-        assertEq(
-            liquidToken.totalSupply(),
-            supplyBefore - burnAmount,
-            "Total supply should decrease"
-        );
+        assertEq(liquidToken.balanceOf(buyer), balanceBefore - burnAmount, "Balance should decrease");
+        assertEq(liquidToken.totalSupply(), supplyBefore - burnAmount, "Total supply should decrease");
     }
 
     /// @notice ETH -> Token via router (same as buy; swap not in current LiquidRouter)
     function test_Swap_ETHToToken_ViaRouter() public {
-        uint256 amountOut = _doBuy(
-            buyer,
-            address(liquidToken),
-            buyer,
-            0.01 ether
-        );
+        uint256 amountOut = _doBuy(buyer, address(liquidToken), buyer, 0.01 ether);
         assertGt(amountOut, 0, "Should receive tokens");
     }
 
@@ -575,37 +413,20 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         uint256 tokensToSell = liquidToken.balanceOf(buyer) / 2;
         require(tokensToSell > 0, "No tokens to sell");
         uint256 ethBefore = buyer.balance;
-        uint256 amountOut = _doSell(
-            buyer,
-            address(liquidToken),
-            tokensToSell,
-            buyer
-        );
+        uint256 amountOut = _doSell(buyer, address(liquidToken), tokensToSell, buyer);
         assertGt(amountOut, 0, "Should receive ETH");
         assertGt(buyer.balance, ethBefore, "ETH balance should increase");
     }
 
-    // ---------- Factory: createLiquidToken (standalone flow) ----------
+    // ---------- Factory: createLiquidTokenMultiCurve (standalone flow) ----------
     /// @notice Liquid -> Liquid via sell then buy (router has no swap; two-leg flow)
     function test_Swap_LiquidToLiquid_ViaRouter() public {
         // Create second Liquid token
         vm.startPrank(tokenCreator);
-        uint256 minRare = factory.minRareLiquidityWei();
-        IERC20(config.rareToken).approve(address(factory), minRare);
         Curve[] memory curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            numPositions: 1,
-            shares: 1e18
-        });
+        curves[0] = Curve({tickLower: -180, tickUpper: 120000, numPositions: 1, shares: 1e18});
         address token2Addr = factory.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://anvil-fork-test-2",
-            "Anvil Fork Test Token 2",
-            "AFT2",
-            minRare,
-            curves
+            tokenCreator, "ipfs://anvil-fork-test-2", "Anvil Fork Test Token 2", "AFT2", 0, curves
         );
         liquidToken2 = LiquidMultiCurve(payable(token2Addr));
         vm.stopPrank();
@@ -617,29 +438,15 @@ contract AnvilForkIntegrationTest is AnvilForkTestBase {
         require(tokensToSwap > 0, "No tokens to swap");
 
         // Sell token1 -> ETH, then buy token2 with ETH (replaces router.swap)
-        uint256 ethReceived = _doSell(
-            buyer,
-            address(liquidToken),
-            tokensToSwap,
-            buyer
-        );
+        uint256 ethReceived = _doSell(buyer, address(liquidToken), tokensToSwap, buyer);
         assertGt(ethReceived, 0, "Should receive ETH from sell");
 
         uint256 balanceBefore = liquidToken2.balanceOf(buyer);
-        uint256 amountOut = _doBuy(
-            buyer,
-            address(liquidToken2),
-            buyer,
-            ethReceived
-        );
+        uint256 amountOut = _doBuy(buyer, address(liquidToken2), buyer, ethReceived);
         uint256 balanceAfter = liquidToken2.balanceOf(buyer);
 
         assertGt(amountOut, 0, "Should receive tokens");
-        assertEq(
-            balanceAfter - balanceBefore,
-            amountOut,
-            "Balance should match"
-        );
+        assertEq(balanceAfter - balanceBefore, amountOut, "Balance should match");
 
         console.log("Swap (sell+buy) successful:");
         console.log("  Tokens sold:", _fmt(tokensToSwap));

@@ -65,24 +65,18 @@ contract LiquidInstantMainnetInvariantTest is Test, InitGuardTestHelper {
         uint256 protocolFee
     );
 
-    function _defaultSingleCurve(LiquidFactory _factory) internal view returns (Curve[] memory) {
+    function _defaultSingleCurve(LiquidFactory) internal pure returns (Curve[] memory) {
         Curve[] memory curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: _factory.lpTickLower(),
-            tickUpper: _factory.lpTickUpper(),
-            numPositions: 1,
-            shares: 1e18
-        });
+        curves[0] = Curve({tickLower: LP_TICK_LOWER, tickUpper: LP_TICK_UPPER, numPositions: 1, shares: 1e18});
         return curves;
     }
 
     // Helper function to compute correct PoolId from parameters
-    function _computePoolId(
-        address rareToken,
-        uint24 fee,
-        int24 tickSpacing,
-        address hooks
-    ) internal pure returns (bytes32) {
+    function _computePoolId(address rareToken, uint24 fee, int24 tickSpacing, address hooks)
+        internal
+        pure
+        returns (bytes32)
+    {
         Currency ethC = Currency.wrap(address(0));
         Currency rareC = Currency.wrap(rareToken);
         bool ethIs0 = uint160(address(0)) < uint160(rareToken);
@@ -142,17 +136,9 @@ contract LiquidInstantMainnetInvariantTest is Test, InitGuardTestHelper {
 
         // Deploy init guard and factory
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
-        factory = new LiquidFactory(
-            admin,
-            config.uniswapV4PoolManager, // V4 PoolManager
-            LP_TICK_LOWER,
-            LP_TICK_UPPER,
-            initGuardAddr, // poolHooks
-            60, // poolTickSpacing (standard for 0.3% fee tier)
-            1e15 // minRareLiquidityWei (0.001 RARE)
-        );
+        factory = new LiquidFactory(admin, config.uniswapV4PoolManager, initGuardAddr, 60);
         LiquidGuard(initGuardAddr).setFactory(address(factory));
-                factory.setLiquidRegistry(address(1));
+        factory.setLiquidRegistry(address(1));
 
         factory.setLiquidMultiCurveImplementation(address(liquidImpl));
 
@@ -164,23 +150,12 @@ contract LiquidInstantMainnetInvariantTest is Test, InitGuardTestHelper {
 
     /// @notice Helper function to create a factory with RARE burn enabled
     /// @dev Creates a new factory with rareBurnFeeBPS=2500, protocolFeeBPS=3750, referrerFeeBPS=3750
-    function _createFactoryWithRAREBurn()
-        internal
-        returns (LiquidFactory factoryWithBurn)
-    {
+    function _createFactoryWithRAREBurn() internal returns (LiquidFactory factoryWithBurn) {
         vm.startPrank(admin);
         address burnInitGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
-        factoryWithBurn = new LiquidFactory(
-            admin,
-            config.uniswapV4PoolManager, // V4 PoolManager
-            LP_TICK_LOWER,
-            LP_TICK_UPPER,
-            burnInitGuardAddr, // poolHooks
-            60, // poolTickSpacing (standard for 0.3% fee tier)
-            1e15 // minRareLiquidityWei (0.001 RARE)
-        );
+        factoryWithBurn = new LiquidFactory(admin, config.uniswapV4PoolManager, burnInitGuardAddr, 60);
         LiquidGuard(burnInitGuardAddr).setFactory(address(factoryWithBurn));
-                factoryWithBurn.setLiquidRegistry(address(1));
+        factoryWithBurn.setLiquidRegistry(address(1));
         factoryWithBurn.setLiquidMultiCurveImplementation(address(liquidImpl));
 
         // Set base token to MockRARE
@@ -229,31 +204,17 @@ contract LiquidInstantMainnetInvariantTest is Test, InitGuardTestHelper {
         Currency ethC = Currency.wrap(address(0));
         Currency rareC = Currency.wrap(config.rareToken);
 
-        PoolKey memory fakeKey = PoolKey({
-            currency0: ethC,
-            currency1: rareC,
-            fee: 3000,
-            tickSpacing: 60,
-            hooks: IHooks(address(0))
-        });
+        PoolKey memory fakeKey =
+            PoolKey({currency0: ethC, currency1: rareC, fee: 3000, tickSpacing: 60, hooks: IHooks(address(0))});
 
-        bytes memory fakeCallbackData = abi.encode(
-            1 ether,
-            fakeKey,
-            uint160(1),
-            0,
-            rareC,
-            BURN_ADDRESS
-        );
+        bytes memory fakeCallbackData = abi.encode(1 ether, fakeKey, uint160(1), 0, rareC, BURN_ADDRESS);
 
         // Attempt hostile direct call from user
         vm.prank(user1);
         vm.expectRevert(IRAREBurner.OnlyPoolManager.selector);
         testBurner.unlockCallback(fakeCallbackData);
 
-        console.log(
-            "Unlock callback guard: correctly rejected hostile direct call"
-        );
+        console.log("Unlock callback guard: correctly rejected hostile direct call");
     }
 
     /// @notice Tests that callback guard prevents reentrancy attacks
@@ -288,17 +249,9 @@ contract LiquidInstantMainnetInvariantTest is Test, InitGuardTestHelper {
 
         // Create new factory with configured burner
         address reentryInitGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
-        factoryWithBurn = new LiquidFactory(
-            admin,
-            config.uniswapV4PoolManager, // V4 PoolManager
-            LP_TICK_LOWER,
-            LP_TICK_UPPER,
-            reentryInitGuardAddr, // poolHooks
-            60, // poolTickSpacing (standard for 0.3% fee tier)
-            1e15 // minRareLiquidityWei (0.001 RARE)
-        );
+        factoryWithBurn = new LiquidFactory(admin, config.uniswapV4PoolManager, reentryInitGuardAddr, 60);
         LiquidGuard(reentryInitGuardAddr).setFactory(address(factoryWithBurn));
-                factoryWithBurn.setLiquidRegistry(address(1));
+        factoryWithBurn.setLiquidRegistry(address(1));
         factoryWithBurn.setLiquidMultiCurveImplementation(address(liquidImpl));
         factoryWithBurn.setBaseToken(address(mockRARE)); // Set base token to match burner
         vm.stopPrank();
@@ -307,12 +260,7 @@ contract LiquidInstantMainnetInvariantTest is Test, InitGuardTestHelper {
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factoryWithBurn), 0.1 ether);
         address tokenAddr = factoryWithBurn.createLiquidTokenMultiCurve(
-            tokenCreator,
-            "ipfs://test",
-            "Test Token",
-            "TEST",
-            0.1 ether,
-            _defaultSingleCurve(factoryWithBurn)
+            tokenCreator, "ipfs://test", "Test Token", "TEST", 0.1 ether, _defaultSingleCurve(factoryWithBurn)
         );
         vm.stopPrank();
         token = LiquidMultiCurve(payable(tokenAddr));
@@ -325,31 +273,17 @@ contract LiquidInstantMainnetInvariantTest is Test, InitGuardTestHelper {
         Currency ethC = Currency.wrap(address(0));
         Currency rareC = Currency.wrap(address(mockRARE)); // Use mockRARE to match burner config
 
-        PoolKey memory key = PoolKey({
-            currency0: ethC,
-            currency1: rareC,
-            fee: 3000,
-            tickSpacing: 60,
-            hooks: IHooks(address(0))
-        });
+        PoolKey memory key =
+            PoolKey({currency0: ethC, currency1: rareC, fee: 3000, tickSpacing: 60, hooks: IHooks(address(0))});
 
-        bytes memory callbackData = abi.encode(
-            1 ether,
-            key,
-            uint160(1),
-            0,
-            rareC,
-            BURN_ADDRESS
-        );
+        bytes memory callbackData = abi.encode(1 ether, key, uint160(1), 0, rareC, BURN_ADDRESS);
 
         // Should revert when called from attacker address
         vm.prank(user1);
         vm.expectRevert(IRAREBurner.OnlyPoolManager.selector);
         testBurner.unlockCallback(callbackData);
 
-        console.log(
-            "Reentrancy guard: callback only accepts calls from PoolManager"
-        );
+        console.log("Reentrancy guard: callback only accepts calls from PoolManager");
     }
 
     // NOTE: Unlock callback happy path tested in RAREBurner.unit.t.sol::test_UnlockCallback_HappyPath_EmitsBurnedEvent

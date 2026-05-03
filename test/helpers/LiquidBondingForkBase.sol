@@ -104,22 +104,11 @@ abstract contract LiquidBondingForkBase is Test, InitGuardTestHelper {
         );
     }
 
-    function _deployLiquidWithTicks(
-        int24 tickLower,
-        int24 tickUpper
-    ) internal returns (LiquidFactory) {
+    function _deployLiquidWithTicks(int24, int24) internal returns (LiquidFactory) {
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
         vm.startPrank(admin);
 
-        LiquidFactory tempFactory = new LiquidFactory(
-            admin,
-            config.uniswapV4PoolManager,
-            tickLower,
-            tickUpper,
-            initGuardAddr,
-            60,
-            1e15
-        );
+        LiquidFactory tempFactory = new LiquidFactory(admin, config.uniswapV4PoolManager, initGuardAddr, 60);
         LiquidGuard(initGuardAddr).setFactory(address(tempFactory));
         tempFactory.setLiquidRegistry(address(1));
 
@@ -132,15 +121,10 @@ abstract contract LiquidBondingForkBase is Test, InitGuardTestHelper {
         return tempFactory;
     }
 
-    /// @notice Returns a default single-curve config for the given factory
-    function _defaultSingleCurve(LiquidFactory f) internal view returns (Curve[] memory) {
+    /// @notice Returns the default single-curve config used by current factory tests.
+    function _defaultSingleCurve(LiquidFactory) internal pure returns (Curve[] memory) {
         Curve[] memory curves = new Curve[](1);
-        curves[0] = Curve({
-            tickLower: f.lpTickLower(),
-            tickUpper: f.lpTickUpper(),
-            numPositions: 1,
-            shares: 1e18
-        });
+        curves[0] = Curve({tickLower: -180, tickUpper: 120000, numPositions: 1, shares: 1e18});
         return curves;
     }
 
@@ -154,12 +138,11 @@ abstract contract LiquidBondingForkBase is Test, InitGuardTestHelper {
         }
     }
 
-    function _computePoolId(
-        address rareToken,
-        uint24 fee,
-        int24 tickSpacing,
-        address hooks
-    ) internal pure returns (bytes32) {
+    function _computePoolId(address rareToken, uint24 fee, int24 tickSpacing, address hooks)
+        internal
+        pure
+        returns (bytes32)
+    {
         Currency ethC = Currency.wrap(address(0));
         Currency rareC = Currency.wrap(rareToken);
 

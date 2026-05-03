@@ -38,8 +38,7 @@ contract LiquidMultiCurveDatasurfaceTest is Test, InitGuardTestHelper {
     uint256 constant LIQUIDITY = 250e18;
 
     function _defaultCurves() internal pure returns (Curve[] memory) {
-        DeployConfig.MultiCurveConfig memory cfg =
-            DeployConfig.getDefaultMultiCurveConfig();
+        DeployConfig.MultiCurveConfig memory cfg = DeployConfig.getDefaultMultiCurveConfig();
 
         Curve[] memory curves = new Curve[](3);
         curves[0] = Curve({
@@ -77,15 +76,7 @@ contract LiquidMultiCurveDatasurfaceTest is Test, InitGuardTestHelper {
 
         vm.startPrank(admin);
         address initGuardAddr = _deployInitGuardForTest(config.uniswapV4PoolManager, admin);
-        factory = new LiquidFactory(
-            admin,
-            config.uniswapV4PoolManager,
-            -180,
-            120000,
-            initGuardAddr,
-            60,
-            LIQUIDITY
-        );
+        factory = new LiquidFactory(admin, config.uniswapV4PoolManager, initGuardAddr, 60);
         LiquidGuard(initGuardAddr).setFactory(address(factory));
         factory.setLiquidRegistry(address(1));
         instantImpl = new LiquidMultiCurve();
@@ -99,77 +90,45 @@ contract LiquidMultiCurveDatasurfaceTest is Test, InitGuardTestHelper {
         mockRARE.approve(address(factory), LIQUIDITY * 2);
 
         Curve[] memory instantCurves = new Curve[](1);
-        instantCurves[0] = Curve({
-            tickLower: factory.lpTickLower(),
-            tickUpper: factory.lpTickUpper(),
-            numPositions: 1,
-            shares: 1e18
-        });
+        instantCurves[0] = Curve({tickLower: -180, tickUpper: 120000, numPositions: 1, shares: 1e18});
 
         instantToken = LiquidMultiCurve(
-            payable(
-                factory.createLiquidTokenMultiCurve(
-                    tokenCreator,
-                    "ipfs://instant",
-                    "Instant",
-                    "INST",
-                    LIQUIDITY,
-                    instantCurves
-                )
-            )
+            payable(factory.createLiquidTokenMultiCurve(
+                    tokenCreator, "ipfs://instant", "Instant", "INST", LIQUIDITY, instantCurves
+                ))
         );
 
         Curve[] memory curves = _defaultCurves();
         multiCurveToken = LiquidMultiCurve(
-            payable(
-                factory.createLiquidTokenMultiCurve(
-                    tokenCreator,
-                    "ipfs://multicurve",
-                    "MultiCurve",
-                    "MCRV",
-                    LIQUIDITY,
-                    curves
-                )
-            )
+            payable(factory.createLiquidTokenMultiCurve(
+                    tokenCreator, "ipfs://multicurve", "MultiCurve", "MCRV", LIQUIDITY, curves
+                ))
         );
 
         vm.stopPrank();
     }
 
     function test_GetLaunchState_ReturnsCorrectEnum() public view {
-        (ILiquidBase.LaunchType instantType, , , ) = instantToken.getLaunchState();
-        (ILiquidBase.LaunchType multiType, , , ) = multiCurveToken.getLaunchState();
+        (ILiquidBase.LaunchType instantType,,,) = instantToken.getLaunchState();
+        (ILiquidBase.LaunchType multiType,,,) = multiCurveToken.getLaunchState();
 
         assertTrue(instantType == ILiquidBase.LaunchType.MULTICURVE);
         assertTrue(multiType == ILiquidBase.LaunchType.MULTICURVE);
     }
 
     function test_GetCurrentPrice_NonZero() public view {
-        (uint256 instantRarePerToken, ) = instantToken.getCurrentPrice();
-        (uint256 multiRarePerToken, ) = multiCurveToken.getCurrentPrice();
+        (uint256 instantRarePerToken,) = instantToken.getCurrentPrice();
+        (uint256 multiRarePerToken,) = multiCurveToken.getCurrentPrice();
 
         assertTrue(instantRarePerToken > 0, "Instant price positive");
         assertTrue(multiRarePerToken > 0, "MultiCurve price positive");
     }
 
     function test_GetMarketState_NonZero() public view {
-        (
-            uint256 instantRarePerToken,
-            ,
-            uint160 instantSqrtPrice,
-            ,
-            ,
-            uint256 instantSupply
-        ) = instantToken.getMarketState();
+        (uint256 instantRarePerToken,, uint160 instantSqrtPrice,,, uint256 instantSupply) =
+            instantToken.getMarketState();
 
-        (
-            uint256 multiRarePerToken,
-            ,
-            uint160 multiSqrtPrice,
-            ,
-            ,
-            uint256 multiSupply
-        ) = multiCurveToken.getMarketState();
+        (uint256 multiRarePerToken,, uint160 multiSqrtPrice,,, uint256 multiSupply) = multiCurveToken.getMarketState();
 
         assertTrue(instantRarePerToken > 0 && multiRarePerToken > 0);
         assertTrue(instantSqrtPrice > 0 && multiSqrtPrice > 0);
@@ -179,8 +138,8 @@ contract LiquidMultiCurveDatasurfaceTest is Test, InitGuardTestHelper {
 
     function test_QuoteBuy_ReturnsPositive() public {
         uint256 rareIn = 10e18;
-        (uint256 instantOut, ) = instantToken.quoteBuy(rareIn);
-        (uint256 multiOut, ) = multiCurveToken.quoteBuy(rareIn);
+        (uint256 instantOut,) = instantToken.quoteBuy(rareIn);
+        (uint256 multiOut,) = multiCurveToken.quoteBuy(rareIn);
 
         assertTrue(instantOut > 0, "Instant quote positive");
         assertTrue(multiOut > 0, "MultiCurve quote positive");
@@ -188,8 +147,8 @@ contract LiquidMultiCurveDatasurfaceTest is Test, InitGuardTestHelper {
 
     function test_QuoteSell_ReturnsPositive() public {
         uint256 tokenAmount = 1000e18;
-        (uint256 instantRareOut, ) = instantToken.quoteSell(tokenAmount);
-        (uint256 multiRareOut, ) = multiCurveToken.quoteSell(tokenAmount);
+        (uint256 instantRareOut,) = instantToken.quoteSell(tokenAmount);
+        (uint256 multiRareOut,) = multiCurveToken.quoteSell(tokenAmount);
 
         assertTrue(instantRareOut > 0, "Instant sell quote positive");
         assertTrue(multiRareOut > 0, "MultiCurve sell quote positive");

@@ -94,7 +94,7 @@ contract CreateTokenMultiCurve is Script {
         console.logAddress(tokenCreator);
         console.log("Token name:", tokenName);
         console.log("Token symbol:", tokenSymbol);
-        console.log("Initial RARE liquidity:");
+        console.log("Optional RARE liquidity:");
         console.logUint(initialRareLiquidity);
         if (hasCustomMaxTotalSupply) {
             console.log("Custom max total supply:");

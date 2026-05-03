@@ -39,7 +39,7 @@ abstract contract LiquidRouterForkBase is Test, InitGuardTestHelper {
         return vm.envOr("FORK_BLOCK", uint256(0));
     }
 
-    /// @notice Override to add factory config (CCA/LBP, pool hooks). Called after base factory setup.
+    /// @notice Override to add factory config such as pool hooks. Called after base factory setup.
     function _configureFactory() internal virtual {}
 
     /// @notice Resolve fork URL. Uses FORK_URL only.
@@ -67,9 +67,8 @@ abstract contract LiquidRouterForkBase is Test, InitGuardTestHelper {
 
         admin = makeAddr("admin");
         tokenCreator = makeAddr("tokenCreator");
-        protocolFeeRecipient = config.protocolFeeRecipient != address(0)
-            ? config.protocolFeeRecipient
-            : makeAddr("protocolFeeRecipient");
+        protocolFeeRecipient =
+            config.protocolFeeRecipient != address(0) ? config.protocolFeeRecipient : makeAddr("protocolFeeRecipient");
         buyer = makeAddr("buyer");
 
         vm.deal(admin, 100 ether);
@@ -83,11 +82,7 @@ abstract contract LiquidRouterForkBase is Test, InitGuardTestHelper {
 
         vm.startPrank(admin);
 
-        address burnerAddr = DeployRAREBurner.deploy(
-            admin,
-            deployConfig.burner,
-            config
-        );
+        address burnerAddr = DeployRAREBurner.deploy(admin, deployConfig.burner, config);
         burner = RAREBurner(payable(burnerAddr));
 
         // Deploy LiquidInitGuard as default pool hooks (prevents pre-initialization DoS)
@@ -96,12 +91,9 @@ abstract contract LiquidRouterForkBase is Test, InitGuardTestHelper {
             deployConfig.factory.poolHooks = initGuardAddr;
         }
 
-        // DeployLiquidFactory.deploy sets all three implementations and base token
-        DeployLiquidFactory.DeployResult memory factoryResult = DeployLiquidFactory.deploy(
-            admin,
-            deployConfig.factory,
-            config
-        );
+        // DeployLiquidFactory.deploy sets the multicurve implementation and base token.
+        DeployLiquidFactory.DeployResult memory factoryResult =
+            DeployLiquidFactory.deploy(admin, deployConfig.factory, config);
         factory = LiquidFactory(factoryResult.factory);
 
         // Wire init guard to factory
@@ -116,11 +108,7 @@ abstract contract LiquidRouterForkBase is Test, InitGuardTestHelper {
         _configureFactory();
 
         LiquidRegistry liquidRegistry = new LiquidRegistry(admin);
-        (address routerAddr, ) = DeployLiquidRouter.deploy(
-            admin,
-            config.uniswapUniversalRouter,
-            address(liquidRegistry)
-        );
+        (address routerAddr,) = DeployLiquidRouter.deploy(admin, config.uniswapUniversalRouter, address(liquidRegistry));
         router = LiquidRouter(payable(routerAddr));
         liquidRegistry.setWriter(address(factory), true);
         factory.setLiquidRegistry(address(liquidRegistry));
