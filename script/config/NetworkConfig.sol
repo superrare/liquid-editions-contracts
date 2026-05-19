@@ -8,7 +8,7 @@ library NetworkConfig {
         address router;
         /// @notice LiquidAuctioneer for CCA bid/exit/claim/triggerGraduation; address(0) if not deployed
         address auctioneer;
-        /// @notice LiquidSwapGuard hook for Instant/MultiCurve/Graduated pools; restricts swaps to LiquidRouter
+        /// @notice LiquidSwapGuard hook for Liquid pools; restricts swaps to LiquidRouter
         address swapGuard;
         /// @notice LiquidInitGuard hook (init-only protection); default poolHooks when swapGuard is not used
         address initGuard;
@@ -63,13 +63,13 @@ library NetworkConfig {
                     lbpStrategyFactory: 0x65aF3B62EE79763c704f04238080fBADD005B332,
                     protocolFeeRecipient: 0x860a80d33E85e97888F1f0C75c6e5BBD60b48DA9, // change this before actual mainnet deployment
                     liquid: LiquidAddresses({
-                        factory: 0xd3D8Ca76E8c5547694106378B6e471B4AC8EFC63,
+                        factory: 0xbb4341CFd588a098e9aCE1D224178836426c4a8E,
                         router: 0xEBd58EdA8408d9EA409f2c2bE8898BD9738f3583,
                         auctioneer: 0x656b073247d2583994a88300B01Af82dD7d28EFA,
                         swapGuard: address(0), // not yet deployed
                         initGuard: address(0),
-                        liquidGuard: 0x09dc2fEbD8B5c6c593f4e97F524935e7e3fD20cC,
-                        feeDistributor: 0x14F74a002C4A5e297858ab53F4ffB97233bcB0De,
+                        liquidGuard: 0xbBcbF794Af5C8BEFdea613a4cBcc0Af1148c20cC,
+                        feeDistributor: 0x3b99dd71EFF85CB802435E182Bc8565f39b69745,
                         liquidRegistry: 0x4066052d6AAC25EcFB027fD0C1aD54A597Ce3A31,
                         migrationExecutor: 0xfaDCCe3A08435B06d88AcF736dbE0bE802556306
                     })
