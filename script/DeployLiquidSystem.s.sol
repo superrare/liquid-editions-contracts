@@ -58,8 +58,9 @@ import {IHooks} from "v4-core/interfaces/IHooks.sol";
  * modules are deployed separately when their flags are enabled.
  *
  * Usage:
- *   # Full deployment
- *   DEPLOY_BURNER=true DEPLOY_FACTORY=true DEPLOY_ROUTER=true DEPLOY_AUCTIONEER=true DEPLOY_SWAP_GUARD=true \
+ *   # Full multicurve deployment
+ *   DEPLOY_FEE_DISTRIBUTOR=true DEPLOY_LIQUID_REGISTRY=true DEPLOY_BURNER=true \
+ *   DEPLOY_LIQUID_GUARD=true DEPLOY_FACTORY=true DEPLOY_ROUTER=true DEPLOY_MIGRATION_EXECUTOR=true \
  *   forge script script/DeployLiquidSystem.s.sol:DeployLiquidSystem --rpc-url $RPC_URL --broadcast
  *
  *   # Deploy only router
@@ -475,7 +476,7 @@ contract DeployLiquidSystem is Script {
         console.log("");
 
         // ============================================
-        // Step 5: LiquidAuctioneer - deploy or use existing
+        // Step 5: LiquidAuctioneer - optional legacy CCA helper
         // ============================================
         if (deployAuctioneer) {
             console.log("=== Step 5: Deploying LiquidAuctioneer ===");
@@ -510,10 +511,14 @@ contract DeployLiquidSystem is Script {
             );
         } else {
             result.auctioneer = networkConfig.liquid.auctioneer;
-            require(result.auctioneer != address(0), "DEPLOY_AUCTIONEER=false but no liquidAuctioneer in NetworkConfig");
-            console.log("=== Step 5: Using existing LiquidAuctioneer ===");
-            console.log("LiquidAuctioneer address:");
-            console.logAddress(result.auctioneer);
+            if (result.auctioneer != address(0)) {
+                console.log("=== Step 5: Using existing LiquidAuctioneer ===");
+                console.log("LiquidAuctioneer address:");
+                console.logAddress(result.auctioneer);
+            } else {
+                console.log("=== Step 5: Skipping LiquidAuctioneer ===");
+                console.log("DEPLOY_AUCTIONEER=false and no existing auctioneer configured.");
+            }
         }
         console.log("");
 
@@ -693,7 +698,7 @@ contract DeployLiquidSystem is Script {
                 DeployLiquidSystemReconcile.ensureRegistryWriter(sharedLiquidRegistry, result.auctioneer, "auctioneer");
                 DeployLiquidSystemReconcile.ensureRegistryWriter(sharedLiquidRegistry, result.factory, "factory");
                 if (result.factory != address(0)) {
-                    console.log("  auctioneer / factory writes will use shared registry.");
+                    console.log("  module writers will use shared registry.");
                 }
             } else {
                 console.log("  Warning: registry owner is different; skip writer setup.");
@@ -737,9 +742,11 @@ contract DeployLiquidSystem is Script {
         console.log("LiquidRouter Proxy:");
         console.logAddress(result.router);
         console.log(deployRouter ? "  (deployed)" : "  (existing)");
-        console.log("LiquidAuctioneer:");
-        console.logAddress(result.auctioneer);
-        console.log(deployAuctioneer ? "  (deployed)" : "  (existing)");
+        if (result.auctioneer != address(0)) {
+            console.log("LiquidAuctioneer:");
+            console.logAddress(result.auctioneer);
+            console.log(deployAuctioneer ? "  (deployed)" : "  (existing)");
+        }
         if (address(sharedFeeDistributor) != address(0)) {
             console.log("Shared FeeDistributor:");
             console.logAddress(address(sharedFeeDistributor));

@@ -485,12 +485,65 @@ contract LiquidFactoryUnitTest is Test {
     }
 
     // ============================================
-    // Creator identity guard (_creator == msg.sender)
+    // Creator delegation guard
     // ============================================
 
-    /// @dev Regression: createLiquidTokenMultiCurve must reject calls where _creator != msg.sender
+    function test_DelegateTokenCreation_ApprovesOperatorAndEmitsEvent() public {
+        address operator = makeAddr("operator");
+
+        vm.prank(user1);
+        vm.expectEmit(true, true, false, true);
+        emit ILiquidFactory.CreatorDelegateUpdated(user1, operator, true);
+        factory.delegateTokenCreation(operator);
+
+        assertTrue(factory.isCreatorDelegate(user1, operator));
+    }
+
+    function test_DelegateTokenCreation_RevertsWhen_OperatorIsZero() public {
+        vm.prank(user1);
+        vm.expectRevert(ILiquidFactory.AddressZero.selector);
+        factory.delegateTokenCreation(address(0));
+    }
+
+    function test_RevokeTokenCreationDelegate_ClearsOperatorAndEmitsEvent() public {
+        address operator = makeAddr("operator");
+
+        vm.prank(user1);
+        factory.delegateTokenCreation(operator);
+
+        vm.prank(user1);
+        vm.expectEmit(true, true, false, true);
+        emit ILiquidFactory.CreatorDelegateUpdated(user1, operator, false);
+        factory.revokeTokenCreationDelegate(operator);
+
+        assertFalse(factory.isCreatorDelegate(user1, operator));
+    }
+
+    function test_RevokeTokenCreationDelegate_RevertsWhen_OperatorIsZero() public {
+        vm.prank(user1);
+        vm.expectRevert(ILiquidFactory.AddressZero.selector);
+        factory.revokeTokenCreationDelegate(address(0));
+    }
+
+    function test_CreateLiquidTokenMultiCurve_RevertsAddressZeroWhen_CreatorIsZero() public {
+        Curve[] memory curves = _defaultSingleCurve();
+
+        vm.prank(user1);
+        vm.expectRevert(ILiquidFactory.AddressZero.selector);
+        factory.createLiquidTokenMultiCurve(address(0), "uri", "Token", "TKN", 0, curves);
+    }
+
+    function test_CreateLiquidTokenMultiCurveWithSupply_RevertsAddressZeroWhen_CreatorIsZero() public {
+        Curve[] memory curves = _defaultSingleCurve();
+
+        vm.prank(user1);
+        vm.expectRevert(ILiquidFactory.AddressZero.selector);
+        factory.createLiquidTokenMultiCurveWithSupply(address(0), "uri", "Token", "TKN", 0, curves, 2_000_000e18);
+    }
+
+    /// @dev Regression: createLiquidTokenMultiCurve must reject unapproved calls where _creator != msg.sender
     ///      to prevent an attacker from attributing a token to a victim's address.
-    function test_CreateLiquidTokenMultiCurve_RevertsWhen_CreatorIsNotCaller() public {
+    function test_CreateLiquidTokenMultiCurve_RevertsWhen_CreatorIsNotCallerOrDelegate() public {
         address attacker = makeAddr("attacker");
         address victim = makeAddr("victim");
 
@@ -499,6 +552,106 @@ contract LiquidFactoryUnitTest is Test {
         vm.prank(attacker);
         vm.expectRevert(ILiquidFactory.Unauthorized.selector);
         factory.createLiquidTokenMultiCurve(victim, "uri", "Token", "TKN", 0, curves);
+    }
+
+    function test_CreateLiquidTokenMultiCurve_AllowsApprovedDelegate() public {
+        address operator = makeAddr("operator");
+        _setValidPoolHook();
+
+        vm.prank(user1);
+        factory.delegateTokenCreation(operator);
+
+        Curve[] memory curves = _defaultSingleCurve();
+
+        vm.prank(operator);
+        address tokenAddr = factory.createLiquidTokenMultiCurve(user1, "uri", "Token", "TKN", 0, curves);
+
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
+        assertEq(token.tokenCreator(), user1);
+        assertEq(token.balanceOf(user1), factory.creatorLaunchReward());
+        assertEq(token.balanceOf(operator), 0);
+    }
+
+    function test_CreateLiquidTokenMultiCurve_DelegateCanDeployThenCreatorCanRevoke() public {
+        address operator = makeAddr("operator");
+        _setValidPoolHook();
+
+        vm.prank(user1);
+        factory.delegateTokenCreation(operator);
+
+        Curve[] memory curves = _defaultSingleCurve();
+
+        vm.prank(operator);
+        address tokenAddr = factory.createLiquidTokenMultiCurve(user1, "uri", "Token", "TKN", 0, curves);
+
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
+        assertEq(token.tokenCreator(), user1);
+
+        vm.prank(user1);
+        factory.revokeTokenCreationDelegate(operator);
+
+        assertFalse(factory.isCreatorDelegate(user1, operator));
+
+        vm.prank(operator);
+        vm.expectRevert(ILiquidFactory.Unauthorized.selector);
+        factory.createLiquidTokenMultiCurve(user1, "uri-2", "Token2", "TKN2", 0, curves);
+    }
+
+    function test_CreateLiquidTokenMultiCurveWithSupply_AllowsApprovedDelegate() public {
+        address operator = makeAddr("operator");
+        _setValidPoolHook();
+
+        vm.prank(user1);
+        factory.delegateTokenCreation(operator);
+
+        Curve[] memory curves = _defaultSingleCurve();
+
+        vm.prank(operator);
+        address tokenAddr =
+            factory.createLiquidTokenMultiCurveWithSupply(user1, "uri", "Token", "TKN", 0, curves, 2_000_000e18);
+
+        LiquidMultiCurve token = LiquidMultiCurve(payable(tokenAddr));
+        assertEq(token.tokenCreator(), user1);
+        assertEq(token.maxTotalSupply(), 2_000_000e18);
+        assertEq(token.balanceOf(user1), factory.creatorLaunchReward());
+    }
+
+    function test_CreateLiquidTokenMultiCurve_RevertsWhen_DelegateRevoked() public {
+        address operator = makeAddr("operator");
+
+        vm.prank(user1);
+        factory.delegateTokenCreation(operator);
+
+        vm.prank(user1);
+        factory.revokeTokenCreationDelegate(operator);
+
+        Curve[] memory curves = _defaultSingleCurve();
+
+        vm.prank(operator);
+        vm.expectRevert(ILiquidFactory.Unauthorized.selector);
+        factory.createLiquidTokenMultiCurve(user1, "uri", "Token", "TKN", 0, curves);
+    }
+
+    function test_CreateLiquidTokenMultiCurve_ApprovedDelegatePaysInitialRareLiquidity() public {
+        address operator = makeAddr("operator");
+        uint256 initialRareLiquidity = 1e15;
+        baseToken.mint(operator, 1000 ether);
+        _setValidPoolHook();
+
+        vm.prank(user1);
+        factory.delegateTokenCreation(operator);
+
+        Curve[] memory curves = _defaultSingleCurve();
+        uint256 operatorRareBefore = baseToken.balanceOf(operator);
+
+        vm.prank(operator);
+        baseToken.approve(address(factory), initialRareLiquidity);
+        vm.prank(operator);
+        address tokenAddr =
+            factory.createLiquidTokenMultiCurve(user1, "uri", "Token", "TKN", initialRareLiquidity, curves);
+
+        assertTrue(tokenAddr != address(0));
+        assertEq(operatorRareBefore - baseToken.balanceOf(operator), initialRareLiquidity);
     }
 
     /// @dev Parked legacy Instant factory-path regression. The active multicurve guard is covered above.

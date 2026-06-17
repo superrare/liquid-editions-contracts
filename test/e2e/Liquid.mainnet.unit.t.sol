@@ -368,7 +368,7 @@ contract LiquidInstantMainnetUnitTest is Test, InitGuardTestHelper {
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
         Curve[] memory curves = _defaultSingleCurve();
 
-        vm.expectRevert(ILiquidFactory.Unauthorized.selector);
+        vm.expectRevert(ILiquidFactory.AddressZero.selector);
         factory.createLiquidTokenMultiCurve(address(0), "ipfs://test", "Test Token", "TEST", 0.1 ether, curves);
         vm.stopPrank();
     }

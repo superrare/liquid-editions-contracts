@@ -806,23 +806,27 @@ contract LiquidMigrationE2ETest is Test, InitGuardTestHelper {
         (Currency c0, Currency c1, uint24 fee, int24 tickSpacing,) = token.poolKey();
         PoolId oldPoolId = token.poolId();
         Position[] memory newPositions = _defaultMultiCurveMigrationPositions(token, 1 ether);
-        (uint160 correctSqrtPriceX96,,,) = pm.getSlot0(oldPoolId);
+        (uint160 correctSqrtPriceX96, int24 currentTick,,) = pm.getSlot0(oldPoolId);
 
-        // Confirm the correct price is far from the upper tick
-        uint160 upperTickPrice = TickMath.getSqrtPriceAtTick(token.lpTickUpper() - 1);
-        assertTrue(upperTickPrice > correctSqrtPriceX96, "Upper tick should be above current price");
+        // Pick the far end of the active range, regardless of currency ordering.
+        int24 lowerTick = token.lpTickLower();
+        int24 upperTick = token.lpTickUpper();
+        int24 midpointTick = lowerTick + ((upperTick - lowerTick) / 2);
+        int24 wrongTick = currentTick <= midpointTick ? upperTick : lowerTick;
+        uint160 wrongSqrtPriceX96 = TickMath.getSqrtPriceAtTick(wrongTick);
+        assertTrue(wrongSqrtPriceX96 != correctSqrtPriceX96, "Wrong price should differ from current price");
 
         vm.prank(admin);
         LiquidGuard(initGuard2).addInitializer(address(token));
 
-        // Pass a price near the upper tick — the contract only has ~1 RARE seeded,
+        // Pass a price at the opposite end of the curve — the contract only has ~1 RARE seeded,
         // but V4 will demand ~3.6e26 tokens to fill the position at this price.
         ILiquidMigrationExecutor.MigrationPlan memory plan = ILiquidMigrationExecutor.MigrationPlan({
             token: address(token),
             newPoolKey: PoolKey({
                 currency0: c0, currency1: c1, fee: fee, tickSpacing: tickSpacing, hooks: IHooks(initGuard2)
             }),
-            newSqrtPriceX96: upperTickPrice,
+            newSqrtPriceX96: wrongSqrtPriceX96,
             newPositions: newPositions,
             maxDust0: type(uint256).max,
             maxDust1: type(uint256).max

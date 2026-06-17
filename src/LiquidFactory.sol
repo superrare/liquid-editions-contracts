@@ -51,6 +51,9 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
     /// @dev All ticks must be multiples of this spacing. Used when initializing pools.
     int24 public poolTickSpacing;
 
+    /// @notice Creator-approved operators that can launch Liquid tokens on a creator's behalf
+    mapping(address creator => mapping(address operator => bool)) public isCreatorDelegate;
+
     // ============================================
     // CONSTRUCTOR
     // ============================================
@@ -104,9 +107,9 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         uint256 _initialRareLiquidity,
         Curve[] calldata _curves
     ) external whenNotPaused returns (address token) {
-        // Simple protection against malicious creation of tokens on behalf of others.
-        // Keeping _creator in function params so we can enable concierge service later without changing interface.
-        if (_creator != msg.sender) revert Unauthorized();
+        if (_creator == address(0)) revert AddressZero();
+        // Protects creators from malicious launches while allowing explicit delegation.
+        if (!_isAuthorizedCreator(_creator, msg.sender)) revert Unauthorized();
 
         return _createLiquidTokenMultiCurve(
             _creator, _tokenUri, _name, _symbol, _initialRareLiquidity, _curves, maxTotalSupply
@@ -134,11 +137,36 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         Curve[] calldata _curves,
         uint256 _customMaxTotalSupply
     ) external whenNotPaused returns (address token) {
-        if (_creator != msg.sender) revert Unauthorized();
+        if (_creator == address(0)) revert AddressZero();
+        if (!_isAuthorizedCreator(_creator, msg.sender)) revert Unauthorized();
 
         return _createLiquidTokenMultiCurve(
             _creator, _tokenUri, _name, _symbol, _initialRareLiquidity, _curves, _customMaxTotalSupply
         );
+    }
+
+    /// @notice Returns whether a caller can create Liquid tokens for a creator
+    function _isAuthorizedCreator(address creator, address caller) internal view returns (bool) {
+        return creator == caller || isCreatorDelegate[creator][caller];
+    }
+
+    // ============================================
+    // CREATOR DELEGATION
+    // ============================================
+
+    /// @notice Allows an operator to create Liquid tokens on behalf of msg.sender.
+    /// @dev Delegated operators still pay any `_initialRareLiquidity` pulled by the create call.
+    function delegateTokenCreation(address operator) external {
+        if (operator == address(0)) revert AddressZero();
+        isCreatorDelegate[msg.sender][operator] = true;
+        emit CreatorDelegateUpdated(msg.sender, operator, true);
+    }
+
+    /// @notice Revokes an operator's permission to create Liquid tokens on behalf of msg.sender.
+    function revokeTokenCreationDelegate(address operator) external {
+        if (operator == address(0)) revert AddressZero();
+        isCreatorDelegate[msg.sender][operator] = false;
+        emit CreatorDelegateUpdated(msg.sender, operator, false);
     }
 
     /// @notice Internal function that creates a LiquidMultiCurve token clone and initializes it

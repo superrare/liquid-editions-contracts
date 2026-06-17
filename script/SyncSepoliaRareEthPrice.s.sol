@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 import {console} from "forge-std/console.sol";
 import {Script} from "forge-std/Script.sol";
 import {StdCheats} from "forge-std/StdCheats.sol";
+import {VmSafe} from "forge-std/Vm.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
@@ -17,10 +18,10 @@ import {NetworkConfig} from "./config/NetworkConfig.sol";
 
 /**
  * @title SyncSepoliaRareEthPrice
- * @notice Reads mainnet RARE/ETH price, then syncs the Sepolia pool to match.
+ * @notice Reads mainnet RARE/ETH price, then syncs a configured testnet pool to match.
  *
  * @dev Two-phase approach:
- *   Phase 1 (always): Dry-run — simulates the swap on a Sepolia fork snapshot using
+ *   Phase 1 (always): Dry-run — simulates the swap on a target fork snapshot using
  *                      vm.deal / deal to fake-fund a syncer. Reports the exact RARE or
  *                      ETH needed, then rolls back state via vm.revertToAndDelete.
  *   Phase 2 (broadcast only): Executes the real swap using the deployer's funds.
@@ -29,9 +30,14 @@ import {NetworkConfig} from "./config/NetworkConfig.sol";
  *   price. We overshoot the input — V4 only consumes what's needed.
  *
  * Environment Variables:
- *   - MAINNET_RPC_URL      : mainnet RPC (foundry.toml alias "mainnet")
- *   - ETH_SEPOLIA          : Sepolia RPC  (foundry.toml alias "sepolia")
- *   - DEPLOYER_PRIVATE_KEY : private key of the account executing the swap
+ *   - MAINNET_RPC_URL       : mainnet RPC (foundry.toml alias "mainnet")
+ *   - ETH_SEPOLIA           : Sepolia RPC  (foundry.toml alias "sepolia")
+ *   - BASE_SEPOLIA_RPC_URL  : Base Sepolia RPC (foundry.toml alias "base_sepolia")
+ *   - TARGET_CHAIN_ID       : optional target chain ID; defaults to Ethereum Sepolia (11155111)
+ *   - TARGET_FORK_ALIAS     : optional target fork alias; defaults to "sepolia"
+ *   - POOL_FEE              : optional V4 pool fee; defaults to 3000
+ *   - TICK_SPACING          : optional V4 tick spacing; defaults to 60
+ *   - DEPLOYER_PRIVATE_KEY  : private key of the account executing the swap
  *
  * Usage:
  *   # Simulate (shows exact amounts needed, no on-chain tx):
@@ -40,13 +46,23 @@ import {NetworkConfig} from "./config/NetworkConfig.sol";
  *   # Execute (broadcasts the swap on Sepolia):
  *   forge script script/SyncSepoliaRareEthPrice.s.sol:SyncSepoliaRareEthPrice \
  *     --rpc-url sepolia --broadcast -vv
+ *
+ *   # Simulate Base Sepolia:
+ *   TARGET_CHAIN_ID=84532 TARGET_FORK_ALIAS=base_sepolia \
+ *   forge script script/SyncSepoliaRareEthPrice.s.sol:SyncSepoliaRareEthPrice \
+ *     --rpc-url base_sepolia -vv
+ *
+ *   # Execute on Base Sepolia:
+ *   TARGET_CHAIN_ID=84532 TARGET_FORK_ALIAS=base_sepolia \
+ *   forge script script/SyncSepoliaRareEthPrice.s.sol:SyncSepoliaRareEthPrice \
+ *     --rpc-url base_sepolia --broadcast -vv
  */
 contract SyncSepoliaRareEthPrice is Script, StdCheats {
     using PoolIdLibrary for PoolKey;
     using StateLibrary for IPoolManager;
 
-    uint24 constant POOL_FEE = 3000;
-    int24 constant POOL_TICK_SPACING = 60;
+    uint24 constant DEFAULT_POOL_FEE = 3000;
+    int24 constant DEFAULT_POOL_TICK_SPACING = 60;
 
     /// @dev Generous ceiling for the dry-run simulation. V4's sqrtPriceLimitX96 ensures
     ///      only what's needed is consumed. These never leave the fork snapshot.
@@ -54,6 +70,12 @@ contract SyncSepoliaRareEthPrice is Script, StdCheats {
     uint256 constant SIM_ETH_CEILING = 10_000 ether;
 
     function run() external {
+        uint256 targetChainId = vm.envOr("TARGET_CHAIN_ID", uint256(11155111));
+        string memory targetForkAlias = vm.envOr("TARGET_FORK_ALIAS", string("sepolia"));
+        uint24 poolFee = uint24(vm.envOr("POOL_FEE", uint256(DEFAULT_POOL_FEE)));
+        int24 poolTickSpacing = int24(int256(vm.envOr("TICK_SPACING", uint256(uint24(DEFAULT_POOL_TICK_SPACING)))));
+        string memory targetLabel = _targetLabel(targetChainId, targetForkAlias);
+
         // ================================================================
         //  1. Read mainnet RARE/ETH pool price
         // ================================================================
@@ -76,42 +98,48 @@ contract SyncSepoliaRareEthPrice is Script, StdCheats {
         console.log("");
 
         // ================================================================
-        //  2. Switch to Sepolia, read pool state
+        //  2. Switch to target chain, read pool state
         // ================================================================
-        NetworkConfig.Config memory sepCfg = NetworkConfig.getConfig(11155111);
+        NetworkConfig.Config memory targetCfg = NetworkConfig.getConfig(targetChainId);
 
-        vm.createSelectFork("sepolia");
+        vm.createSelectFork(targetForkAlias);
 
-        IPoolManager sepPm = IPoolManager(sepCfg.uniswapV4PoolManager);
-        PoolId sepPoolId = PoolId.wrap(sepCfg.rareEthPoolId);
+        IPoolManager targetPm = IPoolManager(targetCfg.uniswapV4PoolManager);
+        PoolId targetPoolId = PoolId.wrap(targetCfg.rareEthPoolId);
 
-        (uint160 sepSqrt, int24 sepTick, , ) = sepPm.getSlot0(sepPoolId);
-        uint128 sepLiq = sepPm.getLiquidity(sepPoolId);
-        require(sepSqrt != 0, "Sepolia RARE/ETH pool not initialized");
+        (uint160 targetSqrt, int24 targetTick, , ) = targetPm.getSlot0(targetPoolId);
+        uint128 targetLiq = targetPm.getLiquidity(targetPoolId);
+        require(targetSqrt != 0, string.concat(targetLabel, " RARE/ETH pool not initialized"));
 
         console.log("================================================");
-        console.log("  SEPOLIA RARE/ETH (to be synced)");
+        console.log(string.concat("  ", targetLabel, " RARE/ETH (to be synced)"));
         console.log("================================================");
-        console.log("  sqrtPriceX96 :", uint256(sepSqrt));
-        console.log("  tick         :", _tickStr(sepTick));
-        console.log("  liquidity    :", uint256(sepLiq));
-        _logPrice("  price", _sqrtPriceToWad(sepSqrt));
+        console.log("  chain ID     :", targetChainId);
+        console.log("  fork alias   :", targetForkAlias);
+        console.log("  pool fee     :", uint256(poolFee));
+        console.log("  tick spacing :", _tickStr(poolTickSpacing));
+        console.log("  poolId       :");
+        console.logBytes32(targetCfg.rareEthPoolId);
+        console.log("  sqrtPriceX96 :", uint256(targetSqrt));
+        console.log("  tick         :", _tickStr(targetTick));
+        console.log("  liquidity    :", uint256(targetLiq));
+        _logPrice("  price", _sqrtPriceToWad(targetSqrt));
         console.log("");
 
-        if (mainnetSqrt == sepSqrt) {
+        if (mainnetSqrt == targetSqrt) {
             console.log("  Prices already in sync. Nothing to do.");
             return;
         }
 
-        bool sellRare = mainnetSqrt > sepSqrt;
+        bool sellRare = mainnetSqrt > targetSqrt;
 
         console.log("================================================");
         console.log("  SYNC PLAN");
         console.log("================================================");
         if (sellRare) {
-            console.log("  Direction    : SELL RARE -> ETH (Sepolia RARE too expensive)");
+            console.log(string.concat("  Direction    : SELL RARE -> ETH (", targetLabel, " RARE too expensive)"));
         } else {
-            console.log("  Direction    : BUY RARE <- ETH  (Sepolia RARE too cheap)");
+            console.log(string.concat("  Direction    : BUY RARE <- ETH  (", targetLabel, " RARE too cheap)"));
         }
         console.log("  Target sqrt  :", uint256(mainnetSqrt));
         console.log("  Target tick  :", _tickStr(mainnetTick));
@@ -119,9 +147,9 @@ contract SyncSepoliaRareEthPrice is Script, StdCheats {
 
         PoolKey memory key = PoolKey({
             currency0: CurrencyLibrary.ADDRESS_ZERO,
-            currency1: Currency.wrap(sepCfg.rareToken),
-            fee: POOL_FEE,
-            tickSpacing: POOL_TICK_SPACING,
+            currency1: Currency.wrap(targetCfg.rareToken),
+            fee: poolFee,
+            tickSpacing: poolTickSpacing,
             hooks: IHooks(address(0))
         });
 
@@ -135,14 +163,14 @@ contract SyncSepoliaRareEthPrice is Script, StdCheats {
 
         // Fund the sim syncer with generous ceilings — this is off-chain only
         vm.deal(address(simSyncer), SIM_ETH_CEILING);
-        deal(sepCfg.rareToken, address(simSyncer), SIM_RARE_CEILING);
+        deal(targetCfg.rareToken, address(simSyncer), SIM_RARE_CEILING);
 
         (int128 simDeltaEth, int128 simDeltaRare) = simSyncer.sync(
-            sepPm, key, sepCfg.rareToken, mainnetSqrt, sellRare
+            targetPm, key, targetCfg.rareToken, mainnetSqrt, sellRare
         );
 
         // Read the post-swap price to check if we fully synced
-        (uint160 simFinalSqrt, int24 simFinalTick, , ) = sepPm.getSlot0(sepPoolId);
+        (uint160 simFinalSqrt, int24 simFinalTick, , ) = targetPm.getSlot0(targetPoolId);
         bool fullSync = (simFinalSqrt == mainnetSqrt);
 
         // Roll back — pool state is restored to pre-simulation
@@ -183,7 +211,14 @@ contract SyncSepoliaRareEthPrice is Script, StdCheats {
         // ================================================================
         //  4. EXECUTE — broadcast the real swap (only runs with --broadcast)
         // ================================================================
-        uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        bool shouldBroadcast =
+            vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || vm.isContext(VmSafe.ForgeContext.ScriptResume);
+        if (!shouldBroadcast) {
+            console.log("  Dry run only. Add --broadcast and DEPLOYER_PRIVATE_KEY to execute the swap.");
+            return;
+        }
+
+        uint256 pk = _envPrivateKey("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
 
         console.log("================================================");
@@ -192,7 +227,7 @@ contract SyncSepoliaRareEthPrice is Script, StdCheats {
         console.log("  Deployer     :", deployer);
 
         if (sellRare) {
-            uint256 rareBal = IERC20(sepCfg.rareToken).balanceOf(deployer);
+            uint256 rareBal = IERC20(targetCfg.rareToken).balanceOf(deployer);
             console.log("  RARE balance :", rareBal / 1e18, "RARE");
             console.log("  RARE needed  :", rareNeeded / 1e18, "RARE");
             require(rareBal >= rareNeeded, "Insufficient RARE - transfer more to deployer before running with --broadcast");
@@ -211,19 +246,19 @@ contract SyncSepoliaRareEthPrice is Script, StdCheats {
         uint256 fundAmount = sellRare ? rareNeeded + 1 ether : ethNeeded + 0.01 ether;
 
         if (sellRare) {
-            IERC20(sepCfg.rareToken).transfer(address(syncer), fundAmount);
+            IERC20(targetCfg.rareToken).transfer(address(syncer), fundAmount);
         } else {
             payable(address(syncer)).transfer(fundAmount);
         }
 
         (int128 deltaEth, int128 deltaRare) = syncer.sync(
-            sepPm, key, sepCfg.rareToken, mainnetSqrt, sellRare
+            targetPm, key, targetCfg.rareToken, mainnetSqrt, sellRare
         );
 
         // Recover leftover funds
-        uint256 leftoverRare = IERC20(sepCfg.rareToken).balanceOf(address(syncer));
+        uint256 leftoverRare = IERC20(targetCfg.rareToken).balanceOf(address(syncer));
         if (leftoverRare > 0) {
-            syncer.recoverERC20(sepCfg.rareToken, deployer, leftoverRare);
+            syncer.recoverERC20(targetCfg.rareToken, deployer, leftoverRare);
         }
         uint256 leftoverEth = address(syncer).balance;
         if (leftoverEth > 0) {
@@ -250,7 +285,7 @@ contract SyncSepoliaRareEthPrice is Script, StdCheats {
         if (leftoverEth > 0) console.log("  ETH returned :", leftoverEth / 1e18, "(unused)");
         console.log("");
 
-        (uint160 finalSqrt, int24 finalTick, , ) = sepPm.getSlot0(sepPoolId);
+        (uint160 finalSqrt, int24 finalTick, , ) = targetPm.getSlot0(targetPoolId);
         console.log("  Final sqrtPriceX96 :", uint256(finalSqrt));
         console.log("  Final tick         :", _tickStr(finalTick));
         _logPrice("  Final price", _sqrtPriceToWad(finalSqrt));
@@ -283,6 +318,41 @@ contract SyncSepoliaRareEthPrice is Script, StdCheats {
         uint256 frac = (amount % 1e18) / 1e12;
         console.log(string.concat(label, " : ", vm.toString(whole), ".", _pad(vm.toString(frac), 6)));
         console.log(string.concat("                  (wei: ", vm.toString(amount), ")"));
+    }
+
+    function _targetLabel(uint256 chainId, string memory forkAlias) internal pure returns (string memory) {
+        if (chainId == 11155111) return "SEPOLIA";
+        if (chainId == 84532) return "BASE SEPOLIA";
+        if (chainId == 8453) return "BASE";
+        return string.concat("CHAIN ", vm.toString(chainId), " (", forkAlias, ")");
+    }
+
+    function _envPrivateKey(string memory envKey) internal view returns (uint256) {
+        string memory raw = vm.envString(envKey);
+        bytes memory value = bytes(raw);
+        uint256 start;
+
+        if (value.length == 66 && value[0] == "0" && (value[1] == "x" || value[1] == "X")) {
+            start = 2;
+        } else {
+            require(value.length == 64, "DEPLOYER_PRIVATE_KEY must be 32-byte hex, with or without 0x prefix");
+        }
+
+        uint256 parsed;
+        for (uint256 i = start; i < value.length; i++) {
+            parsed = (parsed << 4) | _hexNibble(value[i]);
+        }
+
+        require(parsed != 0, "DEPLOYER_PRIVATE_KEY cannot be zero");
+        return parsed;
+    }
+
+    function _hexNibble(bytes1 char) internal pure returns (uint256) {
+        uint8 c = uint8(char);
+        if (c >= 48 && c <= 57) return c - 48;
+        if (c >= 65 && c <= 70) return c - 55;
+        if (c >= 97 && c <= 102) return c - 87;
+        revert("DEPLOYER_PRIVATE_KEY contains non-hex character");
     }
 
     function _tickStr(int24 tick) internal pure returns (string memory) {

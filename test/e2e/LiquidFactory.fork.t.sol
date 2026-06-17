@@ -259,7 +259,7 @@ contract LiquidFactoryTest is Test, InitGuardTestHelper {
 
         vm.startPrank(tokenCreator);
         IERC20(mockRARE).approve(address(factory), 0.1 ether);
-        vm.expectRevert(ILiquidFactory.Unauthorized.selector);
+        vm.expectRevert(ILiquidFactory.AddressZero.selector);
         factory.createLiquidTokenMultiCurve(
             address(0), // Zero creator
             "ipfs://test",

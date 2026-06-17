@@ -90,6 +90,12 @@ interface ILiquidFactory {
     /// @param migrationExecutor The new migration executor address
     event MigrationExecutorUpdated(address indexed migrationExecutor);
 
+    /// @notice Emitted when a creator updates an operator's permission to create tokens on their behalf
+    /// @param creator The creator granting or revoking permission
+    /// @param operator The delegated operator address
+    /// @param approved True when the operator is approved, false when revoked
+    event CreatorDelegateUpdated(address indexed creator, address indexed operator, bool approved);
+
     // ============================================
     // FUNCTIONS
     // ============================================
@@ -129,6 +135,16 @@ interface ILiquidFactory {
     /// @notice Returns the migration executor address.
     /// @dev Only the migration executor can call migrateLiquidity() on Liquid tokens.
     function migrationExecutor() external view returns (address);
+
+    /// @notice Returns whether `operator` can create Liquid tokens on behalf of `creator`.
+    function isCreatorDelegate(address creator, address operator) external view returns (bool);
+
+    /// @notice Allows `operator` to create Liquid tokens on behalf of msg.sender.
+    /// @dev Delegated operators still pay any `_initialRareLiquidity` pulled from `msg.sender`.
+    function delegateTokenCreation(address operator) external;
+
+    /// @notice Revokes `operator` permission to create Liquid tokens on behalf of msg.sender.
+    function revokeTokenCreationDelegate(address operator) external;
 
     /// @notice Pause token creation in factory
     function pause() external;

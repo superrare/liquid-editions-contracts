@@ -63,13 +63,13 @@ library NetworkConfig {
                     lbpStrategyFactory: 0x65aF3B62EE79763c704f04238080fBADD005B332,
                     protocolFeeRecipient: 0x860a80d33E85e97888F1f0C75c6e5BBD60b48DA9, // change this before actual mainnet deployment
                     liquid: LiquidAddresses({
-                        factory: 0xbb4341CFd588a098e9aCE1D224178836426c4a8E,
+                        factory: 0x25f993C222fE5e891128a782A5168f1C78629540,
                         router: 0xEBd58EdA8408d9EA409f2c2bE8898BD9738f3583,
                         auctioneer: 0x656b073247d2583994a88300B01Af82dD7d28EFA,
                         swapGuard: address(0), // not yet deployed
                         initGuard: address(0),
-                        liquidGuard: 0xbBcbF794Af5C8BEFdea613a4cBcc0Af1148c20cC,
-                        feeDistributor: 0x3b99dd71EFF85CB802435E182Bc8565f39b69745,
+                        liquidGuard: 0x8Ff5660951C974f4806F0bEF9A32bcf35d3aE0cC,
+                        feeDistributor: 0xCDccF9078540448009d432f87141a76B1C02B774,
                         liquidRegistry: 0x4066052d6AAC25EcFB027fD0C1aD54A597Ce3A31,
                         migrationExecutor: 0xfaDCCe3A08435B06d88AcF736dbE0bE802556306
                     })
@@ -80,26 +80,26 @@ library NetworkConfig {
                 Config({
                     rareToken: 0x691077C8e8de54EA84eFd454630439F99bd8C92f,
                     usdc: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913,
-                    rareBurner: address(0),
+                    rareBurner: 0x8B333c7cE380A7efE110Ea444e81609DBA4b75e5,
                     weth: 0x4200000000000000000000000000000000000006,
                     rareEthPoolId: 0x0000000000000000000000000000000000000000000000000000000000000000,
                     uniswapV4PoolManager: 0x498581fF718922c3f8e6A244956aF099B2652b2b,
                     uniswapV4PositionManager: 0x7C5f5A4bBd8fD63184577525326123B519429bDc,
                     uniswapV4Quoter: 0x0d5e0F971ED27FBfF6c2837bf31316121532048D,
                     uniswapUniversalRouter: 0x6fF5693b99212Da76ad316178A184AB56D299b43,
-                    ccaFactory: address(0), // need to add this before actual mainnet deployment
+                    ccaFactory: 0xCCccCcCAE7503Cac057829BF2811De42E16e0bD5,
                     lbpStrategyFactory: 0x39E5eB34dD2c8082Ee1e556351ae660F33B04252,
-                    protocolFeeRecipient: address(0), // need to know what this is before actual mainnet deployment
+                    protocolFeeRecipient: 0xD2437c0511906085CbDD06C27e8915d715dC3290,
                     liquid: LiquidAddresses({
-                        factory: address(0),
-                        router: address(0),
+                        factory: 0x54016106A92895a38E54cA286216416750e517b1,
+                        router: 0x6d078A410ee2AD08cACD8d22b486365433e98b7b,
                         auctioneer: address(0),
                         swapGuard: address(0),
                         initGuard: address(0),
-                        liquidGuard: address(0),
-                        feeDistributor: address(0),
-                        liquidRegistry: address(0),
-                        migrationExecutor: address(0)
+                        liquidGuard: 0xb0E1Ecc884698f88D4e24043469e4B9bCE0a60cc,
+                        feeDistributor: 0x16e81cade4Bb1E9Ff8C3e8c4277FE7693Bd272BB,
+                        liquidRegistry: 0x539e8261e18C56D801c7549fb29d06c779ef5004,
+                        migrationExecutor: 0xCDb9eC7408cfEb126cF93ad70396eBc733f2bfaE
                     })
                 });
         } else if (chainId == 84532) {
@@ -108,26 +108,26 @@ library NetworkConfig {
                 Config({
                     rareToken: 0x8b21bC8571d11F7AdB705ad8F6f6BD1deb79cE01,
                     usdc: 0x036CbD53842c5426634e7929541eC2318f3dCF7e,
-                    rareBurner: 0x978faD411a01DDc9D5eFCBC476dcf32c758Fc604,
+                    rareBurner: 0x9156b06d9849429d5C6D32c815b56004d582e5C8,
                     weth: 0x4200000000000000000000000000000000000006,
-                    rareEthPoolId: 0xb05cc8f2a70e36fc8ccff769958d8b1d90980ed38d3a6f48ae89ce9a8d18f69d,
+                    rareEthPoolId: 0x7e9be56512e7013e608b830dce2aa4e6a63edbb6488482aa4ccfff9a00b0da5b,
                     uniswapV4PoolManager: 0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408,
                     uniswapV4PositionManager: 0x4B2C77d209D3405F41a037Ec6c77F7F5b8e2ca80,
                     uniswapV4Quoter: 0x4A6513c898fe1B2d0E78d3b0e0A4a151589B1cBa,
-                    uniswapUniversalRouter: 0x95273d871c8156636e114b63797d78D7E1720d81,
-                    ccaFactory: address(0), // need to add this before actual mainnet deployment
-                    lbpStrategyFactory: address(0), // need to add this before actual mainnet deployment
+                    uniswapUniversalRouter: 0x492E6456D9528771018DeB9E87ef7750EF184104,
+                    ccaFactory: 0xCCccCcCAE7503Cac057829BF2811De42E16e0bD5,
+                    lbpStrategyFactory: 0xa3A236647c80BCD69CAD561ACf863c29981b6fbC,
                     protocolFeeRecipient: 0xBa68422A154e459f7b4992a95Ad358d412b6bd1d,
                     liquid: LiquidAddresses({
-                        factory: 0xc265a84Dc7EeC0fc15f5F91B61C6C094e7De7116,
-                        router: 0x137A81F1C8cC11B69179F8Bf6ACb7e53D7DBC50F,
+                        factory: 0x912ecC55445d87149d09d83426D0aC41379bB643,
+                        router: 0x92438008608949E2C7eCef34c474792bAFe8a971,
                         auctioneer: address(0),
                         swapGuard: address(0),
                         initGuard: address(0),
-                        liquidGuard: address(0),
-                        feeDistributor: address(0),
-                        liquidRegistry: address(0),
-                        migrationExecutor: address(0)
+                        liquidGuard: 0x1c56E7747D67b6731c9EE12b74b4062Efc7020Cc,
+                        feeDistributor: 0x3c8cdeF90333F5adA046690f0c37bEc311f0996a,
+                        liquidRegistry: 0x5AB6B3f7eBEFDA67cfc4D135718F9E34d58856b9,
+                        migrationExecutor: 0xc87f440Acde20726Dc42F862C78A45981De76dF1
                     })
                 });
         } else if (chainId == 11155111) {
@@ -147,13 +147,13 @@ library NetworkConfig {
                     lbpStrategyFactory: 0x89Dd5691e53Ea95d19ED2AbdEdCf4cBbE50da1ff,
                     protocolFeeRecipient: 0xBa68422A154e459f7b4992a95Ad358d412b6bd1d,
                     liquid: LiquidAddresses({
-                        factory: 0xfD18C0D99e5b6F89F3538806241C2C0d6FD728Ac,
+                        factory: 0xb1777091C953fa2aC1fD67f2b3e2f61343F5Ce5e,
                         router: 0x429c3Ee66E7f6CDA12C5BadE4104aF3277aA2305,
                         auctioneer: 0xf0dC12B5A36498C30dE00708253258F7509f1130,
                         swapGuard: address(0),
                         initGuard: address(0),
-                        liquidGuard: 0x14fD361BE75deC8a42eEd08940CCeb3e65D3E0Cc,
-                        feeDistributor: 0x811325f663194366B7CFcE1cB4e6AD5d25E4BC62,
+                        liquidGuard: 0xB32eC4b5eC46fBd8E68a39308b8569538d0620CC,
+                        feeDistributor: 0xC5875290E3942BdC2971ACB1af6630563E6cc557,
                         liquidRegistry: 0x979C2FB02B8cF352eBeD15872B76b8bE78B64Ebc,
                         migrationExecutor: 0x4bfE60db98493B146CdfCEFd20f0AAE697C7c80A
                     })
