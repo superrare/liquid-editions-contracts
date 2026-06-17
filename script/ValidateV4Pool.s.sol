@@ -9,7 +9,7 @@ import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
-import {NetworkConfig} from "./NetworkConfig.sol";
+import {NetworkConfig} from "./config/NetworkConfig.sol";
 
 /**
  * @title ValidateV4Pool
@@ -29,7 +29,7 @@ contract ValidateV4Pool is Script {
     using PoolIdLibrary for PoolKey;
     using StateLibrary for IPoolManager;
 
-    function run() external {
+    function run() external view {
         // Get chain ID from environment or use block.chainid
         uint256 chainId;
         try vm.envUint("CHAIN_ID") returns (uint256 _chainId) {

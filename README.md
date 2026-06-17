@@ -8,7 +8,7 @@ Liquid Edition Contracts is a smart contract suite that enables:
 - **Token Creation**: Launch ERC-20 tokens with immediate Uniswap V4 liquidity
 - **Bonding Curve**: Simulated bonding curve via constant-product AMM (900K tokens + 0.001 ETH)
 - **Automated Market Making**: Direct Uniswap V4 PoolManager integration for all trades
-- **Protocol Rewards**: Configurable three-tier fee distribution (creator, protocol, referrer, RARE burn)
+- **Protocol Rewards**: Configurable fee distribution between beneficiaries and protocol (with RARE burn support)
 - **RARE Token Integration**: Support for RARE token burning via V4 pools
 
 ## Core Contracts
@@ -18,27 +18,101 @@ The main factory contract for deploying new Liquid token instances. Manages prot
 - Protocol fee configuration and recipient
 - Integration with RAREBurner
 - Token deployment and tracking
-
-### `Liquid.sol`
-The primary ERC-20 token implementation featuring:
+- V4 hooks, pool bootstrap parameters, and registry wiring
+### `LiquidInstant.sol`
+The instant-launch ERC-20 token implementation featuring:
 - Uniswap V4 PoolManager integration via unlock callbacks
-- Buy/sell functionality with native ETH (no WETH for trades)
-- Immediate pool creation with 900K tokens + configurable ETH
-- Automated LP fee collection and distribution
-- Creator and protocol fee distribution with RARE burn support
+- Immediate pool creation with 900K tokens + configurable RARE liquidity
+- Quote functions for buy/sell operations
+- Creator launch reward distribution
+
+### `LiquidGraduated.sol`
+The graduated-launch ERC-20 token implementation featuring:
+- CCA (Continuous Clearing Auction) integration via LBP strategy
+- Pool creation at auction-discovered price (after graduation)
+- Quote functions for buy/sell operations
+- Creator launch reward distribution
+
+### `LiquidMultiCurve.sol`
+The multicurve anti-sniping ERC-20 token implementation featuring:
+- Multiple concentrated liquidity positions for launch price protection
+- Immediate pool creation with distributed liquidity across tick ranges
+- Quote functions for buy/sell operations
+- Creator launch reward distribution
+
+### `LiquidRouter.sol`
+Router contract enabling fee-wrapped trading for any registered ERC20 token:
+- Routes swaps through Uniswap Universal Router (V2/V3/V4 support)
+- Does not collect fees itself in-trade; V4 fee collection is performed in `LiquidGuard`
+- through callback hooks, then forwarded to `FeeDistributor.notifyFee`
+- Supports buy (ETH → token), sell (token → ETH), and swap (any → any) operations
+- Uses Permit2 for secure token approvals
+- Emits trade events with fee fields as zeros because the active split is applied downstream.
+
+### `LiquidAuctioneer.sol`
+Router contract for CCA auction interactions:
+- Bid on auctions using ETH or ERC20 tokens (swapped to RARE)
+- Exit bids and claim filled tokens
+- Routes swaps through Uniswap Universal Router
+- Uses legacy auction compatibility flow for native-ETH bid fees (`totalFeeBPS` + `distributeFees`), which is intentionally a compatibility no-op in current V4 distributor.
+
+### `FeeDistributor.sol`
+Fee distribution contract that splits trading fees:
+- Skims RARE via `LiquidGuard` hooks, then attempts inline RARE→ETH conversion and distribution.
+- Falls back to direct RARE forwarding when conversion is disabled, stale, or fails.
+- Follows compatibility no-op behavior for legacy auction selectors (`totalFeeBPS`, etc.).
+- Protocol fee recipient is immutable at construction.
+
+### `LiquidRegistry.sol`
+Centralized registry of valid Liquid tokens and their beneficiaries:
+- Token registration requirement for Router and Auctioneer trading
+- Beneficiary mapping for fee distribution
+- Writer-based access control (factory can register tokens)
+
+### `LiquidSwapGuard.sol`
+Uniswap V4 hook that restricts swaps and pool initialization:
+- Only whitelisted routers/callers can swap (prevents unauthorized direct swaps)
+- Only whitelisted Liquid token contracts can initialize pools (prevents pool pre-initialization DoS)
+- Uses IMsgSender trusted-router pattern
+
+### `LiquidInitGuard.sol`
+Lightweight Uniswap V4 hook that restricts pool initialization only:
+- Only whitelisted Liquid token contracts can initialize pools
+- Swaps are unrestricted (use when swap restriction not needed)
+- Simpler alternative to LiquidSwapGuard
 
 ### `RAREBurner.sol`
-Handles RARE token burning through Uniswap swaps:
-- Converts ETH to RARE tokens
+Non-reverting ETH accumulator that performs best-effort RARE token burns:
+- Converts ETH to RARE tokens via Uniswap V4 swaps
 - Burns RARE tokens to designated burn address
 - Configurable slippage protection
-- V3 and V4 pool support
+- V4 pool support only
 
 ### `V4LiquidityHelper.sol`
 Helper contract for managing Uniswap V4 liquidity positions:
 - Simplified V4 position management
 - Liquidity addition and removal
 - Position tracking and queries
+
+## Canonical behavior map
+
+Use [`docs/FLOW.md`](docs/FLOW.md) as the canonical onboarding and behavior reference.
+It includes one concise flow summary each for:
+- Create
+- Buy
+- Sell
+- Swap
+- Auction bid
+- Fee conversion/distribution
+- Burn
+
+This doc also contains the required `Feature -> File -> Functions -> Events` mapping.
+
+## Known compatibility / no-op behavior
+
+- `IFeeDistributor.totalFeeBPS`, `quoteFeeBreakdown`, `distributeFees`, and `setTotalFeeBPS` are compatibility entrypoints for historical interfaces and no-ops in the active V4 path.
+- `LiquidAuctioneer` native-ETH bid fee collection uses the legacy compatibility path via those selectors.
+- Router event fields `ethFee`, `protocolFee`, and `beneficiaryFee` are intentionally zero in this architecture.
 
 ## Prerequisites
 
@@ -60,8 +134,9 @@ chmod +x setup.sh
 
 This will:
 1. Install Foundry (if not already installed)
-2. Install OpenZeppelin and Forge-std dependencies
-3. Build all contracts
+2. Initialize all git submodules recursively
+3. Verify required dependency submodules are present
+4. Build all contracts
 
 ### Manual Setup
 
@@ -71,17 +146,39 @@ curl -L https://foundry.paradigm.xyz | bash
 foundryup
 
 # Clone the repository
-git clone <repository-url>
+git clone --recurse-submodules <repository-url>
 cd liquid-edition-contracts
 
-# Install dependencies
-forge install OpenZeppelin/openzeppelin-contracts
-forge install OpenZeppelin/openzeppelin-contracts-upgradeable
-forge install foundry-rs/forge-std
-forge install Uniswap/v4-core
+# If you already cloned without --recurse-submodules
+git submodule update --init --recursive
 
 # Build contracts
 forge build
+```
+
+### Maintainer Dependency Bootstrap
+
+Use this once when normalizing dependency tracking so `lib/*` entries are committed as submodules:
+
+```bash
+# Remove non-submodule dependency folders and stale module metadata
+rm -rf lib/forge-std lib/openzeppelin-contracts lib/openzeppelin-contracts-upgradeable lib/continuous-clearing-auction lib/v4-core lib/v4-periphery
+rm -rf .git/modules/lib/forge-std .git/modules/lib/openzeppelin-contracts .git/modules/lib/openzeppelin-contracts-upgradeable .git/modules/lib/continuous-clearing-auction .git/modules/lib/v4-core .git/modules/lib/v4-periphery
+
+# Re-add as forge-managed git submodules
+git submodule add --force https://github.com/foundry-rs/forge-std lib/forge-std
+git submodule add --force https://github.com/OpenZeppelin/openzeppelin-contracts lib/openzeppelin-contracts
+git submodule add --force https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable lib/openzeppelin-contracts-upgradeable
+git submodule add --force https://github.com/Uniswap/continuous-clearing-auction lib/continuous-clearing-auction
+git submodule add --force https://github.com/Uniswap/v4-core lib/v4-core
+git submodule add --force https://github.com/Uniswap/v4-periphery lib/v4-periphery
+
+# Pin Uniswap revisions expected by this repo
+git -C lib/v4-core checkout e50237c43811bd9b526eff40f26772152a42daba
+git -C lib/v4-periphery checkout 3779387e5d296f39df543d23524b050f89a62917
+
+# Persist submodule pointers
+git add .gitmodules lib/forge-std lib/openzeppelin-contracts lib/openzeppelin-contracts-upgradeable lib/continuous-clearing-auction lib/v4-core lib/v4-periphery
 ```
 
 ## Configuration
@@ -326,11 +423,18 @@ make clean           # Clean build artifacts
 liquid-edition-contracts/
 ├── src/                      # Contract source files
 │   ├── interfaces/          # Contract interfaces
-│   ├── Liquid.sol          # Main token implementation
+│   ├── LiquidInstant.sol   # Instant-launch token implementation
+│   ├── LiquidGraduated.sol # Graduated-launch token implementation
+│   ├── LiquidMultiCurve.sol # Multicurve anti-sniping token implementation
 │   ├── LiquidFactory.sol   # Factory contract
+│   ├── LiquidRouter.sol    # Router for fee-wrapped trading
+│   ├── LiquidAuctioneer.sol # Router for auction interactions
+│   ├── LiquidSwapGuard.sol # V4 hook for swap/init restrictions
+│   ├── LiquidInitGuard.sol # V4 hook for init-only restrictions
+│   ├── FeeDistributor.sol  # Fee distribution contract
+│   ├── LiquidRegistry.sol  # Token and beneficiary registry
 │   ├── RAREBurner.sol      # RARE token burning
-│   ├── TickMath.sol        # Uniswap tick math library
-│   └── V4LiquidityHelper.sol # V4 liquidity management
+│   └── RoutePolicy.sol     # Universal Router route validation
 ├── script/                  # Deployment scripts
 │   ├── LiquidFactoryDeploy.s.sol
 │   ├── RAREBurnerDeploy.s.sol

@@ -14,7 +14,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {IRAREBurner} from "./interfaces/IRAREBurner.sol";
+import {IRAREBurner} from "liquid-editions/interfaces/IRAREBurner.sol";
 
 import {IV4Quoter} from "@uniswap/v4-periphery/interfaces/IV4Quoter.sol";
 import {QuoterRevert} from "@uniswap/v4-periphery/libraries/QuoterRevert.sol";
@@ -117,19 +117,6 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
     /// @dev When paused, deposits and flushes revert. Owner can sweep funds.
     ///      Use as circuit breaker if burns become problematic.
     bool public paused;
-
-    // ============================================
-    // ERRORS (internal implementation only - public errors in IRAREBurner)
-    // ============================================
-
-    /// @notice Thrown when caller is not the V4 PoolManager
-    error OnlyPoolManager();
-
-    /// @notice Thrown when unlock callback is called unexpectedly
-    error UnexpectedUnlock();
-
-    /// @notice Thrown when swap returns unexpected delta signs
-    error UnexpectedSwapDirection();
 
     // ============================================
     // CONSTRUCTOR
@@ -248,16 +235,17 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
     /// @param to Recipient address
     /// @param amount Amount to sweep (0 = all pendingEth)
     function sweep(address to, uint256 amount) external onlyOwner {
+        // amount 0 = sweep all pendingEth
         uint256 toSweep = amount == 0 ? pendingEth : amount;
         if (toSweep > pendingEth)
             revert IRAREBurner.InsufficientPendingEth(toSweep, pendingEth);
 
+        // Guard: never send more than actual balance (handles forced-send edge case)
         if (address(this).balance < toSweep) {
             revert InsufficientBalance();
         }
 
         pendingEth -= toSweep;
-        // Note: No event emitted for sweep - admin action, state change is on-chain
 
         (bool success, ) = to.call{value: toSweep}("");
         if (!success) revert IRAREBurner.EthTransferFailed();
@@ -268,6 +256,7 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
     ///      Only sends `address(this).balance - pendingEth`, ensuring pendingEth tracking remains intact.
     /// @param to Recipient address
     function sweepExcess(address to) external onlyOwner {
+        // Excess = ETH from selfdestruct/forced sends that bypassed pendingEth accounting
         uint256 excess = address(this).balance > pendingEth
             ? address(this).balance - pendingEth
             : 0;
@@ -285,7 +274,7 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
     /// @notice Checks if RARE burning is currently active
     /// @dev Returns true only if all required parameters are configured and enabled is true
     /// @return True if burning is active and properly configured
-    function isRAREBurnActive() public view returns (bool) {
+    function isRAREBurnActive() external view returns (bool) {
         return
             enabled &&
             RARE_TOKEN != address(0) &&
@@ -299,6 +288,7 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
     function validatePoolConfig() external view returns (bool ok) {
         if (V4_POOL_ID == bytes32(0) || RARE_TOKEN == address(0)) return false;
 
+        // Recompute PoolKey from stored params and verify PoolId matches
         Currency ethC = Currency.wrap(address(0));
         Currency rareC = Currency.wrap(RARE_TOKEN);
         PoolKey memory key = PoolKey({
@@ -462,8 +452,19 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
         }
     }
 
-    /// @notice Executes V4 swap via unlock callback mechanism
-    /// @dev External to enable try/catch in _tryFlush. Must be called by self.
+    /// @notice Executes V4 swap via unlock callback mechanism (self-call pattern)
+    /// @dev This function uses a self-call pattern for error isolation:
+    ///      - Function is external (not internal) to enable try/catch in _tryFlush()
+    ///      - Must be called by this contract itself (msg.sender == address(this))
+    ///      - Sets one-shot context guard (_v4BurnCtx) before calling unlock()
+    ///      - unlock() triggers unlockCallback() which executes the swap
+    ///      - Context guard is cleared in unlockCallback() if swap succeeds
+    ///      - If swap fails, context guard remains set and _executeV4Swap() reverts
+    ///
+    ///      **Why self-call?** This pattern isolates swap failures from affecting the caller.
+    ///      If the swap fails (e.g., slippage exceeded, pool not initialized), the error is caught
+    ///      in _tryFlush() and funds remain pending for retry. Without this isolation, swap failures
+    ///      would revert the entire depositForBurn() transaction.
     /// @param ethAmount Amount of ETH to swap
     /// @param _V4_POOL_MANAGER V4 PoolManager address
     /// @param key Pool key for the swap
@@ -480,6 +481,7 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
         Currency rareC,
         address _burnAddress
     ) external {
+        // Self-call guard: only this contract can call this function
         if (msg.sender != address(this)) revert IRAREBurner.OnlySelf();
 
         bytes memory data = abi.encode(
@@ -554,8 +556,10 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
         // Validate expected signs: ETH should be negative (paid), RARE should be positive (received)
         if (ethDelta >= 0 || rareDelta <= 0) revert UnexpectedSwapDirection();
 
-        // Cast amounts
+        // Cast amounts (safe: int128 delta values fit in uint128 for swap settlement)
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 ethToPay = uint256(uint128(-ethDelta));
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 rareOut = uint256(uint128(rareDelta));
 
         // Verify slippage protection
@@ -580,7 +584,8 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
         return "";
     }
 
-    /// @dev Safe cast from uint256 to uint128 with overflow check
+    /// @notice Safe cast from uint256 to uint128 with overflow check
+    /// @dev Used for V4 Quoter params which require uint128 amounts. Reverts if value exceeds uint128.max.
     /// @param value The uint256 value to cast
     /// @return The value as uint128
     function _toUint128Safe(uint256 value) internal pure returns (uint128) {
@@ -591,8 +596,15 @@ contract RAREBurner is IRAREBurner, IUnlockCallback, ReentrancyGuard, Ownable {
         return uint128(value);
     }
 
-    /// @notice Helper function to parse quote amount from revert reason
-    /// @dev External function to enable try-catch in _tryFlush
+    /// @notice Helper function to parse quote amount from revert reason (external for try-catch)
+    /// @dev This function is external (not internal) to enable try-catch error handling in _tryFlush().
+    ///      V4 Quoter uses revert-as-return pattern: it reverts with encoded quote data instead of returning it.
+    ///      When _tryFlush() calls the quoter and catches the revert, it needs to parse the quote amount
+    ///      from the revert reason bytes. However, Solidity's try-catch can only catch external function calls,
+    ///      not internal function calls. By making this function external, we can call it with try-catch
+    ///      to handle parsing failures gracefully (if the revert reason doesn't match expected format).
+    /// @param reason Revert reason bytes from V4 Quoter call (contains encoded quote data)
+    /// @return Parsed quote amount (uint256) extracted from revert reason
     function _parseQuoteAmount(
         bytes memory reason
     ) external pure returns (uint256) {

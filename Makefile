@@ -1,15 +1,16 @@
 # Liquid Edition Contracts Makefile
 
-# Load environment variables from .env.test file
+# Load environment variables from .env and .env.test files
+# .env contains RPC URLs with paid Alchemy API keys
+-include .env
 -include .env.test
 export
 
-# Use environment variables for RPC URLs (fallback to public endpoints if not set)
-FORK_URL ?= https://mainnet.base.org
-SEPOLIA_FORK_URL ?= https://sepolia.base.org
+# FORK_URL comes from .env (required for make test)
+export FORK_URL
 
 # Test commands
-.PHONY: test test-factory test-liquid test-mainnet test-bonding test-bonding-explorer test-unit test-rare test-burner test-invariants test-mev coverage coverage-report help
+.PHONY: test test-factory test-liquid test-mainnet test-bonding test-bonding-explorer test-unit test-rare test-burner test-invariants test-mev test-sepolia-behavior test-sepolia-behavior-multicurve test-mainnet-behavior-multicurve test-mainnet-behavior-multicurve-low test-mainnet-behavior-multicurve-medium test-mainnet-behavior-multicurve-large coverage coverage-report deploy-sepolia deploy-sepolia-dry help
 
 help:
 	@echo "Available commands:"
@@ -22,60 +23,101 @@ help:
 	@echo "  test-burner       - Run burner integration tests"
 	@echo "  test-invariants   - Run invariant tests"
 	@echo "  test-mev          - Run MEV protection tests"
+	@echo "  test-sepolia-behavior - Run Eth Sepolia instant user behavior simulation (requires ETH_SEPOLIA)"
+	@echo "  test-sepolia-behavior-multicurve - Run Eth Sepolia multicurve user behavior simulation (requires ETH_SEPOLIA)"
+	@echo "  test-mainnet-behavior-multicurve - Run all Eth Mainnet multicurve demand profiles (requires MAINNET_RPC_URL)"
+	@echo "  test-mainnet-behavior-multicurve-low - Run low-demand profile"
+	@echo "  test-mainnet-behavior-multicurve-medium - Run medium-demand profile"
+	@echo "  test-mainnet-behavior-multicurve-large - Run large-demand profile"
 	@echo "  test-unit         - Run mainnet unit tests"
 	@echo "  test-rare         - Run RARE burn config tests (no fork)"
 	@echo "  coverage          - Generate test coverage summary"
 	@echo "  coverage-report   - Generate HTML coverage report (requires lcov)"
 	@echo ""
+	@echo "Deploy commands:"
+	@echo "  deploy-sepolia     - Full Liquid System deploy to Sepolia (broadcast + slow)"
+	@echo "  deploy-sepolia-dry - Dry-run simulation only (no broadcast)"
+	@echo ""
 	@echo "ℹ️  Mainnet fork tests create their own forks automatically in setUp()"
-	@echo "   FORK_URL env var can override default: $(FORK_URL)"
-	@echo "   Tests run with --jobs 2 to avoid RPC rate limits"
+	@echo "   Set FORK_URL in .env (required for make test)"
+	@echo "   Tests run with --jobs 1 to avoid RPC rate limits"
 
 # Run all tests (mainnet tests create forks in setUp)
-# --jobs 1 limits parallelism to avoid RPC rate limits  
-# Skip invariant and bonding tests
+# --jobs 1 limits parallelism to avoid RPC rate limits
+# FORK_URL must be set in .env (no fallbacks)
 test:
-	forge test --jobs 1 -v
+	@[ -f .env ] && set -a && . ./.env && set +a || true; \
+	if [ -z "$${FORK_URL}" ]; then \
+		echo "Error: FORK_URL is required. Set FORK_URL in .env"; \
+		exit 1; \
+	fi; \
+	FORK_URL="$$FORK_URL" forge test --jobs 1 -v
 
-# Run factory tests (creates fork in setUp)
+# Run factory tests (unit: no fork; fork: creates fork in setUp)
 test-factory:
-	forge test test/LiquidFactory.mainnet.t.sol --jobs 2 -v
+	forge test test/unit/LiquidFactory.unit.t.sol test/e2e/LiquidFactory.fork.t.sol --jobs 2 -v
 
 # Run basic liquid tests (creates fork in setUp)
 test-liquid:
-	forge test test/Liquid.mainnet.basic.t.sol --jobs 2 -v
+	forge test test/e2e/Liquid.mainnet.basic.t.sol --jobs 2 -v
 
 # Run Base mainnet integration tests (creates fork in setUp)
 test-mainnet:
-	forge test test/Liquid.mainnet.t.sol --jobs 2 -v
+	forge test test/e2e/Liquid.mainnet.t.sol --jobs 2 -v
 
 # Run bonding curve analysis (creates fork in setUp)
 test-bonding:
-	forge test test/Liquid.mainnet.bonding.t.sol --jobs 2 -vv
+	forge test test/scenarios/Liquid.mainnet.bonding.t.sol --jobs 2 -vv
 
 # Run bonding curve explorer tests (interactive exploration)
 test-bonding-explorer:
-	forge test test/Liquid.mainnet.bonding.explorer.t.sol --jobs 2 -vv
+	forge test test/scenarios/Liquid.mainnet.bonding.explorer.t.sol --jobs 2 -vv
 
 # Run burner integration tests (creates fork in setUp)
 test-burner:
-	forge test test/Liquid.mainnet.burner.t.sol --jobs 2 -v
+	forge test test/e2e/RAREBurner.mainnet.t.sol --jobs 2 -v
 
 # Run invariant tests (creates fork in setUp)
 test-invariants:
-	forge test test/Liquid.mainnet.invariants.t.sol --jobs 2 -v
+	forge test test/invariants/Liquid.mainnet.invariants.t.sol --jobs 2 -v
 
 # Run MEV protection tests (creates fork in setUp)
 test-mev:
-	forge test test/Liquid.mainnet.mev.t.sol --jobs 2 -v
+	forge test test/scenarios/Liquid.mainnet.mev.t.sol --jobs 2 -v
 
 # Run mainnet unit tests (creates fork in setUp)
 test-unit:
-	forge test test/Liquid.mainnet.unit.t.sol --jobs 2 -v
+	forge test test/e2e/Liquid.mainnet.unit.t.sol --jobs 2 -v
+
+# Run Eth Sepolia instant user behavior simulation (requires ETH_SEPOLIA in .env)
+test-sepolia-behavior:
+	forge test test/scenarios/Liquid.sepolia.userBehavior.instant.t.sol --jobs 1 -vv
+
+# Run Eth Sepolia multicurve user behavior simulation (requires ETH_SEPOLIA in .env)
+test-sepolia-behavior-multicurve:
+	forge test test/scenarios/Liquid.sepolia.userBehavior.multicurve.t.sol --jobs 1 -vv
+
+# Run all Eth Mainnet multicurve demand profiles (requires MAINNET_RPC_URL in .env)
+test-mainnet-behavior-multicurve:
+	$(MAKE) test-mainnet-behavior-multicurve-low
+	$(MAKE) test-mainnet-behavior-multicurve-medium
+	$(MAKE) test-mainnet-behavior-multicurve-large
+
+# Run Eth Mainnet multicurve low-demand profile (requires MAINNET_RPC_URL in .env)
+test-mainnet-behavior-multicurve-low:
+	forge test test/scenarios/Liquid.mainnet.userBehavior.multicurve.lowDemand.t.sol --jobs 1 -vv
+
+# Run Eth Mainnet multicurve medium-demand profile (requires MAINNET_RPC_URL in .env)
+test-mainnet-behavior-multicurve-medium:
+	forge test test/scenarios/Liquid.mainnet.userBehavior.multicurve.mediumDemand.t.sol --jobs 1 -vv
+
+# Run Eth Mainnet multicurve large-demand profile (requires MAINNET_RPC_URL in .env)
+test-mainnet-behavior-multicurve-large:
+	forge test test/scenarios/Liquid.mainnet.userBehavior.multicurve.largeDemand.t.sol --jobs 1 -vv
 
 # Run RARE burn tests (no fork needed)
 test-rare:
-	forge test test/RAREBurn.t.sol --jobs 2 -v
+	forge test test/integration/RAREBurner.t.sol -v && forge test test/unit/RAREBurner.unit.t.sol -v
 
 # Coverage commands
 coverage:
@@ -103,6 +145,23 @@ deploy-factory:
 
 deploy-factory-dry:
 	forge script script/LiquidFactoryDeploy.s.sol --fork-url $(FORK_URL)
+
+# Full Liquid System deployment (Sepolia)
+# --slow is required: sends transactions one-by-one and waits for each receipt
+# before sending the next. Without it, nonce collisions can cause broadcast failures.
+deploy-sepolia:
+	@[ -f .env ] && set -a && . ./.env && set +a || true; \
+	forge script script/DeployLiquidSystem.s.sol:DeployLiquidSystem \
+		--rpc-url $$ETH_SEPOLIA \
+		--broadcast \
+		--slow
+
+# Dry-run (simulate only, no broadcast) — use this to verify before deploying
+deploy-sepolia-dry:
+	@[ -f .env ] && set -a && . ./.env && set +a || true; \
+	forge script script/DeployLiquidSystem.s.sol:DeployLiquidSystem \
+		--rpc-url $$ETH_SEPOLIA \
+		--slow
 
 # Clean
 clean:
