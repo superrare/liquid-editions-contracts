@@ -9,6 +9,9 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
+import {SovereignERC20} from "liquid-editions/SovereignERC20.sol";
+import {SovereignERC20Market} from "liquid-editions/SovereignERC20Market.sol";
+import {SovereignERC20MarketRewards} from "liquid-editions/SovereignERC20MarketRewards.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 import {ILiquidFactory} from "liquid-editions/interfaces/ILiquidFactory.sol";
 import {ILiquidRegistry} from "liquid-editions/interfaces/ILiquidRegistry.sol";
@@ -30,6 +33,22 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
 
     /// @notice The LiquidMultiCurve implementation (for multicurve anti-sniping launches)
     address public liquidMultiCurveImplementation;
+
+    address public constant SELF_REWARD_TOKEN = address(1);
+    bytes32 public constant KIND_SOVEREIGN_ERC20 = keccak256("SOVEREIGN_ERC20");
+    bytes32 public constant KIND_SOVEREIGN_ERC20_MARKET = keccak256("SOVEREIGN_ERC20_MARKET");
+    bytes32 public constant KIND_SOVEREIGN_ERC20_MARKET_REWARDS = keccak256("SOVEREIGN_ERC20_MARKET_REWARDS");
+
+    struct TokenImplementation {
+        address implementation;
+        bool enabled;
+    }
+
+    /// @notice Sovereign token implementations keyed by kind.
+    mapping(bytes32 kind => TokenImplementation implementation) public tokenImplementations;
+
+    /// @notice External ERC20 reward tokens allowed for future Sovereign reward deployments.
+    mapping(address rewardToken => bool allowed) public sovereignRewardTokenAllowed;
 
     /// @notice Registry used for token registration and beneficiary mapping
     address public liquidRegistry;
@@ -145,6 +164,75 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         );
     }
 
+    /// @notice Creates a no-market owner-controlled Sovereign ERC20.
+    function createSovereignERC20(
+        address owner,
+        string memory tokenUri,
+        string memory name,
+        string memory symbol,
+        uint256 initialSupply,
+        uint256 maxSupply
+    ) external whenNotPaused returns (address token) {
+        if (owner == address(0)) revert AddressZero();
+        if (!_isAuthorizedCreator(owner, msg.sender)) revert Unauthorized();
+
+        address implementation = _requireSovereignImplementation(KIND_SOVEREIGN_ERC20);
+        token = Clones.clone(implementation);
+        SovereignERC20(token).initialize(owner, name, symbol, tokenUri, initialSupply, maxSupply);
+
+        emit SovereignTokenCreated(KIND_SOVEREIGN_ERC20, token, owner, tokenUri);
+        _registerToken(token, owner);
+    }
+
+    /// @notice Creates a Sovereign ERC20 with atomic one-sided RARE market liquidity.
+    function createSovereignERC20Market(
+        address owner,
+        string memory tokenUri,
+        string memory name,
+        string memory symbol,
+        uint256 initialSupply,
+        Curve[] calldata curves
+    ) external whenNotPaused returns (address token) {
+        if (owner == address(0)) revert AddressZero();
+        if (!_isAuthorizedCreator(owner, msg.sender)) revert Unauthorized();
+        _validateSovereignMarketInputs(initialSupply, curves);
+
+        address implementation = _requireSovereignImplementation(KIND_SOVEREIGN_ERC20_MARKET);
+        token = Clones.clone(implementation);
+        ILiquidGuard(poolHooks).addInitializer(token);
+
+        SovereignERC20Market(payable(token)).initialize(owner, tokenUri, name, symbol, initialSupply, curves);
+
+        emit SovereignTokenCreated(KIND_SOVEREIGN_ERC20_MARKET, token, owner, tokenUri);
+        _registerToken(token, owner);
+    }
+
+    /// @notice Creates a Sovereign ERC20 with atomic one-sided RARE market liquidity and holder rewards.
+    function createSovereignERC20MarketRewards(
+        address owner,
+        string memory tokenUri,
+        string memory name,
+        string memory symbol,
+        uint256 initialSupply,
+        Curve[] calldata curves,
+        address rewardToken
+    ) external whenNotPaused returns (address token) {
+        if (owner == address(0)) revert AddressZero();
+        if (!_isAuthorizedCreator(owner, msg.sender)) revert Unauthorized();
+        if (!isSovereignRewardTokenAllowed(rewardToken)) revert SovereignRewardTokenNotAllowed(rewardToken);
+        _validateSovereignMarketInputs(initialSupply, curves);
+
+        address implementation = _requireSovereignImplementation(KIND_SOVEREIGN_ERC20_MARKET_REWARDS);
+        token = Clones.clone(implementation);
+        ILiquidGuard(poolHooks).addInitializer(token);
+
+        SovereignERC20MarketRewards(payable(token))
+            .initialize(owner, tokenUri, name, symbol, initialSupply, curves, rewardToken);
+
+        emit SovereignTokenCreated(KIND_SOVEREIGN_ERC20_MARKET_REWARDS, token, owner, tokenUri);
+        _registerToken(token, owner);
+    }
+
     /// @notice Returns whether a caller can create Liquid tokens for a creator
     function _isAuthorizedCreator(address creator, address caller) internal view returns (bool) {
         return creator == caller || isCreatorDelegate[creator][caller];
@@ -257,6 +345,42 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
         ILiquidRegistry(liquidRegistry).setBeneficiary(token, beneficiary);
     }
 
+    /// @notice Returns true when a reward token may be used for future Sovereign reward deployments.
+    function isSovereignRewardTokenAllowed(address rewardToken) public view returns (bool) {
+        return rewardToken == SELF_REWARD_TOKEN || sovereignRewardTokenAllowed[rewardToken];
+    }
+
+    function _requireSovereignImplementation(bytes32 kind) internal view returns (address implementation) {
+        if (!_isKnownSovereignKind(kind)) revert InvalidTokenKind(kind);
+
+        TokenImplementation memory config = tokenImplementations[kind];
+        implementation = config.implementation;
+        if (implementation == address(0)) revert ImplementationNotSet();
+        if (!config.enabled) revert TokenImplementationDisabled(kind);
+    }
+
+    function _validateSovereignMarketInputs(uint256 initialSupply, Curve[] calldata curves) internal view {
+        if (initialSupply == 0) revert InvalidAmount();
+        if (curves.length == 0) revert InvalidAmount();
+        if (baseToken == address(0)) revert AddressZero();
+        if (poolHooks == address(0)) revert PoolHooksNotSet();
+
+        _validatePoolHook();
+        _validatePoolHookRareToken();
+    }
+
+    function _validatePoolHookRareToken() internal view {
+        address hookRareToken = ILiquidGuard(poolHooks).RARE_TOKEN();
+        if (hookRareToken != baseToken) {
+            revert PoolHookRareTokenMismatch(poolHooks, hookRareToken, baseToken);
+        }
+    }
+
+    function _isKnownSovereignKind(bytes32 kind) internal pure returns (bool) {
+        return kind == KIND_SOVEREIGN_ERC20 || kind == KIND_SOVEREIGN_ERC20_MARKET
+            || kind == KIND_SOVEREIGN_ERC20_MARKET_REWARDS;
+    }
+
     // ============================================
     // ADMIN FUNCTIONS
     // ============================================
@@ -266,6 +390,24 @@ contract LiquidFactory is Ownable, Pausable, ILiquidFactory {
     function setLiquidMultiCurveImplementation(address _implementation) external onlyOwner {
         if (_implementation == address(0)) revert AddressZero();
         liquidMultiCurveImplementation = _implementation;
+    }
+
+    /// @notice Configures a Sovereign token implementation by kind.
+    function setSovereignTokenImplementation(bytes32 kind, address implementation, bool enabled) external onlyOwner {
+        if (!_isKnownSovereignKind(kind)) revert InvalidTokenKind(kind);
+        if (implementation == address(0)) revert AddressZero();
+
+        address oldImplementation = tokenImplementations[kind].implementation;
+        tokenImplementations[kind] = TokenImplementation({implementation: implementation, enabled: enabled});
+
+        emit SovereignTokenImplementationUpdated(kind, oldImplementation, implementation, enabled);
+    }
+
+    /// @notice Updates the external ERC20 reward-token allowlist for future Sovereign deployments.
+    function setSovereignRewardTokenAllowed(address rewardToken, bool allowed) external onlyOwner {
+        if (rewardToken == address(0) || rewardToken == SELF_REWARD_TOKEN) revert AddressZero();
+        sovereignRewardTokenAllowed[rewardToken] = allowed;
+        emit SovereignRewardTokenAllowlistUpdated(rewardToken, allowed);
     }
 
     /// @notice Sets the migration executor address
