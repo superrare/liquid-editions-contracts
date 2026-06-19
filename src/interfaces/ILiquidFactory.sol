@@ -52,6 +52,18 @@ interface ILiquidFactory {
     /// @notice Thrown when poolHooks is address(0) during token creation
     error PoolHooksNotSet();
 
+    /// @notice Thrown when an unknown Sovereign token kind is configured or created.
+    error InvalidTokenKind(bytes32 kind);
+
+    /// @notice Thrown when the configured Sovereign implementation is not enabled.
+    error TokenImplementationDisabled(bytes32 kind);
+
+    /// @notice Thrown when LiquidGuard's RARE token does not match the factory base token.
+    error PoolHookRareTokenMismatch(address poolHooks, address hookRareToken, address expectedRareToken);
+
+    /// @notice Thrown when a reward token is not allowlisted for Sovereign reward deployments.
+    error SovereignRewardTokenNotAllowed(address rewardToken);
+
     // ============================================
     // EVENTS
     // ============================================
@@ -96,6 +108,17 @@ interface ILiquidFactory {
     /// @param approved True when the operator is approved, false when revoked
     event CreatorDelegateUpdated(address indexed creator, address indexed operator, bool approved);
 
+    /// @notice Emitted when a Sovereign token implementation is configured.
+    event SovereignTokenImplementationUpdated(
+        bytes32 indexed kind, address indexed oldImplementation, address indexed newImplementation, bool enabled
+    );
+
+    /// @notice Emitted when a Sovereign token is created.
+    event SovereignTokenCreated(bytes32 indexed kind, address indexed token, address indexed owner, string tokenUri);
+
+    /// @notice Emitted when a reward token is added to or removed from the Sovereign reward allowlist.
+    event SovereignRewardTokenAllowlistUpdated(address indexed rewardToken, bool allowed);
+
     // ============================================
     // FUNCTIONS
     // ============================================
@@ -138,6 +161,27 @@ interface ILiquidFactory {
 
     /// @notice Returns whether `operator` can create Liquid tokens on behalf of `creator`.
     function isCreatorDelegate(address creator, address operator) external view returns (bool);
+
+    /// @notice Sentinel accepted by reward-enabled Sovereign market creation for same-token rewards.
+    function SELF_REWARD_TOKEN() external view returns (address);
+
+    /// @notice Core Sovereign ERC20 token kind.
+    function KIND_SOVEREIGN_ERC20() external view returns (bytes32);
+
+    /// @notice Sovereign ERC20 with market token kind.
+    function KIND_SOVEREIGN_ERC20_MARKET() external view returns (bytes32);
+
+    /// @notice Sovereign ERC20 with market and holder rewards token kind.
+    function KIND_SOVEREIGN_ERC20_MARKET_REWARDS() external view returns (bytes32);
+
+    /// @notice Returns a configured Sovereign token implementation and whether it is enabled.
+    function tokenImplementations(bytes32 kind) external view returns (address implementation, bool enabled);
+
+    /// @notice Returns whether a reward token is allowlisted for Sovereign reward deployments.
+    function sovereignRewardTokenAllowed(address rewardToken) external view returns (bool);
+
+    /// @notice Returns true when a reward token may be used for new reward-enabled Sovereign markets.
+    function isSovereignRewardTokenAllowed(address rewardToken) external view returns (bool);
 
     /// @notice Allows `operator` to create Liquid tokens on behalf of msg.sender.
     /// @dev Delegated operators still pay any `_initialRareLiquidity` pulled from `msg.sender`.
@@ -190,6 +234,37 @@ interface ILiquidFactory {
         uint256 _customMaxTotalSupply
     ) external returns (address token);
 
+    /// @notice Creates a no-market owner-controlled Sovereign ERC20.
+    function createSovereignERC20(
+        address owner,
+        string memory tokenUri,
+        string memory name,
+        string memory symbol,
+        uint256 initialSupply,
+        uint256 maxSupply
+    ) external returns (address token);
+
+    /// @notice Creates a Sovereign ERC20 with atomic one-sided RARE market liquidity.
+    function createSovereignERC20Market(
+        address owner,
+        string memory tokenUri,
+        string memory name,
+        string memory symbol,
+        uint256 initialSupply,
+        Curve[] calldata curves
+    ) external returns (address token);
+
+    /// @notice Creates a Sovereign ERC20 with atomic one-sided RARE market liquidity and holder rewards.
+    function createSovereignERC20MarketRewards(
+        address owner,
+        string memory tokenUri,
+        string memory name,
+        string memory symbol,
+        uint256 initialSupply,
+        Curve[] calldata curves,
+        address rewardToken
+    ) external returns (address token);
+
     /// @notice Configure the registry used for automatic token registration
     /// @param _liquidRegistry Registry address
     function setLiquidRegistry(address _liquidRegistry) external;
@@ -197,6 +272,12 @@ interface ILiquidFactory {
     /// @notice Sets the LiquidMultiCurve implementation (for multicurve anti-sniping launches)
     /// @param _implementation The implementation address
     function setLiquidMultiCurveImplementation(address _implementation) external;
+
+    /// @notice Configures a Sovereign token implementation.
+    function setSovereignTokenImplementation(bytes32 kind, address implementation, bool enabled) external;
+
+    /// @notice Updates the Sovereign reward token allowlist.
+    function setSovereignRewardTokenAllowed(address rewardToken, bool allowed) external;
 
     /// @notice Sets the migration executor address
     /// @param _migrationExecutor The migration executor address

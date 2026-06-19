@@ -2,10 +2,11 @@
 pragma solidity ^0.8.0;
 
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
+import {BalanceDelta, toBalanceDelta} from "v4-core/types/BalanceDelta.sol";
 
 /// @title Mock V4 PoolManager for testing
 /// @dev Simulates Uniswap V4 PoolManager for unit tests without forking
@@ -22,11 +23,11 @@ contract MockV4PoolManager {
         return "";
     }
 
-    function swap(
-        PoolKey memory,
-        IPoolManager.SwapParams memory,
-        bytes memory
-    ) external pure returns (BalanceDelta delta) {
+    function swap(PoolKey memory, IPoolManager.SwapParams memory, bytes memory)
+        external
+        pure
+        returns (BalanceDelta delta)
+    {
         // Mock swap - return deltas: -1 ETH in, +0.1 RARE out
         // BalanceDelta is a packed uint256 encoding two int128 values
         assembly {
@@ -36,17 +37,32 @@ contract MockV4PoolManager {
         }
     }
 
-    function settle() external payable {}
+    function settle() external payable returns (uint256) {
+        return msg.value;
+    }
 
     function sync(Currency) external {}
 
     function take(Currency, address, uint256) external {}
 
-    function modifyLiquidity(
-        PoolKey memory,
-        IPoolManager.ModifyLiquidityParams memory,
-        bytes memory
-    ) external pure returns (BalanceDelta, BalanceDelta) {
+    function modifyLiquidity(PoolKey memory key, IPoolManager.ModifyLiquidityParams memory, bytes memory)
+        external
+        view
+        returns (BalanceDelta, BalanceDelta)
+    {
+        uint256 callerBalance = IERC20(msg.sender).balanceOf(msg.sender);
+        if (callerBalance <= 1) return (BalanceDelta.wrap(0), BalanceDelta.wrap(0));
+
+        uint256 amountToSettle = callerBalance - 1;
+        if (amountToSettle > uint256(uint128(type(int128).max))) return (BalanceDelta.wrap(0), BalanceDelta.wrap(0));
+
+        int128 amount = -int128(uint128(amountToSettle));
+        address currency0 = Currency.unwrap(key.currency0);
+        address currency1 = Currency.unwrap(key.currency1);
+
+        if (currency0 == msg.sender) return (toBalanceDelta(amount, 0), BalanceDelta.wrap(0));
+        if (currency1 == msg.sender) return (toBalanceDelta(0, amount), BalanceDelta.wrap(0));
+
         return (BalanceDelta.wrap(0), BalanceDelta.wrap(0));
     }
 

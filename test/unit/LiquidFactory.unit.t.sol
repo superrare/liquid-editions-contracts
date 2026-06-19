@@ -10,7 +10,12 @@ pragma solidity ^0.8.0;
 import "forge-std/Test.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
 import {LiquidMultiCurve} from "liquid-editions/LiquidMultiCurve.sol";
+import {SovereignERC20} from "liquid-editions/SovereignERC20.sol";
+import {SovereignERC20Market} from "liquid-editions/SovereignERC20Market.sol";
+import {SovereignERC20MarketRewards} from "liquid-editions/SovereignERC20MarketRewards.sol";
 import {ILiquidFactory} from "liquid-editions/interfaces/ILiquidFactory.sol";
+import {IERC20HolderRewards} from "liquid-editions/interfaces/IERC20HolderRewards.sol";
+import {ISovereignERC20Market} from "liquid-editions/interfaces/ISovereignERC20Market.sol";
 import {ILiquidSwapGuard} from "liquid-editions/interfaces/ILiquidSwapGuard.sol";
 import {ILiquidGuard} from "liquid-editions/interfaces/ILiquidGuard.sol";
 import {LiquidGuard} from "liquid-editions/LiquidGuard.sol";
@@ -20,11 +25,15 @@ import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {Currency} from "v4-core/types/Currency.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 import {BeforeSwapDelta} from "v4-core/types/BeforeSwapDelta.sol";
 import {Curve} from "doppler/libraries/Multicurve.sol";
 
 contract LiquidFactoryUnitTest is Test {
+    using PoolIdLibrary for PoolKey;
+
     address public admin = makeAddr("admin");
     address public user1 = makeAddr("user1");
 
@@ -33,6 +42,9 @@ contract LiquidFactoryUnitTest is Test {
 
     LiquidFactory public factory;
     LiquidMultiCurve public liquidImplementation;
+    SovereignERC20 public sovereignImplementation;
+    SovereignERC20Market public sovereignMarketImplementation;
+    SovereignERC20MarketRewards public sovereignMarketRewardsImplementation;
 
     function _defaultSingleCurve() internal pure returns (Curve[] memory) {
         Curve[] memory curves = new Curve[](1);
@@ -41,11 +53,16 @@ contract LiquidFactoryUnitTest is Test {
     }
 
     function _setValidPoolHook() internal {
-        LiquidGuard guard = _deployLiquidGuardWithRequiredFlags();
+        _setValidPoolHookAndReturn();
+    }
+
+    function _setValidPoolHookAndReturn() internal returns (LiquidGuard guard) {
+        guard = _deployLiquidGuardWithRequiredFlags();
         vm.prank(admin);
         guard.setFactory(address(factory));
         vm.prank(admin);
         factory.setPoolHooks(address(guard));
+        return guard;
     }
 
     function setUp() public {
@@ -62,6 +79,19 @@ contract LiquidFactoryUnitTest is Test {
         factory.setLiquidMultiCurveImplementation(address(liquidImplementation));
         vm.prank(admin);
         factory.setBaseToken(address(baseToken));
+
+        sovereignImplementation = new SovereignERC20();
+        sovereignMarketImplementation = new SovereignERC20Market();
+        sovereignMarketRewardsImplementation = new SovereignERC20MarketRewards();
+        vm.startPrank(admin);
+        factory.setSovereignTokenImplementation(factory.KIND_SOVEREIGN_ERC20(), address(sovereignImplementation), true);
+        factory.setSovereignTokenImplementation(
+            factory.KIND_SOVEREIGN_ERC20_MARKET(), address(sovereignMarketImplementation), true
+        );
+        factory.setSovereignTokenImplementation(
+            factory.KIND_SOVEREIGN_ERC20_MARKET_REWARDS(), address(sovereignMarketRewardsImplementation), true
+        );
+        vm.stopPrank();
 
         baseToken.mint(admin, 1000 ether);
         baseToken.mint(user1, 1000 ether);
@@ -281,6 +311,226 @@ contract LiquidFactoryUnitTest is Test {
 
         assertTrue(token != address(0));
         assertTrue(ILiquidGuard(address(validHook)).allowedInitializers(token));
+    }
+
+    // ============================================
+    // Sovereign token creation
+    // ============================================
+
+    function test_CreateSovereignERC20_Succeeds() public {
+        vm.expectEmit(true, false, true, true);
+        emit ILiquidFactory.SovereignTokenCreated(factory.KIND_SOVEREIGN_ERC20(), address(0), user1, "ipfs://sovereign");
+
+        vm.prank(user1);
+        address tokenAddr =
+            factory.createSovereignERC20(user1, "ipfs://sovereign", "Sovereign", "SVG", 100 ether, 1_000 ether);
+
+        SovereignERC20 token = SovereignERC20(tokenAddr);
+        assertEq(token.owner(), user1);
+        assertEq(token.name(), "Sovereign");
+        assertEq(token.symbol(), "SVG");
+        assertEq(token.tokenURI(), "ipfs://sovereign");
+        assertEq(token.totalSupply(), 100 ether);
+        assertEq(token.balanceOf(user1), 100 ether);
+        assertEq(token.maxSupply(), 1_000 ether);
+    }
+
+    function test_CreateSovereignERC20_AllowsApprovedDelegate() public {
+        address operator = makeAddr("operator");
+
+        vm.prank(user1);
+        factory.delegateTokenCreation(operator);
+
+        vm.prank(operator);
+        address tokenAddr = factory.createSovereignERC20(user1, "", "Sovereign", "SVG", 0, 0);
+
+        SovereignERC20 token = SovereignERC20(tokenAddr);
+        assertEq(token.owner(), user1);
+        assertEq(token.balanceOf(operator), 0);
+    }
+
+    function test_CreateSovereignERC20_RevertsWhen_NotOwnerOrDelegate() public {
+        address attacker = makeAddr("attacker");
+
+        vm.prank(attacker);
+        vm.expectRevert(ILiquidFactory.Unauthorized.selector);
+        factory.createSovereignERC20(user1, "", "Sovereign", "SVG", 0, 0);
+    }
+
+    function test_CreateSovereignERC20Market_SucceedsWithOneSidedRarePool() public {
+        LiquidGuard validHook = _setValidPoolHookAndReturn();
+
+        Curve[] memory curves = _defaultSingleCurve();
+        vm.prank(user1);
+        address tokenAddr = factory.createSovereignERC20Market(
+            user1, "ipfs://market", "Sovereign Market", "SVM", 1_000_000 ether, curves
+        );
+
+        SovereignERC20Market token = SovereignERC20Market(payable(tokenAddr));
+        uint256 expectedMarketSupply = 1_000_000 ether - 1;
+        assertEq(token.owner(), user1);
+        assertEq(token.totalSupply(), expectedMarketSupply);
+        assertEq(token.marketSupply(), expectedMarketSupply);
+        assertEq(token.maxSupply(), 1_000_000 ether);
+        assertEq(token.balanceOf(user1), 0);
+        assertEq(token.balanceOf(tokenAddr), 0);
+        assertEq(token.balanceOf(address(poolManager)), expectedMarketSupply);
+        assertFalse(_hasMintFunction(tokenAddr));
+        assertTrue(validHook.allowedInitializers(tokenAddr));
+
+        (Currency currency0, Currency currency1, uint24 fee, int24 tickSpacing, IHooks hooks) = token.poolKey();
+        assertEq(fee, 0);
+        assertEq(tickSpacing, factory.poolTickSpacing());
+        assertEq(address(hooks), address(validHook));
+        assertTrue(
+            (Currency.unwrap(currency0) == address(baseToken) && Currency.unwrap(currency1) == tokenAddr)
+                || (Currency.unwrap(currency0) == tokenAddr && Currency.unwrap(currency1) == address(baseToken))
+        );
+
+        PoolKey memory key =
+            PoolKey({currency0: currency0, currency1: currency1, fee: fee, tickSpacing: tickSpacing, hooks: hooks});
+        assertEq(PoolId.unwrap(token.poolId()), PoolId.unwrap(key.toId()));
+    }
+
+    function test_CreateSovereignERC20Market_RevertsWhen_InitialSupplyZero() public {
+        _setValidPoolHook();
+        Curve[] memory curves = _defaultSingleCurve();
+
+        vm.prank(user1);
+        vm.expectRevert(ILiquidFactory.InvalidAmount.selector);
+        factory.createSovereignERC20Market(user1, "", "Sovereign Market", "SVM", 0, curves);
+    }
+
+    function test_CreateSovereignERC20Market_RevertsWhen_CalculatedLiquidityIsZero() public {
+        _setValidPoolHook();
+        Curve[] memory curves = _defaultSingleCurve();
+
+        vm.prank(user1);
+        vm.expectRevert(ISovereignERC20Market.SovereignMarketNoLiquidity.selector);
+        factory.createSovereignERC20Market(user1, "", "Sovereign Market", "SVM", 1, curves);
+    }
+
+    function test_CreateSovereignERC20MarketRewards_RevertsWhen_CalculatedLiquidityIsZero() public {
+        _setValidPoolHook();
+        Curve[] memory curves = _defaultSingleCurve();
+        address selfRewardToken = factory.SELF_REWARD_TOKEN();
+
+        vm.prank(user1);
+        vm.expectRevert(ISovereignERC20Market.SovereignMarketNoLiquidity.selector);
+        factory.createSovereignERC20MarketRewards(user1, "", "Sovereign Rewards", "SVR", 1, curves, selfRewardToken);
+    }
+
+    function test_CreateSovereignERC20Market_RevertsWhen_HookRareTokenMismatch() public {
+        address wrongRare = makeAddr("wrongRare");
+        LiquidGuard mismatchedHook = _deployLiquidGuardWithRequiredFlags(wrongRare);
+
+        vm.prank(admin);
+        mismatchedHook.setFactory(address(factory));
+        vm.prank(admin);
+        factory.setPoolHooks(address(mismatchedHook));
+
+        Curve[] memory curves = _defaultSingleCurve();
+
+        vm.prank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ILiquidFactory.PoolHookRareTokenMismatch.selector,
+                address(mismatchedHook),
+                wrongRare,
+                address(baseToken)
+            )
+        );
+        factory.createSovereignERC20Market(user1, "", "Sovereign Market", "SVM", 1_000_000 ether, curves);
+    }
+
+    function test_CreateSovereignERC20MarketRewards_RevertsWhen_RewardTokenNotAllowed() public {
+        _setValidPoolHook();
+        MockERC20 reward = new MockERC20();
+        Curve[] memory curves = _defaultSingleCurve();
+
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(ILiquidFactory.SovereignRewardTokenNotAllowed.selector, address(reward)));
+        factory.createSovereignERC20MarketRewards(
+            user1, "", "Sovereign Rewards", "SVR", 1_000_000 ether, curves, address(reward)
+        );
+    }
+
+    function test_CreateSovereignERC20MarketRewards_AllowsSelfRewardSentinel() public {
+        LiquidGuard validHook = _setValidPoolHookAndReturn();
+        Curve[] memory curves = _defaultSingleCurve();
+        address selfRewardToken = factory.SELF_REWARD_TOKEN();
+
+        vm.prank(user1);
+        address tokenAddr = factory.createSovereignERC20MarketRewards(
+            user1, "", "Sovereign Rewards", "SVR", 1_000_000 ether, curves, selfRewardToken
+        );
+
+        SovereignERC20MarketRewards token = SovereignERC20MarketRewards(payable(tokenAddr));
+        uint256 expectedMarketSupply = 1_000_000 ether - 1;
+        assertEq(token.rewardToken(), tokenAddr);
+        assertEq(token.balanceOf(tokenAddr), 0);
+        assertEq(token.balanceOf(address(poolManager)), expectedMarketSupply);
+        assertTrue(token.systemRewardsExcluded(tokenAddr));
+        assertTrue(token.systemRewardsExcluded(address(poolManager)));
+        assertTrue(token.systemRewardsExcluded(address(factory)));
+        assertTrue(token.systemRewardsExcluded(address(validHook)));
+        assertTrue(token.rewardsExcluded(address(poolManager)));
+        assertEq(token.claimableRewards(user1), 0);
+    }
+
+    function test_CreateSovereignERC20MarketRewards_SystemExcludesHookFeeDistributor() public {
+        LiquidGuard validHook = _setValidPoolHookAndReturn();
+        MockSovereignFeeDistributor feeDistributor = new MockSovereignFeeDistributor();
+        Curve[] memory curves = _defaultSingleCurve();
+        address selfRewardToken = factory.SELF_REWARD_TOKEN();
+
+        vm.prank(admin);
+        validHook.setFeeDistributor(address(feeDistributor));
+
+        vm.prank(user1);
+        address tokenAddr = factory.createSovereignERC20MarketRewards(
+            user1, "", "Sovereign Rewards", "SVR", 1_000_000 ether, curves, selfRewardToken
+        );
+
+        SovereignERC20MarketRewards token = SovereignERC20MarketRewards(payable(tokenAddr));
+        assertTrue(token.systemRewardsExcluded(address(poolManager)));
+        assertTrue(token.systemRewardsExcluded(address(factory)));
+        assertTrue(token.systemRewardsExcluded(address(validHook)));
+        assertTrue(token.systemRewardsExcluded(address(feeDistributor)));
+        assertTrue(token.rewardsExcluded(address(feeDistributor)));
+    }
+
+    function test_CreateSovereignERC20MarketRewards_AllowsAllowlistedExternalRewardToken() public {
+        _setValidPoolHook();
+        MockERC20 reward = new MockERC20();
+        Curve[] memory curves = _defaultSingleCurve();
+
+        vm.prank(admin);
+        factory.setSovereignRewardTokenAllowed(address(reward), true);
+
+        vm.prank(user1);
+        address tokenAddr = factory.createSovereignERC20MarketRewards(
+            user1, "", "Sovereign Rewards", "SVR", 1_000_000 ether, curves, address(reward)
+        );
+
+        SovereignERC20MarketRewards token = SovereignERC20MarketRewards(payable(tokenAddr));
+        assertEq(token.rewardToken(), address(reward));
+        assertTrue(token.supportsInterface(type(IERC20HolderRewards).interfaceId));
+    }
+
+    function test_SetSovereignRewardTokenAllowed_OwnerOnly() public {
+        MockERC20 reward = new MockERC20();
+
+        vm.prank(user1);
+        vm.expectRevert();
+        factory.setSovereignRewardTokenAllowed(address(reward), true);
+
+        vm.expectEmit(true, false, false, true);
+        emit ILiquidFactory.SovereignRewardTokenAllowlistUpdated(address(reward), true);
+        vm.prank(admin);
+        factory.setSovereignRewardTokenAllowed(address(reward), true);
+
+        assertTrue(factory.isSovereignRewardTokenAllowed(address(reward)));
     }
 
     // ============================================
@@ -725,6 +975,11 @@ contract LiquidFactoryUnitTest is Test {
             | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG; // 0x20CC
     }
 
+    function _hasMintFunction(address token) internal returns (bool) {
+        (bool success,) = token.call(abi.encodeWithSignature("mint(address,uint256)", user1, 1));
+        return success;
+    }
+
     function _deployMockSwapGuardForFactoryWithoutRequiredFlags()
         internal
         returns (MockSwapGuardForFactory memoryGuard)
@@ -746,8 +1001,11 @@ contract LiquidFactoryUnitTest is Test {
     }
 
     function _deployLiquidGuardWithRequiredFlags() internal returns (LiquidGuard guard) {
+        return _deployLiquidGuardWithRequiredFlags(address(baseToken));
+    }
+
+    function _deployLiquidGuardWithRequiredFlags(address rareToken) internal returns (LiquidGuard guard) {
         address hookAddr = address(_fullRequiredFlags());
-        address rareToken = makeAddr("rareToken");
         vm.prank(admin);
         deployCodeTo(
             "LiquidGuard.sol:LiquidGuard", abi.encode(IPoolManager(address(poolManager)), admin, rareToken), hookAddr
@@ -885,3 +1143,9 @@ contract MockSwapGuardForFactory is ILiquidSwapGuard {
         revert("UNUSED");
     }
 }
+
+    contract MockSovereignFeeDistributor {
+        function totalFeeBPS() external pure returns (uint16) {
+            return 0;
+        }
+    }

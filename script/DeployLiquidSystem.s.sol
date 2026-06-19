@@ -42,7 +42,7 @@ import {IHooks} from "v4-core/interfaces/IHooks.sol";
  * - DEPLOY_FEE_DISTRIBUTOR: Set true to deploy FeeDistributor module (default: false, uses NetworkConfig / env overrides)
  * - DEPLOY_LIQUID_REGISTRY: Set true to deploy LiquidRegistry module (default: false, uses NetworkConfig / env overrides)
  * - DEPLOY_BURNER: Set true to deploy RAREBurner (default: false, uses NetworkConfig)
- * - DEPLOY_FACTORY: Set true to deploy LiquidFactory + multicurve implementation (default: false)
+ * - DEPLOY_FACTORY: Set true to deploy LiquidFactory + Liquid/Sovereign implementations (default: false)
  * - DEPLOY_ROUTER: Set true to deploy LiquidRouter (default: false)
  * - DEPLOY_AUCTIONEER: Set true to deploy LiquidAuctioneer (default: false)
  * - DEPLOY_SWAP_GUARD: Set true to deploy LiquidSwapGuard (default: false)
@@ -54,8 +54,9 @@ import {IHooks} from "v4-core/interfaces/IHooks.sol";
  * - FEE_DISTRIBUTOR: Optional override address for existing FeeDistributor module
  * - LIQUID_REGISTRY: Optional override address for existing LiquidRegistry module
  *
- * The factory deployer configures only the active multicurve launch path. Auctioneer and migration
- * modules are deployed separately when their flags are enabled.
+ * The factory deployer configures LiquidMultiCurve, Sovereign ERC20 implementations, base token,
+ * and the network RARE/USDC Sovereign reward-token allowlist. Auctioneer and migration modules
+ * are deployed separately when their flags are enabled.
  *
  * Usage:
  *   # Full multicurve deployment
@@ -90,6 +91,9 @@ contract DeployLiquidSystem is Script {
         address liquidGuard;
         address factory;
         address multiCurveImplementation;
+        address sovereignERC20Implementation;
+        address sovereignERC20MarketImplementation;
+        address sovereignERC20MarketRewardsImplementation;
         address router;
         address routerImplementation;
         address auctioneer;
@@ -434,6 +438,9 @@ contract DeployLiquidSystem is Script {
                 DeployLiquidFactory.deploy(deployer, deployConfig.factory, networkConfig);
             result.factory = factoryResult.factory;
             result.multiCurveImplementation = factoryResult.multiCurveImplementation;
+            result.sovereignERC20Implementation = factoryResult.sovereignERC20Implementation;
+            result.sovereignERC20MarketImplementation = factoryResult.sovereignERC20MarketImplementation;
+            result.sovereignERC20MarketRewardsImplementation = factoryResult.sovereignERC20MarketRewardsImplementation;
         } else {
             result.factory = networkConfig.liquid.factory;
             require(result.factory != address(0), "DEPLOY_FACTORY=false but no liquidFactory in NetworkConfig");
@@ -729,6 +736,15 @@ contract DeployLiquidSystem is Script {
         if (deployFactory) {
             console.log("LiquidMultiCurve Implementation:");
             console.logAddress(result.multiCurveImplementation);
+            console.log("  (deployed)");
+            console.log("SovereignERC20 Implementation:");
+            console.logAddress(result.sovereignERC20Implementation);
+            console.log("  (deployed)");
+            console.log("SovereignERC20Market Implementation:");
+            console.logAddress(result.sovereignERC20MarketImplementation);
+            console.log("  (deployed)");
+            console.log("SovereignERC20MarketRewards Implementation:");
+            console.logAddress(result.sovereignERC20MarketRewardsImplementation);
             console.log("  (deployed)");
         }
         console.log("LiquidFactory:");

@@ -3,6 +3,9 @@ pragma solidity ^0.8.0;
 
 import {console} from "forge-std/console.sol";
 import {LiquidFactory} from "liquid-editions/LiquidFactory.sol";
+import {SovereignERC20} from "liquid-editions/SovereignERC20.sol";
+import {SovereignERC20Market} from "liquid-editions/SovereignERC20Market.sol";
+import {SovereignERC20MarketRewards} from "liquid-editions/SovereignERC20MarketRewards.sol";
 import {DeployConfig} from "../config/DeployConfig.sol";
 import {NetworkConfig} from "../config/NetworkConfig.sol";
 import {DeployLiquidMultiCurve} from "./DeployLiquidMultiCurve.s.sol";
@@ -17,12 +20,16 @@ library DeployLiquidFactory {
     struct NetworkAddresses {
         address uniswapV4PoolManager;
         address rareToken;
+        address usdc;
     }
 
     /// @notice Addresses produced by a factory deployment
     struct DeployResult {
         address factory;
         address multiCurveImplementation;
+        address sovereignERC20Implementation;
+        address sovereignERC20MarketImplementation;
+        address sovereignERC20MarketRewardsImplementation;
     }
 
     /**
@@ -38,7 +45,9 @@ library DeployLiquidFactory {
         return deploy(
             admin,
             config,
-            NetworkAddresses({uniswapV4PoolManager: network.uniswapV4PoolManager, rareToken: network.rareToken})
+            NetworkAddresses({
+                uniswapV4PoolManager: network.uniswapV4PoolManager, rareToken: network.rareToken, usdc: network.usdc
+            })
         );
     }
 
@@ -56,14 +65,17 @@ library DeployLiquidFactory {
 
         require(network.uniswapV4PoolManager != address(0), "V4 PoolManager not configured for this network");
 
-        // Deploy factory-facing implementation
+        // Deploy factory-facing implementations
         result.multiCurveImplementation = DeployLiquidMultiCurve.deploy();
+        result.sovereignERC20Implementation = _deploySovereignERC20Implementation();
+        result.sovereignERC20MarketImplementation = _deploySovereignERC20MarketImplementation();
+        result.sovereignERC20MarketRewardsImplementation = _deploySovereignERC20MarketRewardsImplementation();
 
         // Deploy factory
         result.factory = _deployFactory(admin, config, network);
 
         // Register implementations and base token
-        _configureFactory(result.factory, result.multiCurveImplementation, network.rareToken);
+        _configureFactory(result, network);
 
         // Apply supply params if they differ from the hardcoded storage defaults
         configureSupplyParams(result.factory, config);
@@ -90,17 +102,63 @@ library DeployLiquidFactory {
         console.logAddress(factory);
     }
 
-    function _configureFactory(address factory, address multiCurveImpl, address rareToken) private {
-        LiquidFactory factoryContract = LiquidFactory(factory);
+    function _deploySovereignERC20Implementation() private returns (address implementation) {
+        console.log("Deploying SovereignERC20 implementation...");
+        implementation = address(new SovereignERC20());
+        console.log("SovereignERC20 implementation deployed at:");
+        console.logAddress(implementation);
+    }
+
+    function _deploySovereignERC20MarketImplementation() private returns (address implementation) {
+        console.log("Deploying SovereignERC20Market implementation...");
+        implementation = address(new SovereignERC20Market());
+        console.log("SovereignERC20Market implementation deployed at:");
+        console.logAddress(implementation);
+    }
+
+    function _deploySovereignERC20MarketRewardsImplementation() private returns (address implementation) {
+        console.log("Deploying SovereignERC20MarketRewards implementation...");
+        implementation = address(new SovereignERC20MarketRewards());
+        console.log("SovereignERC20MarketRewards implementation deployed at:");
+        console.logAddress(implementation);
+    }
+
+    function _configureFactory(DeployResult memory result, NetworkAddresses memory network) private {
+        LiquidFactory factoryContract = LiquidFactory(result.factory);
 
         console.log("Setting LiquidMultiCurve implementation in factory...");
-        factoryContract.setLiquidMultiCurveImplementation(multiCurveImpl);
+        factoryContract.setLiquidMultiCurveImplementation(result.multiCurveImplementation);
 
-        if (rareToken != address(0)) {
+        console.log("Setting SovereignERC20 implementation in factory...");
+        factoryContract.setSovereignTokenImplementation(
+            factoryContract.KIND_SOVEREIGN_ERC20(), result.sovereignERC20Implementation, true
+        );
+
+        console.log("Setting SovereignERC20Market implementation in factory...");
+        factoryContract.setSovereignTokenImplementation(
+            factoryContract.KIND_SOVEREIGN_ERC20_MARKET(), result.sovereignERC20MarketImplementation, true
+        );
+
+        console.log("Setting SovereignERC20MarketRewards implementation in factory...");
+        factoryContract.setSovereignTokenImplementation(
+            factoryContract.KIND_SOVEREIGN_ERC20_MARKET_REWARDS(),
+            result.sovereignERC20MarketRewardsImplementation,
+            true
+        );
+
+        if (network.rareToken != address(0)) {
             console.log("Setting base token (RARE)...");
-            factoryContract.setBaseToken(rareToken);
+            factoryContract.setBaseToken(network.rareToken);
             console.log("Base token set to:");
-            console.logAddress(rareToken);
+            console.logAddress(network.rareToken);
+
+            console.log("Allowlisting RARE as Sovereign reward token...");
+            factoryContract.setSovereignRewardTokenAllowed(network.rareToken, true);
+        }
+
+        if (network.usdc != address(0) && network.usdc != network.rareToken) {
+            console.log("Allowlisting USDC as Sovereign reward token...");
+            factoryContract.setSovereignRewardTokenAllowed(network.usdc, true);
         }
     }
 

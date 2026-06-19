@@ -119,12 +119,12 @@ library NetworkConfig {
                     lbpStrategyFactory: 0xa3A236647c80BCD69CAD561ACf863c29981b6fbC,
                     protocolFeeRecipient: 0xBa68422A154e459f7b4992a95Ad358d412b6bd1d,
                     liquid: LiquidAddresses({
-                        factory: 0x912ecC55445d87149d09d83426D0aC41379bB643,
+                        factory: 0x1C89d390d98119E62be6BA707d18C2d5cA7bea8F,
                         router: 0x92438008608949E2C7eCef34c474792bAFe8a971,
                         auctioneer: address(0),
                         swapGuard: address(0),
                         initGuard: address(0),
-                        liquidGuard: 0x1c56E7747D67b6731c9EE12b74b4062Efc7020Cc,
+                        liquidGuard: 0x715ea2781F3dF9AA91751486b2eDe420d11eE0cc,
                         feeDistributor: 0x3c8cdeF90333F5adA046690f0c37bEc311f0996a,
                         liquidRegistry: 0x5AB6B3f7eBEFDA67cfc4D135718F9E34d58856b9,
                         migrationExecutor: 0xc87f440Acde20726Dc42F862C78A45981De76dF1
